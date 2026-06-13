@@ -9,7 +9,7 @@ COMMANDS = ("save", "list", "search", "delete")
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="snip",
-        description="DEMO synthetic snippet manager scaffold for Token Tracker Harness exercises.",
+        description="DEMO synthetic snippet manager scaffold for AGILE-AI-HTB exercises.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     for command in COMMANDS:

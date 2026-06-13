@@ -10,11 +10,11 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from token_tracker_harness import db
-from token_tracker_harness.alarms import detect_budget_alarms
-from token_tracker_harness.governance import GovernanceDecision, apply_governance
-from token_tracker_harness.guardrails import get_budget_zone
-from token_tracker_harness.llm import calculate_cost, extract_usage, response_to_dict
+from agile_ai_htb import db
+from agile_ai_htb.alarms import detect_budget_alarms
+from agile_ai_htb.governance import GovernanceDecision, apply_governance
+from agile_ai_htb.guardrails import get_budget_zone
+from agile_ai_htb.llm import calculate_cost, extract_usage, response_to_dict
 
 router = APIRouter()
 

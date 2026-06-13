@@ -5,11 +5,11 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 
-from token_tracker_harness import db
-from token_tracker_harness.guardrails import load_guardrails
-from token_tracker_harness.llm import LLMClient
-from token_tracker_harness.routes import alarms, portal, proxy, sessions, tasks
-from token_tracker_harness.settings import Settings
+from agile_ai_htb import db
+from agile_ai_htb.guardrails import load_guardrails
+from agile_ai_htb.llm import LLMClient
+from agile_ai_htb.routes import alarms, portal, proxy, sessions, tasks
+from agile_ai_htb.settings import Settings
 
 
 @asynccontextmanager
@@ -23,7 +23,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
-    app = FastAPI(title="Token Tracker Harness", lifespan=_lifespan)
+    app = FastAPI(title="AGILE-AI-HTB", lifespan=_lifespan)
     app.state.settings = settings or Settings()
 
     @app.get("/health")

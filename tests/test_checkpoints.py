@@ -1,7 +1,7 @@
 from dataclasses import replace
 
-from token_tracker_harness.checkpoints import evaluate_checkpoints
-from token_tracker_harness.guardrails import load_guardrails
+from agile_ai_htb.checkpoints import evaluate_checkpoints
+from agile_ai_htb.guardrails import load_guardrails
 
 
 def _artifact(**overrides):

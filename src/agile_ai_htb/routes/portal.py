@@ -9,9 +9,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from token_tracker_harness import db
-from token_tracker_harness.auth import require_portal_auth
-from token_tracker_harness.guardrails import get_budget_zone
+from agile_ai_htb import db
+from agile_ai_htb.auth import require_portal_auth
+from agile_ai_htb.guardrails import get_budget_zone
 
 
 router = APIRouter(dependencies=[Depends(require_portal_auth)])

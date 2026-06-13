@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from token_tracker_harness.guardrails import GuardrailConfig
+from agile_ai_htb.guardrails import GuardrailConfig
 
 
 @dataclass(frozen=True)

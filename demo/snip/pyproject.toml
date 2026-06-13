@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "demo-snip-2099"
 version = "0.1.0"
-description = "DEMO synthetic scaffold for the Token Tracker Harness snippet manager demo."
+description = "DEMO synthetic scaffold for the AGILE-AI-HTB snippet manager demo."
 requires-python = ">=3.11"
 dependencies = []
 

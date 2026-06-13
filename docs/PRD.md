@@ -1,4 +1,4 @@
-# Token-Tracker Harness PRD
+# AGILE-AI-HTB PRD
 
 ## Problem Statement
 
@@ -6,7 +6,7 @@ AI coding agents can burn through token budgets invisibly while they explore, lo
 
 ## Solution
 
-Build the Token-Tracker Harness: a single FastAPI application that acts as an LLM proxy, session control API, and lightweight portal. The worker points its API base URL at the harness. The harness forwards LLM calls through LiteLLM, records token usage and tool traces into SQLite-backed session artifacts, applies declared guardrails from `guardrails.yaml`, evaluates checkpoints, and shows the human an AGILE board, dashboard, session reports, alarms, and override actions.
+Build AGILE-AI-HTB: a token-tracker harness packaged as a single FastAPI application that acts as an LLM proxy, session control API, and lightweight portal. The worker points its API base URL at the harness. The harness forwards LLM calls through LiteLLM, records token usage and tool traces into SQLite-backed session artifacts, applies declared guardrails from `guardrails.yaml`, evaluates checkpoints, and shows the human an AGILE board, dashboard, session reports, alarms, and override actions.
 
 The harness constrains the agent, not the human. Zone-based governance rewrites the system prompt, clamps `max_tokens`, and filters available tools as budget consumption rises. Alarms and checkpoint failures always surface structured context and recommended actions, while the human can continue, abort, raise budget, adjust guardrails, or re-dispatch.
 

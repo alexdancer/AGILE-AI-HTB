@@ -1,4 +1,4 @@
-from token_tracker_harness.alarms import (
+from agile_ai_htb.alarms import (
     alarm_for_checkpoint_failure,
     detect_budget_alarms,
     detect_loop,

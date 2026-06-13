@@ -7,7 +7,7 @@
  *   - account/owner labels prefixed DEMO
  *
  * Shapes mirror the real FastAPI responses (see
- * src/token_tracker_harness/routes/*.py and alarms.py/estimation.py)
+ * src/agile_ai_htb/routes/*.py and alarms.py/estimation.py)
  * so the mockup can later be wired to the live API with a one-line
  * fetch swap. Do not delete the AGILE-AI-HTBDemoFakeDataInvariantTests
  * test that guards this invariant.
@@ -19,7 +19,7 @@ window.AGILE_AI_HTB.fixtures = {
   meta: {
     portal: "AGILE-AI-HTB",
     generated_at: "2099-06-13T09:00:00Z",
-    project: "Fired-Fest 24h Challenge — Token Tracker Harness",
+    project: "Fired-Fest 24h Challenge — AGILE-AI-HTB token-tracker harness",
     daily_cap_tokens: 1_000_000,
     daily_used_tokens: 612_400,
   },

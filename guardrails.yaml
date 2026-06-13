@@ -1,4 +1,4 @@
-# Token-Tracker Harness — Guardrail Configuration
+# AGILE-AI-HTB — Guardrail Configuration
 # These are the default guardrails. Override per-session via /session/start payload.
 
 guardrails:

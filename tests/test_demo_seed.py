@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from token_tracker_harness import db
-from token_tracker_harness.demo_seed import DEMO_TASKS, seed_demo_tasks
+from agile_ai_htb import db
+from agile_ai_htb.demo_seed import DEMO_TASKS, seed_demo_tasks
 
 
 def test_seed_demo_tasks_inserts_six_backlog_tasks_once(tmp_path):

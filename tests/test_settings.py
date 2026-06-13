@@ -8,7 +8,7 @@ def test_settings_defaults_point_to_local_development_files(monkeypatch):
     monkeypatch.delenv("TOKEN_TRACKER_PROVIDER_API_KEY_ENV", raising=False)
     monkeypatch.delenv("TOKEN_TRACKER_PORTAL_TOKEN_ENV", raising=False)
 
-    from token_tracker_harness.settings import Settings
+    from agile_ai_htb.settings import Settings
 
     settings = Settings()
 
@@ -28,7 +28,7 @@ def test_settings_reads_environment_overrides(monkeypatch, tmp_path):
     monkeypatch.setenv("TOKEN_TRACKER_PROVIDER_API_KEY_ENV", "ANTHROPIC_API_KEY")
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN_ENV", "CUSTOM_PORTAL_TOKEN")
 
-    from token_tracker_harness.settings import Settings
+    from agile_ai_htb.settings import Settings
 
     settings = Settings()
 

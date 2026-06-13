@@ -1,7 +1,7 @@
 import pytest
 
-from token_tracker_harness import llm
-from token_tracker_harness.llm import LLMClient, calculate_cost, extract_usage, final_stream_usage
+from agile_ai_htb import llm
+from agile_ai_htb.llm import LLMClient, calculate_cost, extract_usage, final_stream_usage
 
 
 @pytest.mark.asyncio

@@ -2,9 +2,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from token_tracker_harness.app import create_app
-from token_tracker_harness.db import record_alarm, record_token_turn, record_tool_trace
-from token_tracker_harness.settings import Settings
+from agile_ai_htb.app import create_app
+from agile_ai_htb.db import record_alarm, record_token_turn, record_tool_trace
+from agile_ai_htb.settings import Settings
 
 
 ROOT = Path(__file__).resolve().parents[1]

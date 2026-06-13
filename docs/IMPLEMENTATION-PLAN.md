@@ -1,8 +1,8 @@
-# Token-Tracker Harness Implementation Plan
+# AGILE-AI-HTB Implementation Plan
 
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
-**Goal:** Build a working vertical-slice Token-Tracker Harness from the PRD: FastAPI proxy + SQLite session store + declared guardrails + alarms/checkpoints + minimal portal + synthetic demo fixtures.
+**Goal:** Build a working vertical-slice AGILE-AI-HTB token-tracker harness from the PRD: FastAPI proxy + SQLite session store + declared guardrails + alarms/checkpoints + minimal portal + synthetic demo fixtures.
 
 **Architecture:** Start with deep, testable domain modules for guardrails, governance decisions, alarms, checkpoints, and persistence. Wrap them with a FastAPI app exposing the OpenAI-compatible proxy endpoint, control-plane APIs, and server-rendered portal. Keep LiteLLM behind an adapter so default tests use fakes and live provider calls remain optional.
 
@@ -18,11 +18,11 @@
 
 **Files:**
 - Create: `pyproject.toml`
-- Create: `src/token_tracker_harness/__init__.py`
+- Create: `src/agile_ai_htb/__init__.py`
 - Create: `tests/__init__.py`
 
 **Implementation notes:**
-- Package name: `token-tracker-harness`
+- Package name: `agile-ai-htb`
 - Python requirement: `>=3.11`
 - Runtime dependencies: `fastapi`, `uvicorn`, `pydantic`, `pyyaml`, `jinja2`, `python-multipart`, `litellm`
 - Test dependencies: `pytest`, `pytest-asyncio`, `httpx`
@@ -38,7 +38,7 @@
 **Objective:** Centralize filesystem paths and runtime settings.
 
 **Files:**
-- Create: `src/token_tracker_harness/settings.py`
+- Create: `src/agile_ai_htb/settings.py`
 - Test: `tests/test_settings.py`
 
 **Behavior:**
@@ -59,7 +59,7 @@
 **Objective:** Load `guardrails.yaml` into typed objects.
 
 **Files:**
-- Create: `src/token_tracker_harness/guardrails.py`
+- Create: `src/agile_ai_htb/guardrails.py`
 - Test: `tests/test_guardrails.py`
 - Read fixture: `guardrails.yaml`
 
@@ -77,7 +77,7 @@
 **Objective:** Calculate green/yellow/red zone from live daily usage and daily cap.
 
 **Files:**
-- Modify: `src/token_tracker_harness/guardrails.py`
+- Modify: `src/agile_ai_htb/guardrails.py`
 - Test: `tests/test_guardrails.py`
 
 **Behavior:**
@@ -96,7 +96,7 @@
 **Objective:** Apply three-layer graduated enforcement to an OpenAI-compatible request body.
 
 **Files:**
-- Create: `src/token_tracker_harness/governance.py`
+- Create: `src/agile_ai_htb/governance.py`
 - Test: `tests/test_governance.py`
 
 **Behavior:**
@@ -119,7 +119,7 @@
 **Objective:** Persist sessions, tasks, token turns, tool traces, alarms, snapshots, checkpoints, and action history.
 
 **Files:**
-- Create: `src/token_tracker_harness/db.py`
+- Create: `src/agile_ai_htb/db.py`
 - Test: `tests/test_db.py`
 
 **Behavior:**
@@ -136,7 +136,7 @@
 **Objective:** Provide a small persistence API for the app and domain modules.
 
 **Files:**
-- Modify: `src/token_tracker_harness/db.py`
+- Modify: `src/agile_ai_htb/db.py`
 - Test: `tests/test_db.py`
 
 **Behavior:**
@@ -159,7 +159,7 @@
 **Objective:** Convert guardrail deviations into structured alarm objects.
 
 **Files:**
-- Create: `src/token_tracker_harness/alarms.py`
+- Create: `src/agile_ai_htb/alarms.py`
 - Test: `tests/test_alarms.py`
 
 **Behavior:**
@@ -177,7 +177,7 @@
 **Objective:** Detect repeated identical tool calls.
 
 **Files:**
-- Modify: `src/token_tracker_harness/alarms.py`
+- Modify: `src/agile_ai_htb/alarms.py`
 - Test: `tests/test_alarms.py`
 
 **Behavior:**
@@ -194,7 +194,7 @@
 **Objective:** Evaluate persisted artifacts at session boundaries.
 
 **Files:**
-- Create: `src/token_tracker_harness/checkpoints.py`
+- Create: `src/agile_ai_htb/checkpoints.py`
 - Test: `tests/test_checkpoints.py`
 
 **Behavior:**
@@ -217,8 +217,8 @@
 **Objective:** Wire settings, database, guardrails, templates, and route modules.
 
 **Files:**
-- Create: `src/token_tracker_harness/app.py`
-- Create: `src/token_tracker_harness/routes/__init__.py`
+- Create: `src/agile_ai_htb/app.py`
+- Create: `src/agile_ai_htb/routes/__init__.py`
 - Test: `tests/test_app.py`
 
 **Behavior:**
@@ -235,8 +235,8 @@
 **Objective:** Support session creation and reporting.
 
 **Files:**
-- Create: `src/token_tracker_harness/routes/sessions.py`
-- Modify: `src/token_tracker_harness/app.py`
+- Create: `src/agile_ai_htb/routes/sessions.py`
+- Modify: `src/agile_ai_htb/app.py`
 - Test: `tests/test_sessions_api.py`
 
 **Behavior:**
@@ -255,9 +255,9 @@
 **Objective:** Populate the AGILE board and produce simple deterministic estimates.
 
 **Files:**
-- Create: `src/token_tracker_harness/routes/tasks.py`
-- Create: `src/token_tracker_harness/estimation.py`
-- Modify: `src/token_tracker_harness/app.py`
+- Create: `src/agile_ai_htb/routes/tasks.py`
+- Create: `src/agile_ai_htb/estimation.py`
+- Modify: `src/agile_ai_htb/app.py`
 - Test: `tests/test_tasks_api.py`
 
 **Behavior:**
@@ -275,8 +275,8 @@
 **Objective:** Let humans respond to alarms through the control plane.
 
 **Files:**
-- Create: `src/token_tracker_harness/routes/alarms.py`
-- Modify: `src/token_tracker_harness/app.py`
+- Create: `src/agile_ai_htb/routes/alarms.py`
+- Modify: `src/agile_ai_htb/app.py`
 - Test: `tests/test_alarms_api.py`
 
 **Behavior:**
@@ -297,7 +297,7 @@
 **Objective:** Isolate provider forwarding and usage extraction.
 
 **Files:**
-- Create: `src/token_tracker_harness/llm.py`
+- Create: `src/agile_ai_htb/llm.py`
 - Test: `tests/test_llm_adapter.py`
 
 **Behavior:**
@@ -315,8 +315,8 @@
 **Objective:** Govern a request, forward it, persist usage, and return provider response.
 
 **Files:**
-- Create: `src/token_tracker_harness/routes/proxy.py`
-- Modify: `src/token_tracker_harness/app.py`
+- Create: `src/agile_ai_htb/routes/proxy.py`
+- Modify: `src/agile_ai_htb/app.py`
 - Test: `tests/test_proxy_api.py`
 
 **Behavior:**
@@ -336,8 +336,8 @@
 **Objective:** Support `stream: true` while preserving accurate final usage accounting.
 
 **Files:**
-- Modify: `src/token_tracker_harness/routes/proxy.py`
-- Modify: `src/token_tracker_harness/llm.py`
+- Modify: `src/agile_ai_htb/routes/proxy.py`
+- Modify: `src/agile_ai_htb/llm.py`
 - Test: `tests/test_proxy_streaming.py`
 
 **Behavior:**
@@ -360,10 +360,10 @@
 **Objective:** Render a usable dashboard without a frontend build step.
 
 **Files:**
-- Create: `src/token_tracker_harness/routes/portal.py`
-- Create: `src/token_tracker_harness/templates/base.html`
-- Create: `src/token_tracker_harness/templates/dashboard.html`
-- Modify: `src/token_tracker_harness/app.py`
+- Create: `src/agile_ai_htb/routes/portal.py`
+- Create: `src/agile_ai_htb/templates/base.html`
+- Create: `src/agile_ai_htb/templates/dashboard.html`
+- Modify: `src/agile_ai_htb/app.py`
 - Test: `tests/test_portal.py`
 
 **Behavior:**
@@ -380,8 +380,8 @@
 **Objective:** Show tasks and session lifecycle in portal form.
 
 **Files:**
-- Create: `src/token_tracker_harness/templates/board.html`
-- Modify: `src/token_tracker_harness/routes/portal.py`
+- Create: `src/agile_ai_htb/templates/board.html`
+- Modify: `src/agile_ai_htb/routes/portal.py`
 - Test: `tests/test_portal.py`
 
 **Behavior:**
@@ -398,8 +398,8 @@
 **Objective:** Render per-session audit details.
 
 **Files:**
-- Create: `src/token_tracker_harness/templates/session_report.html`
-- Modify: `src/token_tracker_harness/routes/portal.py`
+- Create: `src/agile_ai_htb/templates/session_report.html`
+- Modify: `src/agile_ai_htb/routes/portal.py`
 - Test: `tests/test_portal.py`
 
 **Behavior:**
@@ -439,7 +439,7 @@
 **Objective:** Provide the six demo board tasks from `docs/DEMO.md`.
 
 **Files:**
-- Create: `src/token_tracker_harness/demo_seed.py`
+- Create: `src/agile_ai_htb/demo_seed.py`
 - Test: `tests/test_demo_seed.py`
 
 **Behavior:**
@@ -477,16 +477,23 @@
 **Objective:** Make the harness easy to start locally.
 
 **Files:**
-- Create: `src/token_tracker_harness/__main__.py`
+- Create: `src/agile_ai_htb/__main__.py`
 - Modify: `pyproject.toml`
 - Test: `tests/test_cli_entrypoint.py`
 
 **Behavior:**
-- Console script `token-tracker-harness` starts uvicorn with `token_tracker_harness.app:create_app`.
-- Supports host, port, database path, and guardrails path arguments.
+- Console script `htb` is the AGILE-AI-HTB operator command.
+- Python package distribution is `agile-ai-htb`; Python import package is `agile_ai_htb`.
+- CLI is an operator entrypoint only; task/session/alarm workflows remain portal/API-first. No CRUD CLI is added for Milestone 8.
+- Bare `htb` defaults to `htb serve`.
+- `htb serve` starts uvicorn with `agile_ai_htb.app:create_app` using factory mode.
+- `htb serve` supports host, port, database path, and guardrails path arguments; CLI arguments override environment defaults.
+- `htb seed-demo` inserts the synthetic DEMO snip tasks into the harness database.
 
 **Verification:**
-- Run: `token-tracker-harness --help`
+- Run: `htb --help`
+- Run: `htb serve --help`
+- Run: `htb seed-demo --help`
 - Run: `python -m pytest tests/test_cli_entrypoint.py -q`
 - Expected: help prints and CLI tests pass.
 
@@ -519,7 +526,7 @@
 - Create: `README.md`
 
 **Behavior:**
-- Includes local install command, test command, Docker command, portal URL, demo seed command, and optional live LiteLLM smoke test instructions.
+- Includes local install command, test command, Docker command, portal URL, `htb seed-demo` command, and optional live LiteLLM smoke test instructions.
 - Clearly states that provider keys belong in environment variables and are not stored in repo.
 
 **Verification:**

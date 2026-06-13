@@ -2,8 +2,13 @@
 
 ## Harness
 **Definition**: The governing framework that wraps a coding agent, providing guardrails, checkpoints, material handling, and alarms.
-**Also known as**: Token-Tracker Harness.
+**Also known as**: AGILE-AI-HTB, Token-Tracker Harness.
 **Relationships**: Governs a Worker. Declares Guardrails. Evaluates Checkpoints. Fires Alarms. Exposes Material Handling interfaces.
+
+## Operator Command
+**Definition**: A small administrative entrypoint for starting AGILE-AI-HTB and preparing demo data, not the product user experience.
+**Also known as**: `htb`.
+**Relationships**: Starts the Harness. Seeds Tasks for the Portal. Does not replace Portal workflows for task, session, alarm, or report management.
 
 ## Worker
 **Definition**: The AI coding agent being governed by the harness — the entity that consumes tokens by making API calls and invoking tools.
@@ -68,9 +73,9 @@
 **Relationships**: Produced by a Session. Evaluated by Checkpoints. Stored in the Session Artifact Store.
 
 ## Budget Zone
-**Definition**: A graduated classification of how much of a session's token budget has been consumed — green (normal), yellow (wrap-up signal), or red (alarm).
-**Properties**: Thresholds declared in the Guardrail Configuration (e.g., green <60%, yellow <85%, red ≤100%). Drives context injection into the Worker.
-**Relationships**: Governed by Guardrail G3. Transitions between zones as tokens are consumed. Triggers BUDGET_YELLOW and BUDGET_RED alarms.
+**Definition**: A graduated classification of how much of the shared daily token budget has been consumed — green (normal), yellow (conserve budget), or red (delivery-only).
+**Properties**: Thresholds declared in the Guardrail Configuration (e.g., green <60%, yellow <85%, red ≤100%). Drives graduated governance of the Worker.
+**Relationships**: Governed by Guardrail G3. Transitions between zones as daily tokens are consumed. Triggers BUDGET_YELLOW and BUDGET_RED alarms. Distinct from per-session caps, which trigger alarms/checkpoints but do not define the zone.
 
 ## Escalation
 **Definition**: The path by which the harness brings a decision to the human rather than guessing — when an alarm fires or a checkpoint fails.

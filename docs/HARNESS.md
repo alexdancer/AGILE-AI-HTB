@@ -1,6 +1,6 @@
-# Token-Tracker Harness
+# AGILE-AI-HTB
 
-A harness that governs AI coding agents through **declared guardrails**, **structured checkpoints**, **clean material handling**, and **named alarms** — all operating in the domain of token-budget governance.
+AGILE-AI-HTB is a token-tracker harness that governs AI coding agents through **declared guardrails**, **structured checkpoints**, **clean material handling**, and **named alarms** — all operating in the domain of token-budget governance.
 
 ## Architecture Overview
 

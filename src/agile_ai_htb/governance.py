@@ -4,7 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-from token_tracker_harness.guardrails import BudgetZone, GuardrailConfig
+from agile_ai_htb.guardrails import BudgetZone, GuardrailConfig
 
 RED_ALLOWED_TOOL_NAMES = {"read_file", "patch", "terminal"}
 

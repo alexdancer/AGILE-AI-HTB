@@ -11,7 +11,7 @@ def test_pyproject_declares_installable_python_package():
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
 
     project = pyproject["project"]
-    assert project["name"] == "token-tracker-harness"
+    assert project["name"] == "agile-ai-htb"
     assert project["requires-python"] == ">=3.11"
 
     dependencies = set(project["dependencies"])
@@ -36,8 +36,8 @@ def test_pyproject_declares_installable_python_package():
 def test_package_imports_from_src_layout():
     sys.path.insert(0, str(SRC))
     try:
-        import token_tracker_harness
+        import agile_ai_htb
     finally:
         sys.path.remove(str(SRC))
 
-    assert token_tracker_harness.__version__ == "0.1.0"
+    assert agile_ai_htb.__version__ == "0.1.0"

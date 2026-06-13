@@ -1,8 +1,8 @@
 from dataclasses import replace
 from pathlib import Path
 
-from token_tracker_harness.governance import apply_governance
-from token_tracker_harness.guardrails import load_guardrails
+from agile_ai_htb.governance import apply_governance
+from agile_ai_htb.guardrails import load_guardrails
 
 
 ROOT = Path(__file__).resolve().parents[1]

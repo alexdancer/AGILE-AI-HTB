@@ -3,7 +3,7 @@ from dataclasses import replace
 
 import pytest
 
-from token_tracker_harness.guardrails import get_budget_zone, load_guardrails
+from agile_ai_htb.guardrails import get_budget_zone, load_guardrails
 
 
 ROOT = Path(__file__).resolve().parents[1]

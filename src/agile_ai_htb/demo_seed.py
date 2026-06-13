@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from token_tracker_harness import db
+from agile_ai_htb import db
 
 DEMO_TASKS = (
     {

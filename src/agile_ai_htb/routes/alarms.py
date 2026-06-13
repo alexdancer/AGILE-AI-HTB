@@ -5,7 +5,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from token_tracker_harness import db
+from agile_ai_htb import db
 
 router = APIRouter()
 

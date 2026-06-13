@@ -1,6 +1,6 @@
 import sqlite3
 
-from token_tracker_harness.db import (
+from agile_ai_htb.db import (
     build_session_artifact,
     connect,
     create_session,
