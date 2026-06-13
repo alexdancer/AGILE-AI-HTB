@@ -85,13 +85,13 @@ model_routing:
   task_complexity:
     simple:
       description: "Trivial tasks — single-line fix, small CSS change, typo correction"
-      recommended_model: "claude-haiku"      # or "gpt-4o-mini"
+      recommended_model: "claude-3-haiku-20240307"      # or "gpt-4o-mini"
     modest:
       description: "Standard tasks — add an endpoint, write tests, refactor a module"
-      recommended_model: "claude-sonnet"     # or "gpt-4o"
+      recommended_model: "claude-3-5-sonnet-20240620"     # or "gpt-4o"
     complex:
       description: "Hard tasks — system design, auth refactor, new feature architecture"
-      recommended_model: "claude-opus"       # or "gpt-4.5"
+      recommended_model: "claude-3-opus-20240229"       # or "gpt-4.5"
   budget_aware_clamp:
     enabled: true
     remaining_daily_threshold: 0.15          # If <15% daily budget remains, downgrade one tier

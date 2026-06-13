@@ -113,7 +113,7 @@ WORKER_ADAPTER_PRESETS = [
         "kind": "claude_code",
         "name": "Claude Code",
         "config": {"verification_template": ["claude", "-p", "{prompt}"], "launch_template": ["claude"]},
-        "supported_models": ["claude-3-5-sonnet-latest", "claude-sonnet", "claude-haiku"],
+        "supported_models": ["claude-3-5-sonnet-latest", "claude-3-5-sonnet-20240620", "claude-3-haiku-20240307"],
     },
     {
         "id": "codex",

@@ -36,7 +36,7 @@ class FakeEstimatorLLM:
         self.content = content or {
             "token_estimate": 12_345,
             "complexity": "modest",
-            "recommended_model": "claude-sonnet",
+            "recommended_model": "claude-3-5-sonnet-20240620",
             "confidence": 0.82,
             "rationale": "Endpoint plus tests is a modest task.",
             "assumptions": ["No schema migration needed."],
@@ -89,7 +89,7 @@ async def test_eval_estimator_returns_all_required_fields():
     assert isinstance(result, EstimateResult)
     assert result.token_estimate == 12_345
     assert result.complexity == "modest"
-    assert result.recommended_model == "claude-sonnet"
+    assert result.recommended_model == "claude-3-5-sonnet-20240620"
     assert result.confidence == 0.82
     assert result.rationale
     assert isinstance(result.assumptions, list)
@@ -121,7 +121,7 @@ async def test_eval_estimator_token_estimate_is_positive_integer():
     llm = FakeEstimatorLLM(content={
         "token_estimate": 8_000,
         "complexity": "simple",
-        "recommended_model": "claude-haiku",
+        "recommended_model": "claude-3-haiku-20240307",
         "confidence": 0.95,
         "rationale": "Trivial fix.",
         "assumptions": [],

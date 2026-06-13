@@ -118,7 +118,7 @@ def _seed_demo_worker_adapter(db_path: Path | str) -> None:
                     separators=(",", ":"),
                 ),
                 json.dumps(
-                    ["gpt-4o-mini", "gpt-4o", "claude-haiku", "claude-sonnet"],
+                    ["gpt-4o-mini", "gpt-4o", "claude-3-haiku-20240307", "claude-3-5-sonnet-20240620"],
                     separators=(",", ":"),
                 ),
                 "/tmp",

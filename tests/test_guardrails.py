@@ -27,7 +27,7 @@ def test_load_guardrails_preserves_real_yaml_configuration():
     assert config.tool_category_limit.limit == 0.50
     assert config.tool_categories["delegation"].weight == 1.5
     assert config.notifications.macos_notification is True
-    assert config.model_routing.task_complexity["complex"].recommended_model == "claude-opus"
+    assert config.model_routing.task_complexity["complex"].recommended_model == "claude-3-opus-20240229"
     assert config.model_routing.budget_aware_clamp.remaining_daily_threshold == 0.15
 
 

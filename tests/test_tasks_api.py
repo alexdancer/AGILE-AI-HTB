@@ -28,7 +28,7 @@ class FakeEstimatorLLM:
         self.content = content or {
             "token_estimate": 12_345,
             "complexity": "modest",
-            "recommended_model": "claude-sonnet",
+            "recommended_model": "claude-3-5-sonnet-20240620",
             "confidence": 0.82,
             "rationale": "Endpoint plus tests is a modest task.",
             "assumptions": ["No schema migration is needed."],
@@ -238,7 +238,7 @@ def test_estimate_uses_llm_structured_json_creates_estimated_task_and_tracks_usa
     assert response.status_code == 200
     assert task["status"] == "Estimated"
     assert task["estimate_tokens"] == 12_345
-    assert task["recommended_model"] == "claude-sonnet"
+    assert task["recommended_model"] == "claude-3-5-sonnet-20240620"
     assert task["actual_tokens"] is None
     assert task["metadata"]["estimation_source"] == "llm"
     assert task["metadata"]["confidence"] == 0.82
