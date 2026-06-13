@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Alarms | AGILE-AI-HTB{% endblock %}
+{% block content %}
+<h1 class="page-title">Alarms</h1>
+<p class="page-sub">guardrail violations · human-in-the-loop resolution</p>
+
+<section class="grid cols-4" style="margin-bottom:20px">
+  <div class="kpi"><div class="label">Open</div><div class="value mono">{{ open_alarms|length }}</div></div>
+  <div class="kpi"><div class="label">Critical</div><div class="value mono" style="color:var(--danger)">{{ critical_count }}</div></div>
+  <div class="kpi"><div class="label">Warning</div><div class="value mono" style="color:var(--warn)">{{ warning_count }}</div></div>
+  <div class="kpi"><div class="label">Resolved</div><div class="value mono" style="color:var(--accent)">{{ resolved_alarms|length }}</div></div>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h3>Open</h3>
+    <div class="btn-row"><span class="btn ghost">All</span><span class="btn ghost">Critical</span><span class="btn ghost">Warning</span><span class="btn ghost">Info</span></div>
+  </div>
+  <div class="panel-body">
+    {% for alarm in open_alarms %}
+    {% include "alarm_card.html" %}
+    {% else %}
+    <div class="muted">No open alarms.</div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-header"><h3>Recently resolved</h3></div>
+  <div class="panel-body">
+    {% for alarm in resolved_alarms %}
+    {% include "alarm_card.html" %}
+    {% else %}
+    <div class="muted">No resolved alarms yet.</div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

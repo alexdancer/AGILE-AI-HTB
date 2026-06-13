@@ -9,8 +9,9 @@ import os
 import secrets
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field, ValidationError
 
 from agile_ai_htb import db
 from agile_ai_htb.auth import (
@@ -20,12 +21,20 @@ from agile_ai_htb.auth import (
     sign_portal_cookie,
 )
 from agile_ai_htb.guardrails import get_budget_zone
+from agile_ai_htb.launch_guardrails import adapter_launchable_for_ui
+from agile_ai_htb.task_launch import DEFAULT_PROXY_URL
+from agile_ai_htb.worker_adapters import verify_worker_adapter
 
 
 router = APIRouter()
 templates = Jinja2Templates(directory=Path(__file__).resolve().parents[1] / "templates")
 
 BOARD_COLUMNS = ["Estimated", "Ready", "Running", "Review", "Done", "Blocked"]
+
+
+class WorkerVerifyRequest(BaseModel):
+    model: str = Field(min_length=1)
+    proxy_url: str = Field(default=DEFAULT_PROXY_URL, min_length=1)
 
 
 @router.get("/login", response_class=HTMLResponse)
@@ -105,7 +114,8 @@ def dashboard(request: Request):
 
 @router.get("/board", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def board(request: Request):
-    tasks = db.list_tasks(request.app.state.settings.database_path)
+    database_path = request.app.state.settings.database_path
+    tasks = db.list_tasks(database_path)
     grouped = {column: [] for column in BOARD_COLUMNS}
     for task in tasks:
         task = dict(task)
@@ -126,7 +136,54 @@ def board(request: Request):
             "columns": BOARD_COLUMNS,
             "tasks_by_status": grouped,
             "has_demo_tasks": has_demo_tasks,
-            "has_verified_worker_adapter": False,
+            "has_verified_worker_adapter": db.has_verified_worker_adapter(database_path),
+            "default_proxy_url": DEFAULT_PROXY_URL,
+        },
+    )
+
+
+@router.get("/settings/workers", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
+def worker_settings(request: Request):
+    adapters = []
+    for adapter in db.list_worker_adapters(request.app.state.settings.database_path):
+        adapters.append(
+            {
+                **adapter,
+                "verification_evidence": _safe_worker_evidence(adapter.get("verification_evidence", {})),
+                "launchable": adapter_launchable_for_ui(adapter),
+            }
+        )
+    return templates.TemplateResponse(
+        request,
+        "workers.html",
+        {"active_page": "workers", "adapters": adapters, "default_proxy_url": DEFAULT_PROXY_URL},
+    )
+
+
+@router.post("/settings/workers/{adapter_id}/verify", dependencies=[Depends(require_portal_auth)])
+async def verify_worker_adapter_route(adapter_id: str, request: Request):
+    payload, wants_html = await _worker_verify_payload_from_request(request)
+    try:
+        result = verify_worker_adapter(
+            request.app.state.settings.database_path,
+            adapter_id,
+            model=payload.model,
+            proxy_url=payload.proxy_url or DEFAULT_PROXY_URL,
+            runner=getattr(request.app.state, "worker_adapter_verification_runner", None),
+            token_recorder=getattr(request.app.state, "worker_adapter_verification_token_recorder", None),
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="worker adapter not found") from exc
+    if wants_html:
+        return RedirectResponse("/settings/workers", status_code=status.HTTP_303_SEE_OTHER)
+    return JSONResponse(
+        status_code=200 if result.passed else 409,
+        content={
+            "passed": result.passed,
+            "adapter_id": result.adapter_id,
+            "session_id": result.session_id,
+            "reasons": result.reasons,
+            "evidence": _safe_worker_evidence(result.evidence),
         },
     )
 
@@ -182,6 +239,27 @@ def session_report_view(session_id: str, request: Request):
     )
 
 
+async def _worker_verify_payload_from_request(request: Request) -> tuple[WorkerVerifyRequest, bool]:
+    content_type = request.headers.get("content-type", "")
+    accept = request.headers.get("accept", "")
+    wants_html = "text/html" in accept and "application/json" not in accept
+    if "application/json" in content_type:
+        raw = await request.json()
+        try:
+            return WorkerVerifyRequest.model_validate(raw or {}), False
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+    if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        form = await request.form()
+        raw = {key: value for key, value in form.items() if value not in (None, "")}
+        raw.setdefault("proxy_url", DEFAULT_PROXY_URL)
+        try:
+            return WorkerVerifyRequest.model_validate(raw), True
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+    raise HTTPException(status_code=422, detail="model is required")
+
+
 def _token_totals(artifact: dict[str, Any]) -> dict[str, int]:
     return {
         "prompt_tokens": sum(int(turn.get("prompt_tokens", 0)) for turn in artifact["token_log"]),
@@ -196,6 +274,23 @@ def _daily_cap_tokens(budget: dict[str, Any], config) -> int | None:
     if config.daily_cap.enabled:
         return config.daily_cap.tokens
     return None
+
+
+def _safe_worker_evidence(value: Any, key_hint: str = "") -> Any:
+    secret_terms = {"key", "token", "secret", "password", "authorization"}
+    if isinstance(value, dict):
+        safe = {}
+        for key, nested in value.items():
+            if any(term in str(key).lower() for term in secret_terms):
+                continue
+            safe[key] = _safe_worker_evidence(nested, str(key))
+        return safe
+    if isinstance(value, list):
+        return [_safe_worker_evidence(item, key_hint) for item in value]
+    if isinstance(value, str):
+        if value.startswith("sk_") or "secret" in value.lower():
+            return "***REDACTED***"
+    return value
 
 
 def _current_day_start_iso(timezone: str) -> str:

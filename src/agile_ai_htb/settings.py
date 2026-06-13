@@ -11,7 +11,9 @@ class Settings:
     guardrails_path: Path = Path("guardrails.yaml")
     timezone: str = "local"
     provider_api_key_env: str = "PROVIDER_API_KEY"
+    estimator_model: str = "gpt-4o-mini"
     portal_token_env: str = "TOKEN_TRACKER_PORTAL_TOKEN"
+    portal_cookie_secure: bool = False
 
     def __init__(
         self,
@@ -19,7 +21,9 @@ class Settings:
         guardrails_path: Path | str | None = None,
         timezone: str | None = None,
         provider_api_key_env: str | None = None,
+        estimator_model: str | None = None,
         portal_token_env: str | None = None,
+        portal_cookie_secure: bool | None = None,
     ) -> None:
         object.__setattr__(
             self,
@@ -44,6 +48,22 @@ class Settings:
         )
         object.__setattr__(
             self,
+            "estimator_model",
+            estimator_model or os.getenv("TOKEN_TRACKER_ESTIMATOR_MODEL", "gpt-4o-mini"),
+        )
+        object.__setattr__(
+            self,
             "portal_token_env",
             portal_token_env or os.getenv("TOKEN_TRACKER_PORTAL_TOKEN_ENV", "TOKEN_TRACKER_PORTAL_TOKEN"),
         )
+        object.__setattr__(
+            self,
+            "portal_cookie_secure",
+            _env_bool("TOKEN_TRACKER_PORTAL_COOKIE_SECURE")
+            if portal_cookie_secure is None
+            else portal_cookie_secure,
+        )
+
+
+def _env_bool(name: str) -> bool:
+    return os.getenv(name, "").lower() in {"1", "true", "yes", "on"}

@@ -1,52 +1,87 @@
 {% extends "base.html" %}
 {% block title %}Session report | AGILE-AI-HTB{% endblock %}
 {% block content %}
-<article class="card {% if requires_review %}review{% endif %}">
-  <h2>Session report</h2>
-  <p><strong>{{ session.task_description }}</strong></p>
-  <p class="muted">{{ session.id }} · {{ session.model }} · {{ session.status }}</p>
-  {% if requires_review %}<p><strong>Requires review</strong></p>{% endif %}
-</article>
+<h1 class="page-title">Session report</h1>
+<p class="page-sub">tokens · guardrails · alarms · checkpoints</p>
 
-<section class="grid">
-  <article class="card">
-    <h3>Token totals</h3>
-    <p>Total: {{ "{:,}".format(token_totals.total_tokens) }}</p>
-    <p>Prompt: {{ "{:,}".format(token_totals.prompt_tokens) }}</p>
-    <p>Completion: {{ "{:,}".format(token_totals.completion_tokens) }}</p>
-  </article>
-  <article class="card">
-    <h3>Zone timeline</h3>
-    <ul>
-      {% for snapshot in zone_timeline %}
-      <li>{{ snapshot.zone }} — max {{ snapshot.decision.max_tokens }}</li>
-      {% else %}
-      <li class="muted">No snapshots.</li>
-      {% endfor %}
-    </ul>
-  </article>
+<section class="panel {% if requires_review %}review{% endif %}">
+  <div class="session-head">
+    <div>
+      <div class="id">{{ session.id }}</div>
+      <div class="meta">{{ session.task_description }} · model={{ session.model }} · status={{ session.status }}</div>
+    </div>
+    <div class="flex">
+      <span class="pill blue">{{ session.status }}</span>
+      {% if requires_review %}<span class="pill yellow">Requires review</span>{% endif %}
+    </div>
+  </div>
+  <div class="panel-body">
+    <div class="grid cols-2">
+      <div>
+        <h3 class="mono muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin:0 0 8px">Token totals</h3>
+        <div class="kv">
+          <div class="k">prompt_tokens</div><div class="v">{{ "{:,}".format(token_totals.prompt_tokens) }}</div>
+          <div class="k">completion_tokens</div><div class="v">{{ "{:,}".format(token_totals.completion_tokens) }}</div>
+          <div class="k">total_tokens</div><div class="v">{{ "{:,}".format(token_totals.total_tokens) }}</div>
+        </div>
+        <h3 class="mono muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin:16px 0 8px">Token log</h3>
+        <table>
+          <thead><tr><th>kind</th><th>model</th><th>tokens</th></tr></thead>
+          <tbody>
+            {% for turn in artifact.token_log %}
+            <tr><td class="mono">{{ turn.usage_kind }}</td><td class="mono">{{ turn.model }}</td><td class="mono">{{ "{:,}".format(turn.total_tokens) }}</td></tr>
+            {% else %}
+            <tr><td colspan="3" class="muted">No token rows.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <h3 class="mono muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin:0 0 8px">Zone timeline</h3>
+        <table>
+          <thead><tr><th>zone</th><th>max tokens</th></tr></thead>
+          <tbody>
+            {% for snapshot in zone_timeline %}
+            <tr><td><span class="pill {% if snapshot.zone == 'green' %}green{% elif snapshot.zone == 'yellow' %}yellow{% elif snapshot.zone == 'red' %}red{% else %}muted{% endif %}">{{ snapshot.zone }}</span></td><td class="mono">{{ snapshot.decision.max_tokens }}</td></tr>
+            {% else %}
+            <tr><td colspan="2" class="muted">No snapshots.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 </section>
 
-<section class="grid">
-  <article class="card">
-    <h3>Alarms</h3>
-    <ul>
+<section class="grid cols-2">
+  <article class="panel">
+    <div class="panel-header"><h3>Alarms</h3></div>
+    <div class="panel-body">
       {% for alarm in artifact.alarms %}
-      <li>{{ alarm.type }} — {{ alarm.severity }} — {{ alarm.recommended_action }}</li>
+      {% set sev = (alarm.severity or 'info')|lower %}
+      <div class="alarm {{ sev }}">
+        <div class="head"><div class="flex"><span class="pill {% if sev in ['critical','high'] %}red{% elif sev in ['warning','medium'] %}yellow{% else %}blue{% endif %}">{{ alarm.severity }}</span><span>{{ alarm.type }}</span></div><div class="id">{{ alarm.id }}</div></div>
+        <div class="reco">→ {{ alarm.recommended_action }}</div>
+      </div>
       {% else %}
-      <li class="muted">No alarms.</li>
+      <div class="muted">No alarms.</div>
       {% endfor %}
-    </ul>
+    </div>
   </article>
-  <article class="card">
-    <h3>Checkpoint results</h3>
-    <ul>
-      {% for checkpoint in artifact.checkpoint_results %}
-      <li>{{ checkpoint.name }} — {% if checkpoint.passed %}pass{% else %}fail{% endif %}</li>
-      {% else %}
-      <li class="muted">No checkpoint results.</li>
-      {% endfor %}
-    </ul>
+  <article class="panel">
+    <div class="panel-header"><h3>Checkpoint results</h3></div>
+    <div class="panel-body tight">
+      <table>
+        <thead><tr><th>name</th><th>status</th></tr></thead>
+        <tbody>
+          {% for checkpoint in artifact.checkpoint_results %}
+          <tr><td class="mono">{{ checkpoint.name }}</td><td><span class="pill {% if checkpoint.passed %}green{% else %}red{% endif %}">{% if checkpoint.passed %}pass{% else %}fail{% endif %}</span></td></tr>
+          {% else %}
+          <tr><td colspan="2" class="muted">No checkpoint results.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </article>
 </section>
 {% endblock %}

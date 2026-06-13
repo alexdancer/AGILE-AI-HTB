@@ -5,6 +5,14 @@
 <h1 class="page-title">Task board</h1>
 <p class="page-sub">estimate task · ready to launch · running work · review gates · done · blocked</p>
 
+<form method="post" action="/tasks/estimate-form" style="margin-bottom:24px;display:flex;gap:10px;align-items:flex-end">
+  <div style="flex:1">
+    <label for="intake-description">Describe a coding task</label>
+    <input type="text" id="intake-description" name="description" placeholder="e.g. Add a save command to the CLI" required>
+  </div>
+  <button type="submit" class="primary">Estimate task</button>
+</form>
+
 <section class="columns">
   {% for column in columns %}
   <article class="column">
@@ -17,7 +25,20 @@
       {% if task.recommended_model %}<p class="mono">Model: {{ task.recommended_model }}</p>{% endif %}
       {% if task.actual_tokens is not none %}<p class="mono">Actual: {{ "{:,}".format(task.actual_tokens) }} tokens</p>{% endif %}
       {% if column == 'Estimated' and not has_verified_worker_adapter %}<p class="muted">Configure Worker Adapter to launch.</p>{% endif %}
+      {% if column in ['Estimated', 'Ready'] and has_verified_worker_adapter %}
+      <form method="post" action="/tasks/{{ task.id }}/launch">
+        <input type="hidden" name="proxy_url" value="{{ default_proxy_url }}">
+        <button type="submit">Launch task</button>
+      </form>
+      {% endif %}
+      {% if column == 'Running' %}
+      <form method="post" action="/tasks/{{ task.id }}/refresh">
+        <button type="submit">Refresh status</button>
+      </form>
+      {% endif %}
+      {% if task.metadata.launch_blocked_reason %}<p class="muted">{{ task.metadata.launch_blocked_reason }}</p>{% endif %}
       {% if column == 'Blocked' and task.metadata.blocked_reason %}<p class="muted">{{ task.metadata.blocked_reason }}</p>{% endif %}
+      {% if column == 'Blocked' and task.metadata.requires_manual_estimate %}<p class="muted">Manual estimate required</p>{% endif %}
       {% if task.session_id %}<p><a href="/sessions/{{ task.session_id }}">Session report</a></p>{% endif %}
     </div>
     {% else %}

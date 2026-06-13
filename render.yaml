@@ -1,0 +1,33 @@
+# Render Blueprint — AGILE-AI-HTB
+# Deploy with: render blueprint sync (or auto-sync on push if enabled)
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: agile-ai-htb
+    runtime: docker
+    region: oregon
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: TOKEN_TRACKER_DATABASE_PATH
+        value: /data/harness.db
+      - key: TOKEN_TRACKER_GUARDRAILS_PATH
+        value: /app/guardrails.yaml
+      - key: TOKEN_TRACKER_PORTAL_COOKIE_SECURE
+        value: "true"
+      - key: TOKEN_TRACKER_TIMEZONE
+        value: UTC
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: PYTHONDONTWRITEBYTECODE
+        value: "1"
+      # Secrets — set manually in Render dashboard
+      - key: TOKEN_TRACKER_PORTAL_TOKEN
+        sync: false
+      - key: PROVIDER_API_KEY
+        sync: false
+    disk:
+      name: harness-data
+      mountPath: /data
+      sizeGB: 1

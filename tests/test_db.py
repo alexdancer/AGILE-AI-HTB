@@ -11,6 +11,7 @@ from agile_ai_htb.db import (
     record_guardrail_snapshot,
     record_token_turn,
     record_tool_trace,
+    update_session_status,
 )
 
 
@@ -41,6 +42,7 @@ def test_init_db_creates_schema_idempotently_with_foreign_keys(tmp_path):
         "guardrail_snapshots",
         "checkpoint_results",
         "action_history",
+        "worker_adapters",
     }.issubset(tables)
     assert foreign_keys_enabled == 1
     assert "usage_kind" in token_turn_columns
@@ -67,6 +69,23 @@ def test_create_and_get_session_round_trips_json_overrides(tmp_path):
     assert loaded["session_key_hash"] == "hash-123"
     assert loaded["guardrail_overrides"] == {"session_cap": {"tokens": 50_000}}
     assert loaded["started_at"]
+
+
+def test_update_session_status_marks_final_state(tmp_path):
+    db_path = tmp_path / "harness.db"
+    init_db(db_path)
+    session = create_session(
+        db_path,
+        task_description="Verify worker",
+        model="claude-haiku",
+        session_key_hash="hash-status",
+        guardrail_overrides={},
+    )
+
+    updated = update_session_status(db_path, session["id"], "completed")
+
+    assert updated["status"] == "completed"
+    assert get_session(db_path, session["id"])["status"] == "completed"
 
 
 def test_session_artifact_rebuilds_persisted_session_rows(tmp_path):

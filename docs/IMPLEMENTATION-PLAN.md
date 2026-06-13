@@ -2,581 +2,437 @@
 
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
-**Goal:** Build a working vertical-slice AGILE-AI-HTB token-tracker harness from the PRD: FastAPI proxy + SQLite session store + declared guardrails + alarms/checkpoints + minimal portal + synthetic demo fixtures.
+**Goal:** Finish the working AGILE-AI-HTB demo by making the portal truthful, tracking Estimator LLM spend as Orchestration Tokens, and proving Worker launch through verified Claude Code/Codex/OpenCode adapter presets.
 
-**Architecture:** Start with deep, testable domain modules for guardrails, governance decisions, alarms, checkpoints, and persistence. Wrap them with a FastAPI app exposing the OpenAI-compatible proxy endpoint, control-plane APIs, and server-rendered portal. Keep LiteLLM behind an adapter so default tests use fakes and live provider calls remain optional.
+**Architecture:** Keep the existing FastAPI + SQLite + Jinja2 portal. First align the current board/task/token schema with the resolved domain model. Then add Estimator LLM as a first-class harness operation. Finally add Worker Setup, Launch Guardrails, and adapter verification so the portal can launch only Workers whose token traffic is proven to pass through the harness proxy.
 
-**Tech Stack:** Python 3.11+, FastAPI, Pydantic, SQLite, PyYAML, LiteLLM, Jinja2, HTMX, Chart.js, pytest.
-
----
-
-## Milestone 0: Repository foundation
-
-### Task 0.1: Create Python project metadata
-
-**Objective:** Add a minimal installable Python project with app and test dependencies.
-
-**Files:**
-- Create: `pyproject.toml`
-- Create: `src/agile_ai_htb/__init__.py`
-- Create: `tests/__init__.py`
-
-**Implementation notes:**
-- Package name: `agile-ai-htb`
-- Python requirement: `>=3.11`
-- Runtime dependencies: `fastapi`, `uvicorn`, `pydantic`, `pyyaml`, `jinja2`, `python-multipart`, `litellm`
-- Test dependencies: `pytest`, `pytest-asyncio`, `httpx`
-- Configure pytest to use `tests/` and add `src/` to import path.
-
-**Verification:**
-- Run: `python -m pip install -e '.[test]'`
-- Run: `python -m pytest -q`
-- Expected: test discovery succeeds; zero tests or initial placeholder tests pass.
-
-### Task 0.2: Add application settings module
-
-**Objective:** Centralize filesystem paths and runtime settings.
-
-**Files:**
-- Create: `src/agile_ai_htb/settings.py`
-- Test: `tests/test_settings.py`
-
-**Behavior:**
-- `Settings` has `database_path`, `guardrails_path`, `timezone`, and `provider_api_key_env` fields.
-- Defaults point to local development values: `harness.db`, `guardrails.yaml`, local timezone, provider API key environment variable name.
-- Environment variables can override paths.
-
-**Verification:**
-- Run: `python -m pytest tests/test_settings.py -q`
-- Expected: defaults and env overrides pass.
+**Tech Stack:** Python 3.11+, FastAPI, Pydantic, SQLite, LiteLLM, Jinja2/HTMX, pytest, Docker.
 
 ---
 
-## Milestone 1: Guardrail configuration and governance decisions
+## Current state and guardrails for implementation
 
-### Task 1.1: Parse guardrail YAML
-
-**Objective:** Load `guardrails.yaml` into typed objects.
-
-**Files:**
-- Create: `src/agile_ai_htb/guardrails.py`
-- Test: `tests/test_guardrails.py`
-- Read fixture: `guardrails.yaml`
-
-**Behavior:**
-- `load_guardrails(path) -> GuardrailConfig`
-- Preserve configured thresholds, max tokens, blocked tools, loop threshold, timeout, tool category limits, notifications, and model routing.
-- Validate zone ordering: `green < yellow <= red`.
-
-**Verification:**
-- Run: `python -m pytest tests/test_guardrails.py -q`
-- Expected: real repo `guardrails.yaml` parses and exposes expected values.
-
-### Task 1.2: Implement budget zone calculation
-
-**Objective:** Calculate green/yellow/red zone from live daily usage and daily cap.
-
-**Files:**
-- Modify: `src/agile_ai_htb/guardrails.py`
-- Test: `tests/test_guardrails.py`
-
-**Behavior:**
-- `get_budget_zone(used_tokens, daily_cap, config) -> Literal['green','yellow','red']`
-- Green is below configured green threshold.
-- Yellow is at or above green threshold and below red threshold.
-- Red is at or above configured yellow threshold.
-- Zero or missing cap remains green and does not divide by zero.
-
-**Verification:**
-- Run: `python -m pytest tests/test_guardrails.py -q`
-- Expected: boundary tests pass at 0%, 59.9%, 60%, 84.9%, 85%, and over 100%.
-
-### Task 1.3: Implement request governance transform
-
-**Objective:** Apply three-layer graduated enforcement to an OpenAI-compatible request body.
-
-**Files:**
-- Create: `src/agile_ai_htb/governance.py`
-- Test: `tests/test_governance.py`
-
-**Behavior:**
-- `apply_governance(request: dict, zone: str, config: GuardrailConfig) -> GovernanceDecision`
-- Prepends or replaces a system message with the configured zone prompt.
-- Clamps `max_tokens` to the configured zone maximum, never increasing a smaller caller-provided value.
-- Removes blocked tools by function/tool name for yellow and red zones.
-- Returns both the transformed request and a decision summary containing zone, blocked tools, and max token clamp.
-
-**Verification:**
-- Run: `python -m pytest tests/test_governance.py -q`
-- Expected: green leaves tools intact; yellow removes exploratory tools; red keeps only delivery-safe tools according to config.
+- Existing repo already has FastAPI app, SQLite persistence, proxy/token recording, portal pages, CLI/Docker work, and tests.
+- Repo is dirty; re-run `git status --short --branch` before each major edit and do not commit unless the user asks.
+- Product UX is portal/API-first. CLI remains operator-only (`serve`, `seed-demo`), not a parallel CRUD workflow.
+- Do not preserve `Backlog` as normal product state. Historical docs may mention it only if clearly marked superseded.
+- Do not silently use a heuristic estimate in product flow when Estimator LLM fails.
+- Default tests must not call paid LLM providers or require locally authenticated Claude/Codex/OpenCode installs.
 
 ---
 
-## Milestone 2: SQLite persistence and session artifacts
+## Implementation status (as of 2026-06-13)
 
-### Task 2.1: Create SQLite schema and database initializer
+### Backend: built and test-covered
 
-**Objective:** Persist sessions, tasks, token turns, tool traces, alarms, snapshots, checkpoints, and action history.
+| Layer | Status | Notes |
+|---|---|---|
+| DB schema (`db.py`) | ✓ | `token_turns.usage_kind`, `worker_adapters` table, `tasks.metadata_json`, migrations |
+| Board columns (`portal.py`) | ✓ | Canonical: Estimated → Ready → Running → Review → Done, plus Blocked |
+| Task CRUD (`tasks.py`) | ✓ | Canonical statuses enforced; non-canonical status → Blocked |
+| Estimator LLM (`estimation.py`) | ✓ | `EstimateResult` shape, fake-LLM test path, `usage_kind='estimation'` persistence |
+| `POST /estimate` route | ✓ | Calls estimator, creates Estimated or Blocked task |
+| Worker adapter presets (`db.py`) | ✓ | Claude Code, Codex, OpenCode seeded on init |
+| Launch guardrails (`launch_guardrails.py`) | ✓ | Adapter configured, verified, workdir valid, model supported, proxy wiring |
+| `POST /tasks/{id}/launch` route | ✓ | Guardrail check → session start via runner |
+| Proxy (`proxy.py`) | ✓ | `/v1/chat/completions`, governance, token recording, alarms |
+| Portal auth (`auth.py`) | ✓ | Cookie-based, login/logout, `require_portal_auth` |
+| Docker / render.yaml | ✓ | Image builds, health check passes |
 
-**Files:**
-- Create: `src/agile_ai_htb/db.py`
-- Test: `tests/test_db.py`
+### Portal UI: display-only, no intake forms
 
-**Behavior:**
-- `init_db(path)` creates all tables idempotently.
-- Tables include timestamps and JSON text columns for flexible artifact payloads.
-- Foreign keys are enabled.
+| Page | Renders | Can interact? |
+|---|---|---|
+| `/login` | ✓ | ✓ (token form) |
+| `/dashboard` | ✓ | ✗ (read-only metrics) |
+| `/board` | ✓ | ✗ **No task intake form.** Cards displayed but no text input to create/estimate a task. Launch buttons hidden because no verified worker adapter exists. |
+| `/settings/workers` | ✓ | ✗ **No configuration form.** Three preset cards visible but no way to set workdir, models, or trigger verification. |
+| `/sessions` | ✓ | ✗ (read-only list) |
+| `/sessions/{id}` | ✓ | ✗ (read-only report) |
 
-**Verification:**
-- Run: `python -m pytest tests/test_db.py -q`
-- Expected: schema initializes twice without error and expected tables exist.
+### What the portal needs to close the loop
 
-### Task 2.2: Implement repository functions
+1. **Task intake form on `/board`** — text input + "Estimate task" button that POSTs to `/estimate`, HTMX-swaps the new card into the Estimated column.
+2. **Worker adapter configuration on `/settings/workers`** — form per adapter card to set `workdir`, select supported models, and trigger verification (which calls the adapter's verification template against a test prompt).
+3. **Launch button conditional logic** — currently hidden when no verified adapter exists. Needs to show when `has_verified_worker_adapter` is true AND the task has a matching model.
 
-**Objective:** Provide a small persistence API for the app and domain modules.
+Until these three portal forms exist, the demo loop requires `curl` for every step. The backend can handle every state transition correctly — the portal just can't drive them yet.
+
+---
+
+## Slice 1: Truthful board and token usage labeling
+
+### Task 1.1: Add `usage_kind` to token turns
+
+**Objective:** Label token spend as Worker or Orchestration spend while keeping daily totals inclusive.
 
 **Files:**
 - Modify: `src/agile_ai_htb/db.py`
-- Test: `tests/test_db.py`
+- Modify: `tests/test_db.py`
+- Inspect callers: `src/agile_ai_htb/routes/proxy.py`, `src/agile_ai_htb/routes/portal.py`, tests that call `record_token_turn`
 
-**Behavior:**
-- Create/get session with task description, model, session key hash/reference, started timestamp, status, and guardrail overrides JSON.
-- Record token turn with model, prompt tokens, completion tokens, total tokens, cost, and raw usage JSON.
-- Record guardrail snapshot with zone and governance decision JSON.
-- Record alarms and checkpoint results.
-- Build a session artifact dictionary from persisted rows.
+**Steps:**
+1. Add `usage_kind text not null default 'worker'` to `token_turns` schema.
+2. Make `init_db()` migrate existing databases by adding the column when missing.
+3. Extend `record_token_turn(..., usage_kind='worker')` and persisted artifact rows.
+4. Add helper(s) for token totals by kind if useful for portal/dashboard.
+5. Update existing tests/callers to expect default `worker`.
 
 **Verification:**
 - Run: `python -m pytest tests/test_db.py -q`
-- Expected: create session, record rows, and rebuild artifact all work against temporary SQLite.
+- Run: `python -m pytest tests/test_proxy_api.py tests/test_proxy_streaming.py -q`
+- Expected: existing proxy token rows persist as `worker`; old DB migration path passes.
+
+### Task 1.2: Replace board columns with canonical states
+
+**Objective:** Make the live portal match the domain model.
+
+**Files:**
+- Modify: `src/agile_ai_htb/routes/portal.py`
+- Modify: `src/agile_ai_htb/templates/board.html`
+- Modify: `tests/test_portal.py`
+
+**Steps:**
+1. Change board columns to `Estimated`, `Ready`, `Running`, `Review`, `Done`, `Blocked`.
+2. Remove `Other` as normal display state; decide whether unexpected statuses map to `Blocked` or a visually hidden/debug fallback in tests.
+3. Update board subtitle and task card copy away from backlog language.
+4. Add Launch-disabled messaging on Estimated cards when no verified Worker Adapter exists: “Configure Worker Adapter to launch.”
+5. Update portal tests for six canonical columns and no Backlog.
+
+**Verification:**
+- Run: `python -m pytest tests/test_portal.py::test_board_renders_columns_and_task_cards -q`
+- Run: `python -m pytest tests/test_portal.py -q`
+- Expected: board HTML shows canonical states and no normal Backlog column.
+
+### Task 1.3: Update task defaults and demo seed states
+
+**Objective:** Stop creating ordinary Backlog tasks in API/demo paths.
+
+**Files:**
+- Modify: `src/agile_ai_htb/routes/tasks.py`
+- Modify: `src/agile_ai_htb/db.py`
+- Modify: `src/agile_ai_htb/demo_seed.py`
+- Modify: `tests/test_tasks_api.py`
+- Modify: `tests/test_demo_seed.py`
+- Modify: `docs/mockup/js/fixtures.js` if present and still used by mockup/demo
+
+**Steps:**
+1. Change task creation default status from `Backlog` to `Estimated` only when estimate/model are supplied; otherwise prefer the Estimate task flow from Task 2.2.
+2. For direct `POST /tasks` without estimate/model, either return `Blocked` with metadata reason or require the estimate flow. Choose the least invasive route that keeps existing API usable without lying.
+3. Update demo seeded tasks to canonical states, likely `Estimated` for planned tasks and `Running`/`Review`/`Done` only when demo evidence exists.
+4. Update tests that assert Backlog.
+
+**Verification:**
+- Run: `python -m pytest tests/test_tasks_api.py tests/test_demo_seed.py -q`
+- Expected: no test expects Backlog as normal state.
 
 ---
 
-## Milestone 3: Alarms and checkpoints
+## Slice 2: Estimator LLM as tracked orchestration
 
-### Task 3.1: Implement alarm generation
+### Task 2.1: Add estimator settings
 
-**Objective:** Convert guardrail deviations into structured alarm objects.
+**Objective:** Configure Estimator LLM without building a settings UI.
 
 **Files:**
-- Create: `src/agile_ai_htb/alarms.py`
-- Test: `tests/test_alarms.py`
+- Modify: `src/agile_ai_htb/settings.py`
+- Modify: `tests/test_settings.py`
 
-**Behavior:**
-- Stable alarm types: `BUDGET_YELLOW`, `BUDGET_RED`, `DAILY_CAP_EXCEEDED`, `SESSION_CAP_EXCEEDED`, `LOOP_DETECTED`, `SESSION_TIMEOUT`, `TOOL_CATEGORY_BIAS`, `CHECKPOINT_FAIL`.
-- Alarm object includes id, type, severity, session_id, timestamp, context, recommended_action.
-- Budget zone alarms fire once per session per zone transition.
-- Daily/session cap alarms fire when totals cross caps.
+**Steps:**
+1. Add `estimator_model` setting from `TOKEN_TRACKER_ESTIMATOR_MODEL`.
+2. Default to a cheap model from configured simple model routing if no env var is set, or a documented static default if guardrails are unavailable at settings construction time.
+3. Keep existing `provider_api_key_env` behavior.
 
 **Verification:**
-- Run: `python -m pytest tests/test_alarms.py -q`
-- Expected: each alarm has correct severity and context; duplicate zone alarms are suppressed.
+- Run: `python -m pytest tests/test_settings.py -q`
+- Expected: env override and default behavior pass.
 
-### Task 3.2: Implement loop detection
+### Task 2.2: Replace `/estimate` heuristic behavior with Estimator LLM contract
 
-**Objective:** Detect repeated identical tool calls.
-
-**Files:**
-- Modify: `src/agile_ai_htb/alarms.py`
-- Test: `tests/test_alarms.py`
-
-**Behavior:**
-- `detect_loop(tool_trace, threshold) -> Alarm | None`
-- Consecutive identical `(tool_name, input_hash)` calls at threshold produce `LOOP_DETECTED`.
-- Non-consecutive repetition does not trigger unless it becomes consecutive again.
-
-**Verification:**
-- Run: `python -m pytest tests/test_alarms.py::test_loop_detection -q`
-- Expected: threshold behavior passes.
-
-### Task 3.3: Implement checkpoint evaluator
-
-**Objective:** Evaluate persisted artifacts at session boundaries.
+**Objective:** Estimate through LiteLLM and return structured output; failed estimation is explicit.
 
 **Files:**
-- Create: `src/agile_ai_htb/checkpoints.py`
-- Test: `tests/test_checkpoints.py`
+- Modify: `src/agile_ai_htb/estimation.py`
+- Modify: `src/agile_ai_htb/routes/tasks.py`
+- Modify: `tests/test_tasks_api.py`
+- Possibly modify: `src/agile_ai_htb/llm.py`
 
-**Behavior:**
-- `evaluate_checkpoints(artifact, config) -> list[CheckpointResult]`
-- Budget health compares session spend to configured session cap or a fair-share heuristic.
-- Stuck-loop score fails if loop alarm count is 3 or more.
-- Tool diversity passes if at least 3 distinct categories appear, unless red-zone restrictions explain a review condition.
-- Timeout respect fails if a timeout alarm exists.
-
-**Verification:**
-- Run: `python -m pytest tests/test_checkpoints.py -q`
-- Expected: pass/fail cases are deterministic from artifact dictionaries.
-
----
-
-## Milestone 4: Control-plane API
-
-### Task 4.1: Create FastAPI app factory
-
-**Objective:** Wire settings, database, guardrails, templates, and route modules.
-
-**Files:**
-- Create: `src/agile_ai_htb/app.py`
-- Create: `src/agile_ai_htb/routes/__init__.py`
-- Test: `tests/test_app.py`
-
-**Behavior:**
-- `create_app(settings: Settings | None = None) -> FastAPI`
-- Startup initializes SQLite and loads guardrails.
-- Health endpoint `GET /health` returns status.
-
-**Verification:**
-- Run: `python -m pytest tests/test_app.py -q`
-- Expected: health endpoint returns 200 with `{"status":"ok"}`.
-
-### Task 4.2: Add session API
-
-**Objective:** Support session creation and reporting.
-
-**Files:**
-- Create: `src/agile_ai_htb/routes/sessions.py`
-- Modify: `src/agile_ai_htb/app.py`
-- Test: `tests/test_sessions_api.py`
-
-**Behavior:**
-- `POST /session/start` accepts task description, model, optional budget, optional guardrail overrides.
-- Returns session id, session-scoped API key, starting zone, and report URL.
-- `GET /session/{id}/report` returns token totals, current zone, alarms, checkpoints, tool breakdown placeholder, and task metadata.
-- `GET /session/{id}/artifact` returns raw artifact.
-- `POST /session/{id}/checkpoint/evaluate` stores and returns checkpoint results.
-
-**Verification:**
-- Run: `python -m pytest tests/test_sessions_api.py -q`
-- Expected: session lifecycle works against temporary DB.
-
-### Task 4.3: Add task and estimation API
-
-**Objective:** Populate the AGILE board and produce simple deterministic estimates.
-
-**Files:**
-- Create: `src/agile_ai_htb/routes/tasks.py`
-- Create: `src/agile_ai_htb/estimation.py`
-- Modify: `src/agile_ai_htb/app.py`
-- Test: `tests/test_tasks_api.py`
-
-**Behavior:**
-- `POST /tasks` creates a task in Backlog.
-- `PUT /tasks/{id}` updates status, estimate, model, or description.
-- `POST /estimate` returns token estimate, complexity, recommended model, optional budget-aware downgrade note.
-- Initial estimator can be deterministic heuristics based on keywords and description length; no paid model call in default path.
+**Steps:**
+1. Define an `EstimateResult` shape containing token estimate, complexity, recommended model, confidence, rationale, assumptions, risk flags, spike recommendation, budget note, and source.
+2. Build a strict JSON prompt with lightweight project context and model-routing policy.
+3. Call the existing LiteLLM client path with the estimator model.
+4. Parse and validate JSON. Invalid/missing fields raise a typed estimator failure.
+5. In tests, inject/fake the LLM client instead of calling a provider.
+6. Remove or quarantine the keyword heuristic so it is not product fallback.
 
 **Verification:**
 - Run: `python -m pytest tests/test_tasks_api.py -q`
-- Expected: estimates classify easy/modest/complex demo tasks and apply budget-aware downgrade.
+- Expected: successful fake LLM estimation returns structured output; fake invalid response returns failure/Blocked path, not heuristic values.
 
-### Task 4.4: Add alarm action API
+### Task 2.3: Persist estimator token usage as `estimation`
 
-**Objective:** Let humans respond to alarms through the control plane.
+**Objective:** Count Estimator LLM spend against the daily budget as Orchestration Tokens.
 
 **Files:**
-- Create: `src/agile_ai_htb/routes/alarms.py`
-- Modify: `src/agile_ai_htb/app.py`
-- Test: `tests/test_alarms_api.py`
+- Modify: `src/agile_ai_htb/estimation.py`
+- Modify: `src/agile_ai_htb/db.py` if helper needed
+- Modify: `tests/test_tasks_api.py` or add focused estimator tests
 
-**Behavior:**
-- `GET /alarms` lists alarms with filters by session, type, severity, and resolved state.
-- `POST /alarms/{id}/resolve` records action: continue, abort_session, raise_budget, or adjust_guardrail.
-- Actions update persisted state where applicable, but never silently discard the alarm history.
+**Steps:**
+1. Create a system/internal session or token-record path for estimator calls. Keep it clearly labeled so it does not appear as task implementation actuals.
+2. Record estimator prompt/completion/total tokens with `usage_kind='estimation'`.
+3. Store estimator metadata on the task.
+4. Ensure dashboard daily totals include estimation tokens.
 
 **Verification:**
-- Run: `python -m pytest tests/test_alarms_api.py -q`
-- Expected: alarms can be listed and resolved with action history.
+- Run: `python -m pytest tests/test_tasks_api.py tests/test_db.py -q`
+- Expected: estimation token row exists with `usage_kind='estimation'`; task actual tokens remain unset.
+
+### Task 2.4: Implement Estimate task intake and manual fallback
+
+**Objective:** Make task intake create Estimated or Blocked tasks according to estimator outcome.
+
+**Files:**
+- Modify: `src/agile_ai_htb/routes/tasks.py`
+- Modify: `src/agile_ai_htb/templates/board.html`
+- Modify: `tests/test_tasks_api.py`
+- Modify: `tests/test_portal.py`
+
+**Steps:**
+1. Add/adjust endpoint used by portal intake so submitting a description runs estimation immediately.
+2. On success, create/update task as `Estimated` with estimate/model/metadata.
+3. On estimator unavailable/invalid, create task as `Blocked` with metadata reason and manual estimate/model requirements.
+4. Support manual estimate/model update and mark `estimation_source='manual'`.
+5. Show blocked manual-entry state in board HTML.
+
+**Verification:**
+- Run: `python -m pytest tests/test_tasks_api.py tests/test_portal.py -q`
+- Expected: success path creates Estimated; failure path creates Blocked/manual; no hidden heuristic fallback.
 
 ---
 
-## Milestone 5: LiteLLM proxy data plane
+## Slice 3: Portal analytics and current docs/demo cleanup
 
-### Task 5.1: Create LiteLLM adapter
+### Task 3.1: Show Worker vs Orchestration token split
 
-**Objective:** Isolate provider forwarding and usage extraction.
-
-**Files:**
-- Create: `src/agile_ai_htb/llm.py`
-- Test: `tests/test_llm_adapter.py`
-
-**Behavior:**
-- `LLMClient.acompletion(request: dict)` calls `litellm.acompletion(**request)`.
-- `extract_usage(response)` returns prompt tokens, completion tokens, total tokens.
-- `calculate_cost(model, prompt_tokens, completion_tokens)` wraps LiteLLM cost calculation and safely returns `0` or `None` when pricing is unavailable.
-- Streaming helper reads usage from the final usage chunk only.
-
-**Verification:**
-- Run: `python -m pytest tests/test_llm_adapter.py -q`
-- Expected: fake responses and fake streaming chunks produce correct usage.
-
-### Task 5.2: Implement `/v1/chat/completions` non-streaming path
-
-**Objective:** Govern a request, forward it, persist usage, and return provider response.
+**Objective:** Make orchestration spend visible in the portal.
 
 **Files:**
-- Create: `src/agile_ai_htb/routes/proxy.py`
-- Modify: `src/agile_ai_htb/app.py`
-- Test: `tests/test_proxy_api.py`
+- Modify: `src/agile_ai_htb/routes/portal.py`
+- Modify: `src/agile_ai_htb/templates/dashboard.html`
+- Modify: `src/agile_ai_htb/templates/session_report.html`
+- Modify: `tests/test_portal.py`
 
-**Behavior:**
-- Auth header bearer token maps to a session key.
-- Current daily usage determines zone before forwarding.
-- Governance transform is applied before calling the LLM adapter.
-- Usage and guardrail snapshot are persisted after response.
-- Budget alarms are generated and persisted after token recording.
-- Response remains OpenAI-compatible.
-
-**Verification:**
-- Run: `python -m pytest tests/test_proxy_api.py -q`
-- Expected: fake LLM receives transformed request; DB contains token turn, snapshot, and alarms.
-
-### Task 5.3: Implement streaming proxy path
-
-**Objective:** Support `stream: true` while preserving accurate final usage accounting.
-
-**Files:**
-- Modify: `src/agile_ai_htb/routes/proxy.py`
-- Modify: `src/agile_ai_htb/llm.py`
-- Test: `tests/test_proxy_streaming.py`
-
-**Behavior:**
-- Pass through streaming chunks to the caller.
-- Request `stream_options={"include_usage": True}` when streaming.
-- Do not sum intermediate chunk usage.
-- Persist usage only from the final usage chunk.
-- Persist a guardrail snapshot for the request.
-
-**Verification:**
-- Run: `python -m pytest tests/test_proxy_streaming.py -q`
-- Expected: streamed chunks reach client and final persisted usage equals final chunk usage only.
-
----
-
-## Milestone 6: Portal vertical slice
-
-### Task 6.1: Add base templates and dashboard route
-
-**Objective:** Render a usable dashboard without a frontend build step.
-
-**Files:**
-- Create: `src/agile_ai_htb/routes/portal.py`
-- Create: `src/agile_ai_htb/templates/base.html`
-- Create: `src/agile_ai_htb/templates/dashboard.html`
-- Modify: `src/agile_ai_htb/app.py`
-- Test: `tests/test_portal.py`
-
-**Behavior:**
-- `GET /dashboard` renders global daily budget usage, session count, alarm count, and links to task board/session history.
-- Include HTMX and Chart.js via CDN script tags.
-- No secrets or provider keys appear in HTML.
+**Steps:**
+1. Compute daily total including all usage kinds.
+2. Compute Worker token total and Orchestration token total separately.
+3. Show split in dashboard.
+4. Ensure session reports do not label estimation/adapter verification as task actuals.
 
 **Verification:**
 - Run: `python -m pytest tests/test_portal.py -q`
-- Expected: dashboard returns 200 HTML containing budget and alarm sections.
+- Expected: dashboard renders daily total and usage-kind split without leaking secrets.
 
-### Task 6.2: Add AGILE board view
+### Task 3.2: Update current product/demo docs away from Backlog
 
-**Objective:** Show tasks and session lifecycle in portal form.
-
-**Files:**
-- Create: `src/agile_ai_htb/templates/board.html`
-- Modify: `src/agile_ai_htb/routes/portal.py`
-- Test: `tests/test_portal.py`
-
-**Behavior:**
-- `GET /board` renders columns Backlog, Estimated, Running, Review, Done.
-- Each task card shows description, estimate, recommended model, actual token cost if available, and session link if available.
-- Board uses server-rendered HTML; HTMX actions can be progressive enhancements.
-
-**Verification:**
-- Run: `python -m pytest tests/test_portal.py::test_board_renders_columns -q`
-- Expected: all board columns render.
-
-### Task 6.3: Add session report view
-
-**Objective:** Render per-session audit details.
+**Objective:** Remove demo-facing contradictions before implementation demo.
 
 **Files:**
-- Create: `src/agile_ai_htb/templates/session_report.html`
-- Modify: `src/agile_ai_htb/routes/portal.py`
-- Test: `tests/test_portal.py`
+- Modify: `docs/DEMO.md`
+- Modify: `docs/HARNESS-SUMMARY.md`
+- Modify: `docs/mockup/portal-v2.html`
+- Modify: `docs/mockup/js/fixtures.js` if present
+- Leave: `docs/IMPLEMENTATION-PLAN.md` current by this plan
 
-**Behavior:**
-- `GET /sessions/{id}` renders token totals, zone timeline, alarms, checkpoint results, and raw artifact link.
-- Alarmed/checkpoint-failed sessions visibly require review.
+**Steps:**
+1. Replace Backlog demo flow with Estimate task intake.
+2. Update board state descriptions to canonical columns.
+3. Add Worker Setup / Launch disabled / verified adapter demo beat.
+4. Keep all demo IDs and dates obviously synthetic.
 
 **Verification:**
-- Run: `python -m pytest tests/test_portal.py::test_session_report_renders -q`
-- Expected: report HTML contains totals and alarm/checkpoint sections.
+- Run: `python -m pytest tests/test_demo_fake_data_invariants.py -q` if present.
+- Run: `python -m pytest tests/test_demo_seed.py -q`.
+- Search: `Backlog|Create task` in current docs/code; only historical/superseded references should remain.
 
 ---
 
-## Milestone 7: Demo fixtures and synthetic project
+## Slice 4: Worker Adapter model and setup UI
 
-### Task 7.1: Create synthetic `snip` scaffold
+### Task 4.1: Add Worker Adapter persistence
 
-**Objective:** Add the demo project starting state described in `docs/DEMO.md`.
-
-**Files:**
-- Create: `demo/snip/pyproject.toml`
-- Create: `demo/snip/src/snip/__init__.py`
-- Create: `demo/snip/src/snip/cli.py`
-- Create: `demo/snip/src/snip/store.py`
-- Create: `demo/snip/tests/test_scaffold.py`
-
-**Behavior:**
-- CLI parser exists with command names but commands intentionally return not-implemented messages.
-- Store has constructor but no persistence methods yet.
-- The scaffold is small and safe for live agent tasks.
-
-**Verification:**
-- Run: `cd demo/snip && python -m pytest -q`
-- Expected: scaffold tests pass and confirm command placeholders.
-
-### Task 7.2: Seed demo tasks in harness
-
-**Objective:** Provide the six demo board tasks from `docs/DEMO.md`.
+**Objective:** Store first-class Claude Code, Codex, and OpenCode adapter configuration and verification state.
 
 **Files:**
-- Create: `src/agile_ai_htb/demo_seed.py`
-- Test: `tests/test_demo_seed.py`
+- Modify: `src/agile_ai_htb/db.py`
+- Add or modify tests: `tests/test_db.py`, possibly `tests/test_worker_adapters.py`
 
-**Behavior:**
-- `seed_demo_tasks(db_path)` inserts T1-T6 if they do not already exist.
-- Seeded tasks include description, complexity, estimate, and recommended model.
-- Function is idempotent.
+**Steps:**
+1. Add `worker_adapters` table with id/kind/name/workdir/config JSON/supported models/default flag/verification status/evidence timestamps.
+2. Seed or expose default preset rows for `claude_code`, `codex`, and `opencode`.
+3. Provide CRUD-ish repository helpers for listing/updating/verifying adapter status.
+4. Store verification evidence without secrets.
 
 **Verification:**
-- Run: `python -m pytest tests/test_demo_seed.py -q`
-- Expected: six tasks inserted once.
+- Run: `python -m pytest tests/test_db.py tests/test_worker_adapters.py -q`
+- Expected: presets list, config updates persist, verification state round-trips.
 
-### Task 7.3: Add fake-data invariant tests
+### Task 4.2: Add `/settings/workers` portal page
 
-**Objective:** Prove demo artifacts contain only obviously synthetic values.
+**Objective:** Make Worker Setup the source of truth for adapter status.
 
 **Files:**
-- Create: `tests/test_demo_fake_data_invariants.py`
+- Modify: `src/agile_ai_htb/routes/portal.py` or add settings route module
+- Create: `src/agile_ai_htb/templates/workers.html`
+- Modify: `src/agile_ai_htb/templates/base.html`
+- Test: `tests/test_portal.py` or `tests/test_worker_settings.py`
 
-**Behavior:**
-- Test class name: `TokenTrackerHarnessDemoFakeDataInvariantTests`.
-- Scans demo files for obvious live credential markers and real-looking API tokens.
-- Requires demo text or generated demo records to be clearly synthetic where applicable.
-- Ensures no `.env` files or real secrets are introduced under `demo/`.
+**Steps:**
+1. Add navigation link to Worker Setup.
+2. Render Claude Code, Codex, and OpenCode cards.
+3. Show configured/unconfigured, verified/unverified, launchable/non-launchable, last evidence, and default adapter.
+4. Do not show secrets or session keys.
 
 **Verification:**
-- Run: `python -m pytest tests/test_demo_fake_data_invariants.py -q`
-- Expected: fake-data invariant tests pass.
+- Run: `python -m pytest tests/test_portal.py tests/test_worker_settings.py -q`
+- Expected: all three presets visible; unverified adapters are clearly non-launchable.
 
 ---
 
-## Milestone 8: Local run, Docker, and docs
+## Slice 5: Launch Guardrails and adapter verification
 
-### Task 8.1: Add local CLI entrypoint
+### Task 5.1: Implement Launch Guardrail service
 
-**Objective:** Make the harness easy to start locally.
-
-**Files:**
-- Create: `src/agile_ai_htb/__main__.py`
-- Modify: `pyproject.toml`
-- Test: `tests/test_cli_entrypoint.py`
-
-**Behavior:**
-- Console script `htb` is the AGILE-AI-HTB operator command.
-- Python package distribution is `agile-ai-htb`; Python import package is `agile_ai_htb`.
-- CLI is an operator entrypoint only; task/session/alarm workflows remain portal/API-first. No CRUD CLI is added for Milestone 8.
-- Bare `htb` defaults to `htb serve`.
-- `htb serve` starts uvicorn with `agile_ai_htb.app:create_app` using factory mode.
-- `htb serve` supports host, port, database path, and guardrails path arguments; CLI arguments override environment defaults.
-- `htb seed-demo` inserts the synthetic DEMO snip tasks into the harness database.
-
-**Verification:**
-- Run: `htb --help`
-- Run: `htb serve --help`
-- Run: `htb seed-demo --help`
-- Run: `python -m pytest tests/test_cli_entrypoint.py -q`
-- Expected: help prints and CLI tests pass.
-
-### Task 8.2: Add Docker and compose files
-
-**Objective:** Package the single-process app for demo startup.
+**Objective:** Centralize pre-launch checks.
 
 **Files:**
-- Create: `Dockerfile`
-- Create: `docker-compose.yml`
-- Create: `.dockerignore`
+- Create: `src/agile_ai_htb/launch_guardrails.py`
+- Test: `tests/test_launch_guardrails.py`
 
-**Behavior:**
-- Container installs the package and runs the harness on port 8000.
-- SQLite database is persisted in a mounted volume.
-- `guardrails.yaml` is mounted/readable in the container.
+**Steps:**
+1. Define checks: adapter configured, token tracking verified, workdir valid, selected model allowed/compatible, session key/proxy wiring available.
+2. Return structured pass/fail results with human-readable reasons.
+3. Keep runtime Guardrails separate from Launch Guardrails.
 
 **Verification:**
-- Run: `docker compose build`
-- Run: `docker compose up -d`
-- Run: `curl -fsS http://localhost:8000/health`
-- Run: `docker compose down`
-- Expected: health endpoint returns OK.
+- Run: `python -m pytest tests/test_launch_guardrails.py -q`
+- Expected: each failure mode blocks launch with precise reason.
 
-### Task 8.3: Add operator README
+### Task 5.2: Implement adapter command builders per preset
 
-**Objective:** Document setup, run, demo, and verification commands.
+**Objective:** Avoid pretending all CLIs use identical flags/env vars.
 
 **Files:**
-- Create: `README.md`
+- Create: `src/agile_ai_htb/worker_adapters.py`
+- Test: `tests/test_worker_adapters.py`
 
-**Behavior:**
-- Includes local install command, test command, Docker command, portal URL, `htb seed-demo` command, and optional live LiteLLM smoke test instructions.
-- Clearly states that provider keys belong in environment variables and are not stored in repo.
+**Steps:**
+1. Define shared adapter interface: build verification command, build launch command, env injection, supported model check.
+2. Implement preset classes/builders for Claude Code, Codex, and OpenCode.
+3. Use documented/current CLI config patterns where verified; otherwise mark command template configurable.
+4. Keep custom command optional only if it helps tests or extensibility.
 
 **Verification:**
-- Run commands from README where possible: install, tests, local health check.
-- Expected: documented default path works without provider API keys.
+- Run: `python -m pytest tests/test_worker_adapters.py -q`
+- Expected: each preset builds a command/env plan without leaking provider keys.
+
+### Task 5.3: Implement adapter verification sentinel flow
+
+**Objective:** Prove token tracking through a real adapter launch path.
+
+**Files:**
+- Modify: `src/agile_ai_htb/worker_adapters.py`
+- Modify: `src/agile_ai_htb/db.py`
+- Add route if needed: `src/agile_ai_htb/routes/workers.py`
+- Test: `tests/test_worker_adapter_verification.py`
+
+**Steps:**
+1. Create disposable verification session.
+2. Launch selected adapter with sentinel prompt.
+3. Pass harness proxy URL and session-scoped API key according to adapter preset.
+4. Require exact sentinel response `AGILE_AI_HTB_ADAPTER_OK`.
+5. Verify a token row exists with `usage_kind='adapter_verification'` and selected model.
+6. Verify no tool traces/file writes occurred.
+7. Persist verification evidence/status.
+
+**Verification:**
+- Run: `python -m pytest tests/test_worker_adapter_verification.py -q`
+- Expected: fake subprocess success marks adapter launchable only when sentinel and token row are present; missing token row fails.
 
 ---
 
-## Milestone 9: End-to-end vertical slice verification
+## Slice 6: Task launch and one live adapter proof
 
-### Task 9.1: Add full local integration test
+### Task 6.1: Add task launch endpoint and board wiring
 
-**Objective:** Prove the core PRD workflow works without paid provider calls.
-
-**Files:**
-- Create: `tests/test_vertical_slice.py`
-
-**Behavior:**
-- Start app with temp SQLite and real `guardrails.yaml`.
-- Create a task.
-- Estimate the task.
-- Start a session.
-- Send fake-authenticated `/v1/chat/completions` request using fake LLM adapter.
-- Verify transformed request, persisted usage, alarm behavior, report payload, and dashboard HTML.
-
-**Verification:**
-- Run: `python -m pytest tests/test_vertical_slice.py -q`
-- Expected: complete vertical slice passes.
-
-### Task 9.2: Run project quality gate
-
-**Objective:** Verify the implementation is ready for demo iteration.
+**Objective:** Move accepted tasks from Ready to Running only when Launch Guardrails pass.
 
 **Files:**
-- No new files.
+- Modify: `src/agile_ai_htb/routes/tasks.py` or add launch route
+- Modify: `src/agile_ai_htb/templates/board.html`
+- Test: `tests/test_tasks_api.py`, `tests/test_portal.py`
+
+**Steps:**
+1. Add endpoint/action to accept estimate/model/adapter and evaluate Launch Guardrails.
+2. If checks fail, keep task Estimated or Blocked according to failure type and show reason.
+3. If checks pass, create session, generate session key, launch adapter subprocess, and move task Running.
+4. On session completion, update task to Review or Done according to alarms/checkpoints.
 
 **Verification:**
-- Run: `python -m pytest -q`
-- Run: `python -m compileall src tests`
-- Run: `git status --short`
-- Expected: tests pass, compile succeeds, and changed files are reviewable.
+- Run: `python -m pytest tests/test_tasks_api.py tests/test_launch_guardrails.py tests/test_portal.py -q`
+- Expected: unverified adapters cannot launch; verified adapter can start a governed session in tests.
+
+### Task 6.2: Manual live verification for one adapter
+
+**Objective:** Prove the demo environment can launch one real Worker Adapter through the harness.
+
+**Files:**
+- Update: `README.md` or `docs/DEMO.md` with exact local setup notes after proof
+
+**Steps:**
+1. Choose the locally available adapter among Claude Code, Codex, and OpenCode.
+2. Configure its Worker Setup entry.
+3. Run adapter verification from the portal or API.
+4. Confirm sentinel output and token row persisted as `adapter_verification`.
+5. Launch one Estimated task and confirm Worker token row persisted as `worker`.
+
+**Verification:**
+- Run targeted command/API flow used by the portal.
+- Run: `python -m pytest -q` after any code changes.
+- Expected: one adapter is verified/launchable; the other presets can remain visible as unverified/non-launchable.
 
 ---
 
-## Implementation order and stopping points
+## Slice 7: Final project quality gate
 
-1. Complete Milestones 0-3 first. This proves the core harness rules independently of any web UI.
-2. Complete Milestones 4-5 next. This proves the real proxy/control-plane vertical slice.
-3. Complete Milestone 6. This makes the demo visible.
-4. Complete Milestone 7. This gives the challenge a safe synthetic demo surface.
-5. Complete Milestones 8-9. This packages and verifies the full local artifact.
+### Task 7.1: Run narrow and broad verification
 
-After each milestone, run its targeted tests plus `python -m pytest -q` if the suite remains fast. Do not call real LLM providers in default tests. Use fake adapters for deterministic behavior and reserve live LiteLLM verification for an explicit manual smoke command.
+**Objective:** Ensure the project is demo-ready.
+
+**Commands:**
+- `python -m pytest tests/test_db.py tests/test_tasks_api.py tests/test_portal.py -q`
+- `python -m pytest tests/test_worker_adapters.py tests/test_launch_guardrails.py -q` if those files exist
+- `python -m pytest -q`
+- `python -m compileall src tests`
+- `git status --short --branch`
+
+**Expected:** tests pass, compile succeeds, changed files are reviewable, and no secrets are printed or committed.
+
+### Task 7.2: Final stale-language scan
+
+**Objective:** Catch contradictions before demo.
+
+**Commands:**
+- Search for `Backlog`, `Create task`, heuristic-estimator language, and proxy-only adapter verification claims.
+
+**Expected:** Remaining stale terms are either removed, updated, or explicitly marked historical/superseded.
+
+---
+
+## Suggested execution order
+
+1. Complete Slice 1 first; it removes the biggest product contradiction.
+2. Complete Slice 2 next; it makes estimation credible and tracks Orchestration Tokens.
+3. Complete Slice 3 before showing the portal to anyone.
+4. Complete Slices 4-6 to prove launchability with Claude Code/Codex/OpenCode presets and at least one verified adapter.
+5. Run Slice 7 before final handoff.

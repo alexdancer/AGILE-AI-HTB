@@ -1,0 +1,14 @@
+.git
+.codegraph
+.hermes
+.venv
+.pytest_cache
+__pycache__
+*.py[cod]
+*.egg-info
+build
+dist
+harness.db
+*.db
+.DS_Store
+teach-trailofbits-skills

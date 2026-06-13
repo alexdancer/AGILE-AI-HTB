@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Worker adapters | AGILE-AI-HTB{% endblock %}
+{% block content %}
+<h1 class="page-title">Worker adapters</h1>
+<p class="page-sub">configure adapter presets · verify token tracking · keep secrets out of portal evidence</p>
+
+<section class="grid cols-3">
+  {% for adapter in adapters %}
+  <article class="card">
+    <div class="flex" style="justify-content:space-between;align-items:flex-start">
+      <h2 class="mono" style="font-size:16px;margin:0 0 10px">{{ adapter.name }}</h2>
+      {% if adapter.is_default %}<span class="pill purple">default</span>{% endif %}
+    </div>
+    <p class="muted mono">{{ adapter.id }} · {{ adapter.kind }}</p>
+    <p>
+      {% if adapter.configured %}<span class="pill green">configured</span>{% else %}<span class="pill yellow">unconfigured</span>{% endif %}
+      {% if adapter.verification_status == 'verified' %}<span class="pill green">verified</span>{% else %}<span class="pill yellow">unverified</span>{% endif %}
+      {% if adapter.launchable %}<span class="pill green">launchable</span>{% else %}<span class="pill red">non-launchable</span>{% endif %}
+    </p>
+    <div class="kv">
+      <div class="k">Workdir</div><div class="v">{{ adapter.workdir or 'not set' }}</div>
+      <div class="k">Models</div><div class="v">{{ adapter.supported_models|join(', ') }}</div>
+      <div class="k">Verified at</div><div class="v">{{ adapter.verified_at or 'never' }}</div>
+    </div>
+    <form method="post" action="/settings/workers/{{ adapter.id }}/verify" style="margin-top:14px">
+      <label class="mono" for="verify-model-{{ adapter.id }}">Model</label>
+      <input id="verify-model-{{ adapter.id }}" name="model" value="{{ adapter.supported_models[0] if adapter.supported_models else '' }}" required>
+      <label class="mono" for="verify-proxy-{{ adapter.id }}">Proxy URL</label>
+      <input id="verify-proxy-{{ adapter.id }}" name="proxy_url" value="{{ default_proxy_url }}" required>
+      <button type="submit">Verify</button>
+    </form>
+    <h3 class="mono" style="font-size:12px;text-transform:uppercase;margin-top:16px;color:var(--fg-2)">Last evidence</h3>
+    {% if adapter.verification_evidence %}
+      <pre class="mono" style="white-space:pre-wrap;background:var(--bg-0);border:1px solid var(--line);padding:10px;border-radius:4px;max-height:220px;overflow:auto">{{ adapter.verification_evidence }}</pre>
+    {% else %}
+      <p class="muted">No verification evidence yet.</p>
+    {% endif %}
+  </article>
+  {% endfor %}
+</section>
+{% endblock %}

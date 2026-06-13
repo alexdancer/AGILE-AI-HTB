@@ -81,6 +81,27 @@ def test_portal_login_rejects_wrong_token(tmp_path, monkeypatch):
     assert response.status_code == 401
 
 
+def test_board_shows_blocked_manual_estimate_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        client.post(
+            "/tasks",
+            json={
+                "description": "Needs operator sizing",
+                "metadata": {
+                    "blocked_reason": "Estimator unavailable: timeout",
+                    "requires_manual_estimate": True,
+                },
+            },
+        )
+        response = client.get("/board", headers=_portal_headers())
+
+    assert response.status_code == 200
+    assert "Needs operator sizing" in response.text
+    assert "Estimator unavailable: timeout" in response.text
+    assert "Manual estimate required" in response.text
+
+
 def test_dashboard_renders_budget_alarm_and_navigation_sections(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     with _client(tmp_path) as client:
@@ -198,6 +219,73 @@ def test_board_renders_columns_and_task_cards(tmp_path, monkeypatch):
     assert "12,000" in html
     assert "Configure Worker Adapter to launch." in html
     assert created["id"] in html
+
+
+def test_settings_workers_page_requires_auth_and_renders_safe_adapter_cards(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        assert client.get("/settings/workers").status_code == 401
+        db.update_worker_adapter(
+            tmp_path / "harness.db",
+            "codex",
+            workdir=str(tmp_path),
+            config={"env": {"OPENAI_API_KEY": "super-secret-key"}},
+            supported_models=["gpt-5.1-codex"],
+            is_default=True,
+        )
+        db.mark_worker_adapter_verification(
+            tmp_path / "harness.db",
+            "codex",
+            verified=True,
+            evidence={"stdout": "AGILE_AI_HTB_ADAPTER_OK", "env": {"OPENAI_API_KEY": "super-secret-key"}},
+        )
+
+        response = client.get("/settings/workers", headers=_portal_headers())
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Worker adapters" in html
+    assert "/settings/workers" in html
+    assert "Claude Code" in html
+    assert "Codex" in html
+    assert "OpenCode" in html
+    assert "configured" in html
+    assert "unconfigured" in html
+    assert "verified" in html
+    assert "launchable" in html
+    assert "default" in html
+    assert "AGILE_AI_HTB_ADAPTER_OK" in html
+    assert "super-secret-key" not in html
+    assert "OPENAI_API_KEY" not in html
+    assert "sk_sess_" not in html
+
+
+def test_board_uses_verified_worker_adapter_status(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        client.post(
+            "/tasks",
+            json={
+                "description": "Launchable estimated task",
+                "status": "Estimated",
+                "estimate_tokens": 25000,
+                "recommended_model": "gpt-5.1-codex",
+            },
+        )
+        db.update_worker_adapter(
+            tmp_path / "harness.db",
+            "codex",
+            workdir=str(tmp_path),
+            config={"command": "codex"},
+            supported_models=["gpt-5.1-codex"],
+        )
+        db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
+
+        response = client.get("/board", headers=_portal_headers())
+
+    assert response.status_code == 200
+    assert "Launchable estimated task" in response.text
+    assert "Configure Worker Adapter to launch." not in response.text
 
 
 def test_board_renders_unexpected_statuses_as_blocked(tmp_path, monkeypatch):

@@ -1,63 +1,78 @@
 {% extends "base.html" %}
 {% block title %}Dashboard | AGILE-AI-HTB{% endblock %}
 {% block content %}
-<section class="grid">
-  <article class="card">
-    <h2>Daily budget</h2>
-    <div class="metric">{{ "{:,}".format(token_total) }}</div>
-    <p class="muted">tokens used{% if daily_cap %} / {{ "{:,}".format(daily_cap) }} cap{% endif %}</p>
-    <p>Zone: <strong>{{ current_zone }}</strong></p>
+<h1 class="page-title">Dashboard</h1>
+<p class="page-sub">overview · daily budget · active sessions · recent alarms</p>
+
+<section class="grid cols-4" style="margin-bottom:20px">
+  <article class="kpi">
+    <div class="label">Daily budget</div>
+    <div class="value mono">{{ "{:,}".format(token_total) }}{% if daily_cap %} / {{ "{:,}".format(daily_cap) }}{% endif %}</div>
+    <div class="sub">zone: {{ current_zone }}</div>
+    {% if daily_cap %}<div class="bar"><span style="width:{{ [100, ((token_total / daily_cap) * 100)|round(1)]|min }}%"></span></div>{% endif %}
   </article>
-  <article class="card">
-    <h2>Sessions</h2>
-    <div class="metric">{{ session_count }}</div>
-    <p>Session history appears below.</p>
+  <article class="kpi">
+    <div class="label">Active sessions</div>
+    <div class="value mono">{{ active_session_count }}</div>
+    <div class="sub">{{ session_count }} total today</div>
   </article>
-  <article class="card">
-    <h2>Alarms</h2>
-    <div class="metric">{{ alarm_count }}</div>
-    <p><a href="/alarms">Alarm log</a></p>
+  <article class="kpi">
+    <div class="label">Open alarms</div>
+    <div class="value mono">{{ open_alarm_count }}</div>
+    <div class="sub">{{ critical_alarm_count }} critical</div>
   </article>
-  <article class="card">
-    <h2>Task board</h2>
-    <p>Backlog, Estimated, Running, Review, Done.</p>
-    <p><a href="/board">Open Task board</a></p>
+  <article class="kpi">
+    <div class="label">Tokens used</div>
+    <div class="value mono">{{ "{:,}".format(token_total) }}</div>
+    <div class="sub">current budget period</div>
   </article>
 </section>
 
-<section class="card">
-  <h2>Burn chart</h2>
-  <canvas id="budgetChart" aria-label="Daily budget chart"></canvas>
+<section class="panel">
+  <div class="panel-header">
+    <h3>Active sessions</h3>
+    <a href="/sessions" class="muted mono" style="font-size:12px">view all →</a>
+  </div>
+  <div class="panel-body tight">
+    <table>
+      <thead>
+        <tr><th>session</th><th>task</th><th>model</th><th>status</th></tr>
+      </thead>
+      <tbody>
+        {% for session in active_sessions %}
+        <tr>
+          <td class="mono muted"><a href="/sessions/{{ session.id }}">{{ session.id }}</a></td>
+          <td>{{ session.task_description }}</td>
+          <td class="mono">{{ session.model }}</td>
+          <td><span class="pill blue">{{ session.status }}</span></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="muted">No active sessions.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </section>
 
-<section class="grid">
-  <article class="card">
-    <h2>Recent sessions</h2>
-    <ul>
-      {% for session in recent_sessions %}
-      <li><a href="/sessions/{{ session.id }}">{{ session.task_description }}</a> — {{ session.status }}</li>
-      {% else %}
-      <li class="muted">No sessions yet.</li>
-      {% endfor %}
-    </ul>
-  </article>
-  <article class="card">
-    <h2>Recent alarms</h2>
-    <ul>
-      {% for alarm in recent_alarms %}
-      <li>{{ alarm.type }} — {{ alarm.severity }}</li>
-      {% else %}
-      <li class="muted">No alarms yet.</li>
-      {% endfor %}
-    </ul>
-  </article>
+<section class="panel">
+  <div class="panel-header">
+    <h3>Recent alarms</h3>
+    <a href="/alarms" class="muted mono" style="font-size:12px">view all →</a>
+  </div>
+  <div class="panel-body">
+    {% for alarm in recent_alarms %}
+    {% set sev = (alarm.severity or 'info')|lower %}
+    <div class="alarm {{ sev }}">
+      <div class="head">
+        <div class="flex"><span class="pill {% if sev in ['critical','high'] %}red{% elif sev in ['warning','medium'] %}yellow{% else %}blue{% endif %}">{{ alarm.severity }}</span><span class="mono">{{ alarm.type }}</span></div>
+        <div class="id mono">{{ alarm.id }}</div>
+      </div>
+      <div class="body">Session <a href="/sessions/{{ alarm.session_id }}">{{ alarm.session_id }}</a></div>
+      <div class="reco">→ {{ alarm.recommended_action }}</div>
+    </div>
+    {% else %}
+    <div class="muted">No alarms yet.</div>
+    {% endfor %}
+  </div>
 </section>
-
-<script>
-new Chart(document.getElementById("budgetChart"), {
-  type: "bar",
-  data: { labels: ["Used"], datasets: [{ label: "Tokens", data: [{{ token_total }}] }] },
-  options: { responsive: true, plugins: { legend: { display: false } } }
-});
-</script>
 {% endblock %}

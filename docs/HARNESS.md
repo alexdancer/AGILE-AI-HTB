@@ -123,6 +123,39 @@ Guardrails are **declared** in `guardrails.yaml`, not buried in code. Each sessi
 
 The harness uses a **three-layer graduated enforcement** model. No layer hard-stops the agent, but each layer constrains behavior more tightly as the budget depletes — the agent *cannot* ignore the constraints.
 
+These are **runtime guardrails**: they apply after a Session has started and the Worker is already making model calls through the Proxy Engine.
+
+### Launch guardrails
+
+Launch guardrails run before a Task can move from **Estimated** to **Ready** or **Running** on the AGILE Board. They protect the product promise: if the harness cannot govern and observe the Worker, the portal must not present that work as tracked or governed.
+
+| Launch guardrail | Requirement | Failure behavior |
+|---|---|---|
+| Worker Adapter configured | User selected and configured Claude Code, Codex, OpenCode, Hermes, or another supported adapter | Task cannot become Ready |
+| Token tracking verified | A setup test proves the adapter sends model traffic through `/v1/chat/completions` and a token row is persisted | Launch button disabled |
+| Session key wiring present | Adapter can receive the harness URL and session-scoped API key | Launch button disabled |
+| Working directory valid | Adapter can start in the selected project directory | Task remains Estimated or Blocked |
+| Model allowed | Selected/recommended model is allowed by config and compatible with the adapter | User must pick another model or adjust config |
+
+The setup test is intentionally synthetic but must exercise the real adapter launch path: the harness creates a small disposable Session, launches the configured Worker Adapter with one harmless prompt, then checks that `prompt_tokens`, `completion_tokens`, and `total_tokens` were recorded in the Session Artifact Store. A direct proxy call is not enough; the point is to prove Claude Code, Codex, OpenCode, Hermes, or the custom command is actually wired through the harness. If no token row appears, the adapter is **not launchable** from the AGILE Board.
+
+Adapter verification prompt:
+
+```text
+You are running an AGILE-AI-HTB adapter verification. Reply with exactly:
+AGILE_AI_HTB_ADAPTER_OK
+Do not inspect files. Do not run tools. Do not modify anything.
+```
+
+Adapter verification passes only when the adapter process exits successfully, the response contains the exact sentinel `AGILE_AI_HTB_ADAPTER_OK`, token usage is persisted for the disposable Session, the persisted model matches the selected/configured model, and no tool traces or file writes occurred. Verification tokens count against the daily budget as orchestration tokens labeled `adapter_verification`; they do not count as Task actuals and should be hidden from the normal task board or marked as system verification.
+
+Worker Adapter setup lives in Settings as the source of truth. The AGILE Board only displays the selected adapter status and launch readiness:
+
+- `/settings/workers` configures adapters, runs verification, shows launchable status, and chooses the default Worker Adapter.
+- Task cards show the default Worker Adapter, allow a per-task override to another launchable adapter, and show whether token tracking is verified.
+- If an adapter is not launchable, the AGILE Board disables Launch and links to Worker Setup.
+- If an adapter loses verification after a Task is Ready, the Task returns to Estimated or Blocked until the User picks a launchable adapter.
+
 #### Layer 1: Progressive system prompt rewrites
 
 At each zone transition, the harness rewrites the agent's entire system prompt with progressively tighter instructions:
@@ -227,23 +260,32 @@ Clean interfaces for passing material between the **user**, the **harness**, and
 
 ### AGILE Board
 
-A visual task board with columns: **Backlog → Estimated → Running → Review → Done**. Each task card shows:
+The AGILE Board is the user-facing orchestration surface for coding work, not a passive Kanban board. Canonical columns are **Estimated → Ready → Running → Review → Done**, with **Blocked** for failed estimation or tasks that need human changes before launch or continuation. There is no normal unestimated Backlog because task intake exists to estimate and budget token spend. Each task card shows:
 - Task description
-- Estimated token budget (LLM-assisted, user-overridable)
+- Estimated token budget (user-overridable)
 - Recommended model (task-complexity driven, user-overridable)
+- Selected Worker Adapter (Claude Code, Codex, OpenCode, Hermes, or custom)
+- Per-task Worker Adapter override when the default is not desired
+- Launch guardrail status, especially whether token tracking has been verified
 - Actual token cost + estimate vs. actual delta (populated on completion)
 - Session link
 
-**Token estimation (LLM-assisted)**: User types a task description. The harness calls a cheap model (e.g., GPT-4o-mini) with a prompt that explains the task and asks "how many tokens would a coding agent need to complete this?" The pre-filled estimate is displayed; user can override before dispatching.
+**Task intake**: The primary task form is labeled **Estimate task**, not **Create task**. Submitting it creates the Task and immediately runs Task Estimation. Tasks are not saved to the board as ordinary backlog items without an estimate; budgeting token spend is the point of intake. On success, the Task appears in Estimated with rationale and recommendations. On estimator failure, the Task appears in Blocked with manual estimate/model entry.
 
-**Model recommendation (task-complexity matching)**: During estimation, the harness also classifies the task's complexity — simple, modest, or complex — and recommends a model tier:
+**Token estimation (LLM-assisted)**: User types a task description. The harness calls a harness-owned **Estimator LLM** with the task, lightweight project context (language/framework summary, test command, relevant file/path hints if supplied), current budget context, and model-routing policy. It does not use the User's Worker Adapter and does not full-scan the repository for every estimate. The Estimator LLM returns structured output: token estimate, complexity, recommended model, confidence, rationale, assumptions, risk flags, and whether a spike is needed because the estimate is low-confidence. The result is displayed on the task card; user can override estimate or model before launch. Estimator LLM spend counts against the daily budget as **orchestration tokens**, but is labeled separately from Worker Session tokens.
+
+**Spike workflow**: If estimation confidence is low, or if the User chooses it, the board can launch a Spike before implementation. A Spike is a Worker Session, so it requires a launchable Worker Adapter with token tracking already verified. It is bounded by purpose: allowed to inspect files, inspect configuration, and run targeted non-mutating tests or discovery commands, but not allowed to edit production code, run destructive commands, run broad test suites without approval, run migrations, or commit. It has no spike-specific token cap; normal daily and session guardrails still apply. By default it uses the same Worker Adapter and model intended for implementation; the User may override to a cheaper or faster launchable adapter/model. Its prompt explicitly forbids edits and commits. Its output is findings, revised estimate, risks, and launch recommendation. Spike tokens count against the daily budget as orchestration tokens labeled `spike`, but do not count as Task actual implementation tokens. After the Spike, the harness automatically updates the Task estimate, recommended model, confidence, rationale, and risks; the Task returns to Estimated with an `updated by spike` badge. The User still accepts the estimate and chooses the Worker before Ready/Launch.
+
+If the Estimator LLM is unavailable or returns invalid output, the board offers manual estimate + model entry and clearly marks the task as **manual estimate, not LLM-estimated**. The harness must not silently fall back to a fake heuristic estimate. Manual estimates are launchable once the User enters the required token estimate and model and all launch guardrails pass.
+
+**Model recommendation (task-complexity matching)**: During estimation, the harness classifies the task's complexity — simple, modest, or complex — and recommends a model tier. It does not choose the Worker Adapter:
 - **Simple** (e.g., center a div, fix a typo) → Haiku / GPT-4o-mini
 - **Modest** (e.g., add an API endpoint, write unit tests) → Sonnet / GPT-4o
 - **Complex** (e.g., refactor auth, design a new feature) → Opus / GPT-4.5
 
-The recommendation is pre-selected in a model dropdown; user can override. The harness also applies a **budget-aware clamp**: if remaining daily budget is below a threshold, it downgrades the recommendation one tier (complex → modest, modest → simple) and shows a note: "Budget is tight — downgraded from Sonnet to Haiku."
+The recommendation is pre-selected in a model dropdown; user can override. The selected Worker Adapter is checked for compatibility with that model before launch. The harness also applies a **budget-aware clamp**: if remaining daily budget is below a threshold, it downgrades the recommendation one tier (complex → modest, modest → simple) and shows a note: "Budget is tight — downgraded from Sonnet to Haiku."
 
-**Direct dispatch**: One task → one session → one budget. "Run" starts a session immediately with the task description injected as the agent's first prompt, using the selected model. No queuing, no batching — cleanest mental model for analytics.
+**Direct dispatch**: One task → one session → one budget. "Launch" starts a session only after the Task is Ready: the User accepted the estimate, selected a Worker Adapter, selected or accepted a model, and all launch guardrails passed. No queuing, no batching — cleanest mental model for analytics.
 
 **Pre-dispatch budget check**: Before dispatch, the board checks whether the task's estimated tokens exceed the remaining daily budget. If they do, a warning banner appears ("⚠️ This task's estimate (200K) exceeds remaining daily budget (100K). The DAILY_CAP_EXCEEDED alarm will fire during this session.") but the user can still dispatch — consistent with soft-enforcement across all guardrails.
 
@@ -343,9 +385,11 @@ Every alarm in the portal includes action buttons. The harness polls for the hum
 | **Raise budget** | Update the daily cap; session re-evaluates zone and may return to green |
 | **Adjust guardrail** | Modify the guardrail threshold (e.g., loop_threshold 5 → 10); changes take effect on the next request |
 
-## Agent Interface (Swappable)
+## Worker Adapter Interface (Swappable)
 
-The harness is agent-agnostic. Any coding agent that speaks the OpenAI-compatible API can be governed. Here is the concrete integration with **Hermes** (and any agent that follows the same pattern).
+The harness is Worker-agnostic only after a Worker Adapter proves it can route model traffic through the Proxy Engine. A Worker Adapter is the launch/control integration for one coding agent: Claude Code, Codex, OpenCode, Hermes, or a custom command. The model recommendation is separate from the Worker Adapter.
+
+An adapter is launchable from the AGILE Board only when the setup test proves token tracking works. If the coding agent talks directly to Anthropic/OpenAI instead of the harness proxy, the adapter is not launchable in governed mode.
 
 ### How the agent connects
 
@@ -357,11 +401,12 @@ OPENAI_BASE_URL=http://localhost:8000/v1
 OPENAI_API_KEY=***  # harness-generated per-session key
 ```
 
-### Session dispatch (when the user clicks "Run")
+### Session dispatch (when the user clicks "Launch")
 
-1. **Harness creates a session record** in SQLite: `session_id`, task description, model, budget, guardrail overrides.
-2. **Harness generates a session-scoped API key** (e.g., `sk-harness-a1b2c3d4`). This key maps to the session — all requests carrying it are governed under that session's budget.
-3. **Harness launches the agent as a subprocess**, passing the harness URL and session key as environment variables:
+1. **Harness checks launch guardrails**: Worker Adapter configured, token tracking verified, working directory valid, session key wiring available, selected model allowed.
+2. **Harness creates a session record** in SQLite: `session_id`, task description, model, Worker Adapter, budget, guardrail overrides.
+3. **Harness generates a session-scoped API key** (e.g., `sk-har...c3d4`). This key maps to the session — all requests carrying it are governed under that session's budget.
+4. **Harness launches the Worker Adapter as a subprocess**, passing the harness URL and session key as environment variables or adapter-specific flags:
 
 ```python
 # Inside the harness FastAPI app
@@ -376,7 +421,7 @@ subprocess.Popen(
 )
 ```
 
-4. **Portal begins polling** `GET /session/{id}/report` for live updates.
+5. **Portal begins polling** `GET /session/{id}/report` for live updates.
 
 ### Per-request governance flow
 

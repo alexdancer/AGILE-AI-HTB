@@ -46,16 +46,17 @@ The presenter walks through the harness as the agent works through the tasks. Ea
 - Show the harness startup: `docker compose up`
 - Portal at `http://localhost:8000` — dashboard empty, 0 sessions
 - Show `guardrails.yaml`: daily cap 200K, session cap 50K, zones configured
-- AGILE board with all 6 tasks in Backlog column
+- AGILE board with all 6 tasks seeded in Estimated column, awaiting Worker Adapter verification
 
 ### Beat 1: Estimation & Model Routing (60 seconds)
 
-- Drag T1 ("Implement `snip save`") to Estimated
-- Portal calls `/estimate` — harness classifies as **simple**, recommends **Claude Haiku**, estimates **8K tokens**
-- Show the model dropdown pre-selected to Haiku
-- Drag T5 ("SQLite backend") to Estimated — harness classifies as **complex**, recommends **Claude Opus**, estimates **90K tokens**
-- **Budget clamp demo**: artifically lower daily budget to 50K, then estimate T5 again. Harness warns: "Estimated 90K exceeds remaining 50K daily budget." Model recommendation auto-downgrades: "Budget is tight — downgraded from Opus to Sonnet."
+- Click **Estimate task** for T1 ("Implement `snip save`")
+- Portal calls the Estimator LLM via `/estimate` — harness returns structured output: **simple** complexity, **Claude Haiku** recommended, **8K token** estimate, confidence 0.95
+- Task moves to **Estimated** column with estimate/model metadata
+- Click **Estimate task** for T5 ("SQLite backend") — Estimator LLM classifies as **complex**, recommends **Claude Opus**, estimates **90K tokens**
+- **Budget clamp demo**: artificially lower daily budget to 50K, then estimate T5 again. Harness warns: "Estimated 90K exceeds remaining 50K daily budget." Model recommendation auto-downgrades: "Budget is tight — downgraded from Opus to Sonnet."
 - Show the budget bar: "0 / 200,000 daily tokens (resets in 7h 15m)"
+- Show Orchestration Tokens row: estimator spend tracked as `usage_kind=estimation`, separate from Worker Tokens
 
 ### Beat 2: Green Zone — Normal Operation (90 seconds)
 
@@ -126,3 +127,102 @@ The presenter walks through the harness as the agent works through the tasks. Ea
 - [ ] Have LiteLLM configured with API keys for both Anthropic and OpenAI
 - [ ] Test T1 (save) and T3 (list) end-to-end — these are the core demo beats
 - [ ] Have a second browser tab open showing the raw system prompts at each zone (for the yellow/red demo)
+
+---
+
+## Bundle C operator proof: guarded Worker launch
+
+Bundle C adds a guarded task-launch path. A task can move from **Estimated/Ready** to
+**Running** only after Launch Guardrails pass for the selected Worker Adapter:
+
+- adapter exists and is configured
+- adapter token-tracking verification status is `verified`
+- adapter workdir exists
+- selected model is supported by the adapter
+- harness proxy URL and per-session bearer key are available
+
+The launch endpoint is operator-protected:
+
+```bash
+export TOKEN_TRACKER_PORTAL_TOKEN=***
+# Start the app with your usual local command, then open http://127.0.0.1:8000
+```
+
+1. Configure the locally available adapter. Example for Codex:
+
+   ```bash
+   sqlite3 data/harness.db <<'SQL'
+   update worker_adapters
+      set workdir = '/absolute/path/to/demo/project',
+          config_json = '{"command":"codex"}',
+          supported_models_json = '["gpt-5.1-codex"]',
+          is_default = 1,
+          updated_at = datetime('now')
+    where id = 'codex';
+   SQL
+   ```
+
+2. Run adapter verification through the harness (the verification must produce the
+   `AGILE_AI_HTB_ADAPTER_OK` sentinel and an `adapter_verification` token row). Use
+   **Settings → Worker adapters → Verify** in the portal, or call the protected API
+   directly with the same values:
+
+   ```bash
+   curl -sS -X POST http://127.0.0.1:8000/settings/workers/codex/verify \
+     -H "Authorization: Bearer $TOKEN_TRACKER_PORTAL_TOKEN" \
+     -H 'Content-Type: application/json' \
+     -d '{"model":"gpt-5.1-codex","proxy_url":"http://127.0.0.1:8000/v1"}'
+   ```
+
+3. Create or choose an Estimated task whose recommended model matches the adapter:
+
+   ```bash
+   TASK_ID=$(curl -sS -X POST http://127.0.0.1:8000/tasks \
+     -H 'Content-Type: application/json' \
+     -d '{"description":"Implement snip save","estimate_tokens":8000,"recommended_model":"gpt-5.1-codex"}' \
+     | python -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+   ```
+
+4. Launch through the guarded endpoint or the board's **Launch task** button. The
+   default harness proxy URL is `http://127.0.0.1:8000/v1` when omitted. If launching
+   a manually sized task, include both `estimate_tokens` and `model`; the endpoint
+   persists that manual estimate before evaluating guardrails. Launch is server-gated
+   to tasks in **Estimated** or **Ready** state after any manual estimate is applied.
+
+   ```bash
+   curl -sS -X POST "http://127.0.0.1:8000/tasks/$TASK_ID/launch" \
+     -H "Authorization: Bearer $TOKEN_TRACKER_PORTAL_TOKEN" \
+     -H 'Content-Type: application/json' \
+     -d '{"adapter_id":"codex","model":"gpt-5.1-codex","proxy_url":"http://127.0.0.1:8000/v1"}'
+   ```
+
+   Manual-estimate launch example:
+
+   ```bash
+   curl -sS -X POST "http://127.0.0.1:8000/tasks/$TASK_ID/launch" \
+     -H "Authorization: Bearer $TOKEN_TRACKER_PORTAL_TOKEN" \
+     -H 'Content-Type: application/json' \
+     -d '{"adapter_id":"codex","model":"gpt-5.1-codex","estimate_tokens":8000}'
+   ```
+
+5. Confirm the task is **Running**, has a `session_id`, and the board shows a
+   **Session report** link. Confirm Worker tokens are recorded after the adapter calls
+   the harness proxy with its injected session bearer token:
+
+   ```bash
+   sqlite3 data/harness.db "select usage_kind, model, total_tokens from token_turns order by id desc limit 5;"
+   ```
+
+   For a completed/failed Worker session, use the board **Refresh status** action or
+   `POST /tasks/$TASK_ID/refresh` with the portal bearer token to map completed
+   sessions to **Done**/**Review** and failed/aborted sessions to **Blocked**.
+
+Expected proof row for a real Worker launch: `usage_kind = worker` for the launched
+session/model. The launch response, board, task metadata, and session report must not
+contain raw `sk_sess_...` keys; only the session key hash is stored.
+
+Live-proof status for this implementation pass: no real Claude/Codex/OpenCode CLI
+authentication was exercised by the automated tests. The TDD suite uses an injected fake
+runner to prove the guarded launch path and Worker-token session report without making
+provider calls. A local operator with authenticated adapter CLI access should run the
+commands above to complete live verification.

@@ -1,0 +1,27 @@
+services:
+  agile-ai-htb:
+    build: .
+    image: agile-ai-htb:local
+    container_name: agile-ai-htb
+    ports:
+      - "8000:8000"
+    environment:
+      - TOKEN_TRACKER_DATABASE_PATH=/data/harness.db
+      - TOKEN_TRACKER_GUARDRAILS_PATH=/app/guardrails.yaml
+      - TOKEN_TRACKER_PORTAL_TOKEN=${TOKEN_TRACKER_PORTAL_TOKEN:-DEMO_PORTAL_TOKEN_2099}
+    volumes:
+      - agile-ai-htb-data:/data
+      - ./guardrails.yaml:/app/guardrails.yaml:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  agile-ai-htb-data:

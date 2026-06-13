@@ -24,8 +24,15 @@ test = [
     "httpx",
 ]
 
+[project.scripts]
+htb = "agile_ai_htb.cli:main"
+htb-demo-worker = "agile_ai_htb.demo_worker:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+agile_ai_htb = ["templates/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -75,14 +75,13 @@ All structured JSON: type, severity, context, recommended action.
 
 ## AGILE Board
 
-Columns: **Backlog → Estimated → Running → Review → Done**
+Columns: **Estimated → Ready → Running → Review → Done**, with **Blocked** for tasks that need human input before launch or continuation.
 
-- **LLM-assisted estimation** — harness classifies task complexity, estimates tokens, recommends model
-- **Model tiers**: Simple→Haiku, Modest→Sonnet, Complex→Opus (budget-aware auto-downgrade when tight)
-- **Direct dispatch**: one task → one session → one budget
-- **Budget override**: warns if estimate exceeds remaining budget; human can override
-- **Midnight reset**: sessions return to green zone; no restart needed
-- **Second-worker swap**: re-run any completed task with a different model
+- **Estimator LLM** — harness calls a dedicated LLM to classify task complexity, estimate tokens, and recommend a model. Estimator spend is tracked as Orchestration Tokens (`usage_kind=estimation`), separate from Worker Tokens.
+- **Estimate task intake** — user enters a task description; estimator runs immediately. On success, task moves to Estimated with estimate/model metadata. On failure, task moves to Blocked with manual entry required.
+- **Worker Adapter presets** — first-class Claude Code, Codex, and OpenCode adapters with verification status. Only verified adapters can launch.
+- **Launch Guardrails** — adapter configured, token tracking verified, workdir valid, model supported, proxy wiring available. Gate enforced through transport-level limits.
+- **Orchestration Tokens** — Estimator LLM and adapter verification calls tracked separately from Worker implementation tokens; both count against daily budget.
 
 ## Human-in-the-Loop Escalation
 

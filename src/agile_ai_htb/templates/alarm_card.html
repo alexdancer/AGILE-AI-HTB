@@ -1,0 +1,16 @@
+{% set sev = (alarm.severity or 'info')|lower %}
+<div class="alarm {{ sev }}" id="alarm-{{ alarm.id }}">
+  <div class="head">
+    <div class="flex">
+      <span class="pill {% if sev in ['critical','high'] %}red{% elif sev in ['warning','medium'] %}yellow{% else %}blue{% endif %}">{{ alarm.severity }}</span>
+      <span class="mono">{{ alarm.type }}</span>
+      {% if alarm.resolved_at %}<span class="pill green">resolved</span>{% endif %}
+    </div>
+    <div class="id mono">{{ alarm.id }}</div>
+  </div>
+  <div class="body">
+    <div>Session <a href="/sessions/{{ alarm.session_id }}">{{ alarm.session_id }}</a></div>
+    {% if alarm.context %}<div class="muted mono" style="font-size:11px;margin-top:4px">{{ alarm.context }}</div>{% endif %}
+  </div>
+  <div class="reco">→ {{ alarm.recommended_action }}</div>
+</div>

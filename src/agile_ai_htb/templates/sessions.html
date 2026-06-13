@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Sessions | AGILE-AI-HTB{% endblock %}
+{% block content %}
+<h1 class="page-title">Sessions</h1>
+<p class="page-sub">all sessions · click through for token usage + checkpoints</p>
+
+<section class="panel">
+  <div class="panel-header"><h3>All sessions</h3></div>
+  <div class="panel-body tight">
+    <table>
+      <thead>
+        <tr>
+          <th>session</th><th>task</th><th>model</th><th>status</th><th class="right">prompt</th><th class="right">completion</th><th class="right">total</th><th>zone</th><th>alarms</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in sessions %}
+        <tr>
+          <td class="mono muted"><a href="/sessions/{{ item.session.id }}">{{ item.session.id }}</a></td>
+          <td>{{ item.session.task_description }}</td>
+          <td class="mono">{{ item.session.model }}</td>
+          <td><span class="pill {% if item.session.status in ['active', 'running'] %}blue{% elif item.session.status == 'completed' %}green{% else %}muted{% endif %}">{{ item.session.status }}</span></td>
+          <td class="mono right">{{ "{:,}".format(item.token_totals.prompt_tokens) }}</td>
+          <td class="mono right">{{ "{:,}".format(item.token_totals.completion_tokens) }}</td>
+          <td class="mono right">{{ "{:,}".format(item.token_totals.total_tokens) }}</td>
+          <td><span class="pill {% if item.current_zone == 'green' %}green{% elif item.current_zone == 'yellow' %}yellow{% elif item.current_zone == 'red' %}red{% else %}muted{% endif %}">zone: {{ item.current_zone }}</span></td>
+          <td><span class="pill {% if item.alarms|length %}red{% else %}muted{% endif %}">{{ item.alarms|length }}</span></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="9" class="muted">No sessions yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

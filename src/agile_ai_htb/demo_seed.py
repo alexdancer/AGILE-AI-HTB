@@ -58,6 +58,7 @@ def seed_demo_tasks(db_path: Path | str) -> list[dict[str, object]]:
     and easy for operators/tests to verify.
     """
     db.init_db(db_path)
+    _seed_demo_worker_adapter(db_path)
     inserted_ids: list[str] = []
     with db.connect(db_path) as conn:
         for task in DEMO_TASKS:
@@ -89,3 +90,41 @@ def seed_demo_tasks(db_path: Path | str) -> list[dict[str, object]]:
             )
             inserted_ids.append(task["id"])
     return [db.get_task(db_path, task_id) for task_id in inserted_ids]
+
+
+def _seed_demo_worker_adapter(db_path: Path | str) -> None:
+    """Ensure a verified demo worker adapter exists for the portal launch flow."""
+    with db.connect(db_path) as conn:
+        existing = conn.execute(
+            "select id from worker_adapters where id = 'demo_worker'"
+        ).fetchone()
+        if existing is not None:
+            return
+        conn.execute(
+            """insert or ignore into worker_adapters
+               (id, kind, name, config_json, supported_models_json, workdir,
+                verification_status, is_default, created_at, updated_at)
+               values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "demo_worker",
+                "demo_worker",
+                "Demo Worker",
+                json.dumps(
+                    {
+                        "command": "htb-demo-worker",
+                        "verification_template": ["htb-demo-worker", "--prompt", "{prompt}", "--proxy-url", "{proxy_url}", "--session-key", "{session_api_key}", "--turns", "1", "--dry-run"],
+                        "launch_template": ["htb-demo-worker", "--prompt", "{prompt}", "--proxy-url", "{proxy_url}", "--session-key", "{session_api_key}", "--model", "{model}"],
+                    },
+                    separators=(",", ":"),
+                ),
+                json.dumps(
+                    ["gpt-4o-mini", "gpt-4o", "claude-haiku", "claude-sonnet"],
+                    separators=(",", ":"),
+                ),
+                "/tmp",
+                "verified",
+                1,
+                "2099-06-13T00:00:00+00:00",
+                "2099-06-13T00:00:00+00:00",
+            ),
+        )

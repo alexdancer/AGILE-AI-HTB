@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import uuid
 from datetime import UTC, datetime
@@ -89,7 +90,46 @@ create table if not exists action_history (
     payload_json text not null default '{}',
     created_at text not null
 );
+
+create table if not exists worker_adapters (
+    id text primary key,
+    kind text not null,
+    name text not null,
+    workdir text,
+    config_json text not null default '{}',
+    supported_models_json text not null default '[]',
+    is_default integer not null default 0,
+    verification_status text not null default 'unverified',
+    verification_evidence_json text not null default '{}',
+    verified_at text,
+    created_at text not null,
+    updated_at text not null
+);
 """
+
+WORKER_ADAPTER_PRESETS = [
+    {
+        "id": "claude_code",
+        "kind": "claude_code",
+        "name": "Claude Code",
+        "config": {"verification_template": ["claude", "-p", "{prompt}"], "launch_template": ["claude"]},
+        "supported_models": ["claude-3-5-sonnet-latest", "claude-sonnet", "claude-haiku"],
+    },
+    {
+        "id": "codex",
+        "kind": "codex",
+        "name": "Codex",
+        "config": {"verification_template": ["codex", "--prompt", "{prompt}"], "launch_template": ["codex"]},
+        "supported_models": ["gpt-5.1-codex", "openai/gpt-4.1-mini"],
+    },
+    {
+        "id": "opencode",
+        "kind": "opencode",
+        "name": "OpenCode",
+        "config": {"verification_template": ["opencode", "run", "{prompt}"], "launch_template": ["opencode"]},
+        "supported_models": ["opencode/gpt-5.1", "gpt-5.1-codex"],
+    },
+]
 
 
 def connect(path: Path | str) -> sqlite3.Connection:
@@ -104,6 +144,7 @@ def init_db(path: Path | str) -> None:
     with connect(path) as conn:
         conn.executescript(SCHEMA)
         _migrate_schema(conn)
+        _seed_worker_adapters(conn)
 
 
 def _migrate_schema(conn: sqlite3.Connection) -> None:
@@ -112,6 +153,56 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     }
     if "usage_kind" not in token_turn_columns:
         conn.execute("alter table token_turns add column usage_kind text not null default 'worker'")
+
+    worker_adapter_tables = {
+        row["name"]
+        for row in conn.execute(
+            "select name from sqlite_master where type = 'table' and name = 'worker_adapters'"
+        ).fetchall()
+    }
+    if "worker_adapters" not in worker_adapter_tables:
+        conn.execute(
+            """
+            create table worker_adapters (
+                id text primary key,
+                kind text not null,
+                name text not null,
+                workdir text,
+                config_json text not null default '{}',
+                supported_models_json text not null default '[]',
+                is_default integer not null default 0,
+                verification_status text not null default 'unverified',
+                verification_evidence_json text not null default '{}',
+                verified_at text,
+                created_at text not null,
+                updated_at text not null
+            )
+            """
+        )
+
+
+def _seed_worker_adapters(conn: sqlite3.Connection) -> None:
+    now = _now_iso()
+    for preset in WORKER_ADAPTER_PRESETS:
+        conn.execute(
+            """
+            insert into worker_adapters (
+                id, kind, name, config_json, supported_models_json, created_at, updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?)
+            on conflict(id) do update set
+                kind = excluded.kind,
+                name = excluded.name
+            """,
+            (
+                preset["id"],
+                preset["kind"],
+                preset["name"],
+                _to_json(preset["config"]),
+                json.dumps(preset["supported_models"], sort_keys=True, separators=(",", ":")),
+                now,
+                now,
+            ),
+        )
 
 
 def create_session(
@@ -161,6 +252,14 @@ def get_session_by_key_hash(path: Path | str, session_key_hash: str) -> dict[str
     if row is None:
         raise KeyError("session not found for key")
     return _session_from_row(row)
+
+
+def update_session_status(path: Path | str, session_id: str, status: str) -> dict[str, Any]:
+    with connect(path) as conn:
+        cursor = conn.execute("update sessions set status = ? where id = ?", (status, session_id))
+        if cursor.rowcount == 0:
+            raise KeyError(f"session not found: {session_id}")
+    return get_session(path, session_id)
 
 
 def record_token_turn(
@@ -357,6 +456,106 @@ def list_sessions(path: Path | str) -> list[dict[str, Any]]:
     with connect(path) as conn:
         rows = conn.execute("select * from sessions order by started_at, id").fetchall()
     return [_session_from_row(row) for row in rows]
+
+
+def list_worker_adapters(path: Path | str) -> list[dict[str, Any]]:
+    with connect(path) as conn:
+        rows = conn.execute("select * from worker_adapters order by id").fetchall()
+    return [_worker_adapter_from_row(row) for row in rows]
+
+
+def get_worker_adapter(path: Path | str, adapter_id: str) -> dict[str, Any]:
+    with connect(path) as conn:
+        row = conn.execute("select * from worker_adapters where id = ?", (adapter_id,)).fetchone()
+    if row is None:
+        raise KeyError(f"worker adapter not found: {adapter_id}")
+    return _worker_adapter_from_row(row)
+
+
+def update_worker_adapter(
+    path: Path | str,
+    adapter_id: str,
+    *,
+    workdir: str | None = None,
+    config: dict[str, Any] | None = None,
+    supported_models: list[str] | None = None,
+    is_default: bool | None = None,
+) -> dict[str, Any]:
+    updates: list[str] = []
+    values: list[Any] = []
+    if workdir is not None:
+        updates.append("workdir = ?")
+        values.append(workdir)
+    if config is not None:
+        updates.append("config_json = ?")
+        values.append(_to_json(config))
+    if supported_models is not None:
+        updates.append("supported_models_json = ?")
+        values.append(json.dumps(supported_models, sort_keys=True, separators=(",", ":")))
+    if is_default is not None:
+        updates.append("is_default = ?")
+        values.append(1 if is_default else 0)
+    updates.append("updated_at = ?")
+    values.append(_now_iso())
+
+    with connect(path) as conn:
+        if is_default:
+            conn.execute("update worker_adapters set is_default = 0 where id != ?", (adapter_id,))
+        cursor = conn.execute(
+            f"update worker_adapters set {', '.join(updates)} where id = ?", (*values, adapter_id)
+        )
+        if cursor.rowcount == 0:
+            raise KeyError(f"worker adapter not found: {adapter_id}")
+    return get_worker_adapter(path, adapter_id)
+
+
+def mark_worker_adapter_verification(
+    path: Path | str,
+    adapter_id: str,
+    *,
+    verified: bool,
+    evidence: dict[str, Any],
+) -> dict[str, Any]:
+    now = _now_iso()
+    with connect(path) as conn:
+        cursor = conn.execute(
+            """
+            update worker_adapters
+            set verification_status = ?, verification_evidence_json = ?, verified_at = ?, updated_at = ?
+            where id = ?
+            """,
+            (
+                "verified" if verified else "failed",
+                _to_json(_sanitize_evidence(evidence)),
+                now if verified else None,
+                now,
+                adapter_id,
+            ),
+        )
+        if cursor.rowcount == 0:
+            raise KeyError(f"worker adapter not found: {adapter_id}")
+    return get_worker_adapter(path, adapter_id)
+
+
+def has_verified_worker_adapter(path: Path | str) -> bool:
+    with connect(path) as conn:
+        row = conn.execute(
+            "select 1 from worker_adapters where verification_status = 'verified' limit 1"
+        ).fetchone()
+    return row is not None
+
+
+def has_adapter_verification_token(path: Path | str, *, session_id: str, model: str) -> bool:
+    with connect(path) as conn:
+        row = conn.execute(
+            """
+            select 1 from token_turns
+            where session_id = ? and usage_kind = 'adapter_verification' and model = ?
+            limit 1
+            """,
+            (session_id, model),
+        ).fetchone()
+    return row is not None
 
 
 def list_alarms(
@@ -593,6 +792,54 @@ def _action_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "payload": _from_json(row["payload_json"]),
         "created_at": row["created_at"],
     }
+
+
+def _worker_adapter_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    config = _from_json(row["config_json"])
+    supported_models = json.loads(row["supported_models_json"])
+    return {
+        "id": row["id"],
+        "kind": row["kind"],
+        "name": row["name"],
+        "workdir": row["workdir"],
+        "config": config,
+        "supported_models": supported_models,
+        "is_default": bool(row["is_default"]),
+        "verification_status": row["verification_status"],
+        "verification_evidence": _from_json(row["verification_evidence_json"]),
+        "verified_at": row["verified_at"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "configured": bool(row["workdir"]) or bool(config.get("command")),
+    }
+
+
+SECRET_KEY_TERMS = ("key", "secret", "password", "authorization")
+SECRET_TOKEN_KEYS = {"token", "api_token", "access_token", "refresh_token", "session_token"}
+SECRET_VALUE_PATTERN = re.compile(r"sk_[A-Za-z0-9_\-.]+")
+
+
+def _is_secret_key_hint(key_hint: str) -> bool:
+    lowered = key_hint.lower()
+    return any(term in lowered for term in SECRET_KEY_TERMS) or lowered in SECRET_TOKEN_KEYS or lowered.endswith("_token")
+
+
+def _sanitize_secret_string(value: str) -> str:
+    if "secret" in value.lower():
+        return "***REDACTED***"
+    return SECRET_VALUE_PATTERN.sub("***REDACTED***", value)
+
+
+def _sanitize_evidence(value: Any, key_hint: str = "") -> Any:
+    if isinstance(value, dict):
+        return {k: _sanitize_evidence(v, k) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_evidence(item, key_hint) for item in value]
+    if isinstance(value, str):
+        if _is_secret_key_hint(key_hint):
+            return "***REDACTED***"
+        return _sanitize_secret_string(value)
+    return value
 
 
 def _to_json(value: dict[str, Any]) -> str:
