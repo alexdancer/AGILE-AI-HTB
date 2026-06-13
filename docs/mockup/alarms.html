@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>AGILE-AI-HTB — Alarms</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="demo-banner">DEMO — synthetic data, not a live system · all values fabricated</div>
+  <div class="shell">
+    <header class="topbar"></header>
+    <aside class="sidebar"></aside>
+    <main class="main">
+      <h1 class="page-title">Alarms</h1>
+      <p class="page-sub">guardrail violations · human-in-the-loop resolution</p>
+
+      <section class="grid cols-4" id="alarm-kpis" style="margin-bottom:20px"></section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h3>Open</h3>
+          <div class="btn-row">
+            <button class="btn ghost">All</button>
+            <button class="btn ghost">Critical</button>
+            <button class="btn ghost">Warning</button>
+            <button class="btn ghost">Info</button>
+          </div>
+        </div>
+        <div class="panel-body" id="open-alarms"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header"><h3>Recently resolved</h3></div>
+        <div class="panel-body" id="resolved-alarms"></div>
+      </section>
+    </main>
+  </div>
+  <footer></footer>
+
+  <script src="js/fixtures.js"></script>
+  <script src="js/app.js"></script>
+  <script>
+    (function () {
+      const F = AGILE_AI_HTB.fixtures;
+      const { fmt, sevPill, renderShell, resolveForm } = AGILE_AI_HTB.app;
+      renderShell("Alarms");
+
+      const open = F.alarms.filter(a => !a.resolved);
+      const resolved = F.alarms.filter(a => a.resolved);
+      const critical = open.filter(a => a.severity === "critical").length;
+      const warning = open.filter(a => a.severity === "warning").length;
+      const info = open.filter(a => a.severity === "info").length;
+
+      document.getElementById("alarm-kpis").innerHTML = `
+        <div class="kpi"><div class="label">Open</div><div class="value mono">${open.length}</div></div>
+        <div class="kpi"><div class="label">Critical</div><div class="value mono" style="color:var(--danger)">${critical}</div></div>
+        <div class="kpi"><div class="label">Warning</div><div class="value mono" style="color:var(--warn)">${warning}</div></div>
+        <div class="kpi"><div class="label">Info</div><div class="value mono" style="color:var(--info)">${info}</div></div>`;
+
+      function alarmCard(a, showForm) {
+        const cls = a.severity === "critical" ? "critical" : a.severity === "warning" ? "warning" : "info";
+        const ctx = Object.entries(a.context)
+          .map(([k, v]) => `<span class="mono">${k}=<b>${v}</b></span>`)
+          .join(" · ");
+        return `
+          <div class="alarm ${cls}" id="alarm-${a.id}">
+            <div class="head">
+              <div class="flex">
+                ${sevPill(a.severity)}
+                <span class="mono">${a.type}</span>
+                ${a.resolved ? '<span class="pill green">resolved</span>' : ''}
+              </div>
+              <div class="id mono">${a.id} · ${a.timestamp}</div>
+            </div>
+            <div class="body">
+              <div>Session <a href="sessions.html#${a.session_id}">${a.session_id}</a></div>
+              <div class="muted mono" style="font-size:11px;margin-top:4px">${ctx}</div>
+            </div>
+            <div class="reco">→ ${a.recommended_action}</div>
+            ${showForm ? `<div style="margin-top:10px">${resolveForm(a.id)}</div>` : ""}
+          </div>`;
+      }
+
+      document.getElementById("open-alarms").innerHTML = open.length
+        ? open.map(a => alarmCard(a, true)).join("")
+        : '<div class="muted">No open alarms.</div>';
+
+      document.getElementById("resolved-alarms").innerHTML = resolved.length
+        ? resolved.map(a => alarmCard(a, false)).join("")
+        : '<div class="muted">No resolved alarms yet.</div>';
+    })();
+  </script>
+</body>
+</html>
