@@ -251,6 +251,173 @@ def record_checkpoint_result(
         )
 
 
+def create_task(
+    path: Path | str,
+    *,
+    description: str,
+    status: str = "Backlog",
+    estimate_tokens: int | None = None,
+    recommended_model: str | None = None,
+    actual_tokens: int | None = None,
+    session_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    task_id = f"task_{uuid.uuid4().hex}"
+    with connect(path) as conn:
+        conn.execute(
+            """
+            insert into tasks (
+                id, description, status, estimate_tokens, recommended_model,
+                actual_tokens, session_id, metadata_json, created_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task_id,
+                description,
+                status,
+                estimate_tokens,
+                recommended_model,
+                actual_tokens,
+                session_id,
+                _to_json(metadata or {}),
+                _now_iso(),
+            ),
+        )
+    return get_task(path, task_id)
+
+
+def get_task(path: Path | str, task_id: str) -> dict[str, Any]:
+    with connect(path) as conn:
+        row = conn.execute("select * from tasks where id = ?", (task_id,)).fetchone()
+    if row is None:
+        raise KeyError(f"task not found: {task_id}")
+    return _task_from_row(row)
+
+
+def update_task(path: Path | str, task_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    allowed = {
+        "description": "description",
+        "status": "status",
+        "estimate_tokens": "estimate_tokens",
+        "recommended_model": "recommended_model",
+        "actual_tokens": "actual_tokens",
+        "session_id": "session_id",
+        "metadata": "metadata_json",
+    }
+    assignments: list[str] = []
+    values: list[Any] = []
+    for key, value in updates.items():
+        if key not in allowed or value is None:
+            continue
+        assignments.append(f"{allowed[key]} = ?")
+        values.append(_to_json(value) if key == "metadata" else value)
+    if not assignments:
+        return get_task(path, task_id)
+
+    with connect(path) as conn:
+        cursor = conn.execute(
+            f"update tasks set {', '.join(assignments)} where id = ?",
+            (*values, task_id),
+        )
+        if cursor.rowcount == 0:
+            raise KeyError(f"task not found: {task_id}")
+    return get_task(path, task_id)
+
+
+def list_alarms(
+    path: Path | str,
+    *,
+    session_id: str | None = None,
+    alarm_type: str | None = None,
+    severity: str | None = None,
+    resolved: bool | None = None,
+) -> list[dict[str, Any]]:
+    clauses: list[str] = []
+    values: list[Any] = []
+    if session_id is not None:
+        clauses.append("session_id = ?")
+        values.append(session_id)
+    if alarm_type is not None:
+        clauses.append("type = ?")
+        values.append(alarm_type)
+    if severity is not None:
+        clauses.append("severity = ?")
+        values.append(severity)
+    if resolved is True:
+        clauses.append("resolved_at is not null")
+    elif resolved is False:
+        clauses.append("resolved_at is null")
+    where = f" where {' and '.join(clauses)}" if clauses else ""
+    query = "select * from alarms" + where + " order by created_at, id"
+    with connect(path) as conn:
+        rows = conn.execute(query, values).fetchall()
+    return [_alarm_from_row(row) for row in rows]
+
+
+def resolve_alarm(
+    path: Path | str,
+    *,
+    alarm_id: str,
+    action: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    resolved_at = _now_iso()
+    with connect(path) as conn:
+        alarm_row = conn.execute("select * from alarms where id = ?", (alarm_id,)).fetchone()
+        if alarm_row is None:
+            raise KeyError(f"alarm not found: {alarm_id}")
+        conn.execute("update alarms set resolved_at = ? where id = ?", (resolved_at, alarm_id))
+        cursor = conn.execute(
+            """
+            insert into action_history (session_id, alarm_id, action, payload_json, created_at)
+            values (?, ?, ?, ?, ?)
+            """,
+            (alarm_row["session_id"], alarm_id, action, _to_json(payload or {}), resolved_at),
+        )
+        _apply_alarm_action(conn, alarm_row["session_id"], action, payload or {})
+        action_row = conn.execute(
+            "select * from action_history where id = ?", (cursor.lastrowid,)
+        ).fetchone()
+        updated_alarm = conn.execute("select * from alarms where id = ?", (alarm_id,)).fetchone()
+    return {"alarm": _alarm_from_row(updated_alarm), "action": _action_from_row(action_row)}
+
+
+def _apply_alarm_action(
+    conn: sqlite3.Connection,
+    session_id: str,
+    action: str,
+    payload: dict[str, Any],
+) -> None:
+    if action == "abort_session":
+        conn.execute("update sessions set status = ? where id = ?", ("aborted", session_id))
+        return
+    if action not in {"raise_budget", "adjust_guardrail"}:
+        return
+
+    row = conn.execute("select guardrail_overrides_json from sessions where id = ?", (session_id,)).fetchone()
+    if row is None:
+        return
+    overrides = _from_json(row["guardrail_overrides_json"])
+    if action == "raise_budget":
+        budget = dict(overrides.get("budget", {}))
+        budget.update(payload)
+        overrides["budget"] = budget
+    else:
+        _deep_merge(overrides, payload)
+    conn.execute(
+        "update sessions set guardrail_overrides_json = ? where id = ?",
+        (_to_json(overrides), session_id),
+    )
+
+
+def _deep_merge(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for key, value in source.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _deep_merge(target[key], value)
+        else:
+            target[key] = value
+
+
 def build_session_artifact(path: Path | str, session_id: str) -> dict[str, Any]:
     with connect(path) as conn:
         session_row = conn.execute("select * from sessions where id = ?", (session_id,)).fetchone()
@@ -291,6 +458,20 @@ def _session_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "started_at": row["started_at"],
         "status": row["status"],
         "guardrail_overrides": _from_json(row["guardrail_overrides_json"]),
+    }
+
+
+def _task_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "description": row["description"],
+        "status": row["status"],
+        "estimate_tokens": row["estimate_tokens"],
+        "recommended_model": row["recommended_model"],
+        "actual_tokens": row["actual_tokens"],
+        "session_id": row["session_id"],
+        "metadata": _from_json(row["metadata_json"]),
+        "created_at": row["created_at"],
     }
 
 
@@ -341,6 +522,17 @@ def _checkpoint_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "name": row["name"],
         "passed": bool(row["passed"]),
         "details": _from_json(row["details_json"]),
+        "created_at": row["created_at"],
+    }
+
+
+def _action_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "session_id": row["session_id"],
+        "alarm_id": row["alarm_id"],
+        "action": row["action"],
+        "payload": _from_json(row["payload_json"]),
         "created_at": row["created_at"],
     }
 
