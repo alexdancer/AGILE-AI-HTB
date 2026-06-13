@@ -203,11 +203,11 @@ window.AGILE_AI_HTB.fixtures = {
 
   // ---- Tasks (matches /tasks + /estimate shapes) -----------------------
   tasks: [
-    { id: "DEMO_TASK_2099_t01", description: "Add CSV export endpoint", status: "In Progress", estimate_tokens: 25_000, recommended_model: "gpt-4o-mini", actual_tokens: 13_400 },
-    { id: "DEMO_TASK_2099_t02", description: "Refactor auth module", status: "In Progress", estimate_tokens: 100_000, recommended_model: "gpt-4o-mini", actual_tokens: 260_200 },
+    { id: "DEMO_TASK_2099_t01", description: "Add CSV export endpoint", status: "Running", estimate_tokens: 25_000, recommended_model: "gpt-4o-mini", actual_tokens: 13_400 },
+    { id: "DEMO_TASK_2099_t02", description: "Refactor auth module", status: "Running", estimate_tokens: 100_000, recommended_model: "gpt-4o-mini", actual_tokens: 260_200 },
     { id: "DEMO_TASK_2099_t03", description: "Investigate flaky test", status: "Blocked", estimate_tokens: 50_000, recommended_model: "claude-sonnet-4", actual_tokens: 80_600 },
     { id: "DEMO_TASK_2099_t04", description: "Generate SDK from OpenAPI", status: "Done", estimate_tokens: 75_000, recommended_model: "gpt-4o-mini", actual_tokens: 138_200 },
-    { id: "DEMO_TASK_2099_t05", description: "Add rate-limit middleware", status: "Backlog", estimate_tokens: 25_000, recommended_model: "gpt-4o-mini" },
+    { id: "DEMO_TASK_2099_t05", description: "Add rate-limit middleware", status: "Estimated", estimate_tokens: 25_000, recommended_model: "gpt-4o-mini" },
   ],
 
   // ---- Estimate sample (matches EstimateResult.as_dict) ----------------

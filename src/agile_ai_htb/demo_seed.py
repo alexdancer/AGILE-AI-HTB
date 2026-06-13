@@ -74,7 +74,7 @@ def seed_demo_tasks(db_path: Path | str) -> list[dict[str, object]]:
                 (
                     task["id"],
                     task["description"],
-                    "Backlog",
+                    "Estimated",
                     task["estimate_tokens"],
                     task["recommended_model"],
                     None,

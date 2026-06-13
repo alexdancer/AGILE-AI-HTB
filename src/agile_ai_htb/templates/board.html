@@ -1,18 +1,23 @@
 {% extends "base.html" %}
 {% block title %}Task board | AGILE-AI-HTB{% endblock %}
+{% block banner %}{% if has_demo_tasks %}<div class="demo-banner">DEMO — synthetic task data loaded · all DEMO_TASK_2099_* values fabricated</div>{% endif %}{% endblock %}
 {% block content %}
-<h2>AGILE board</h2>
+<h1 class="page-title">Task board</h1>
+<p class="page-sub">estimate task · ready to launch · running work · review gates · done · blocked</p>
+
 <section class="columns">
   {% for column in columns %}
   <article class="column">
-    <h3>{{ column }}</h3>
+    <h3 class="mono" style="font-size:13px;text-transform:uppercase;letter-spacing:0.08em;margin:0 0 10px;color:var(--fg-1)">{{ column }}</h3>
     {% for task in tasks_by_status.get(column, []) %}
-    <div class="task" id="{{ task.id }}">
+    <div class="task {% if column == 'Review' %}review{% endif %}" id="{{ task.id }}">
       <strong>{{ task.description }}</strong>
-      <p class="muted">Task: {{ task.id }}</p>
-      {% if task.estimate_tokens is not none %}<p>Estimate: {{ "{:,}".format(task.estimate_tokens) }} tokens</p>{% endif %}
-      {% if task.recommended_model %}<p>Model: {{ task.recommended_model }}</p>{% endif %}
-      {% if task.actual_tokens is not none %}<p>Actual: {{ "{:,}".format(task.actual_tokens) }} tokens</p>{% endif %}
+      <p class="muted mono">Task: {{ task.id }}</p>
+      {% if task.estimate_tokens is not none %}<p class="mono">Estimate: {{ "{:,}".format(task.estimate_tokens) }} tokens</p>{% endif %}
+      {% if task.recommended_model %}<p class="mono">Model: {{ task.recommended_model }}</p>{% endif %}
+      {% if task.actual_tokens is not none %}<p class="mono">Actual: {{ "{:,}".format(task.actual_tokens) }} tokens</p>{% endif %}
+      {% if column == 'Estimated' and not has_verified_worker_adapter %}<p class="muted">Configure Worker Adapter to launch.</p>{% endif %}
+      {% if column == 'Blocked' and task.metadata.blocked_reason %}<p class="muted">{{ task.metadata.blocked_reason }}</p>{% endif %}
       {% if task.session_id %}<p><a href="/sessions/{{ task.session_id }}">Session report</a></p>{% endif %}
     </div>
     {% else %}

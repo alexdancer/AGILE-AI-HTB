@@ -33,6 +33,7 @@ create table if not exists tasks (
 create table if not exists token_turns (
     id integer primary key autoincrement,
     session_id text not null references sessions(id) on delete cascade,
+    usage_kind text not null default 'worker',
     model text not null,
     prompt_tokens integer not null,
     completion_tokens integer not null,
@@ -102,6 +103,15 @@ def init_db(path: Path | str) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with connect(path) as conn:
         conn.executescript(SCHEMA)
+        _migrate_schema(conn)
+
+
+def _migrate_schema(conn: sqlite3.Connection) -> None:
+    token_turn_columns = {
+        row["name"] for row in conn.execute("pragma table_info(token_turns)").fetchall()
+    }
+    if "usage_kind" not in token_turn_columns:
+        conn.execute("alter table token_turns add column usage_kind text not null default 'worker'")
 
 
 def create_session(
@@ -157,6 +167,7 @@ def record_token_turn(
     path: Path | str,
     *,
     session_id: str,
+    usage_kind: str = "worker",
     model: str,
     prompt_tokens: int,
     completion_tokens: int,
@@ -168,11 +179,13 @@ def record_token_turn(
         conn.execute(
             """
             insert into token_turns (
-                session_id, model, prompt_tokens, completion_tokens, total_tokens, cost, raw_usage_json, created_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                session_id, usage_kind, model, prompt_tokens, completion_tokens,
+                total_tokens, cost, raw_usage_json, created_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
+                usage_kind,
                 model,
                 prompt_tokens,
                 completion_tokens,
@@ -265,7 +278,7 @@ def create_task(
     path: Path | str,
     *,
     description: str,
-    status: str = "Backlog",
+    status: str = "Blocked",
     estimate_tokens: int | None = None,
     recommended_model: str | None = None,
     actual_tokens: int | None = None,
@@ -520,6 +533,7 @@ def _task_from_row(row: sqlite3.Row) -> dict[str, Any]:
 
 def _token_turn_from_row(row: sqlite3.Row) -> dict[str, Any]:
     return {
+        "usage_kind": row["usage_kind"],
         "model": row["model"],
         "prompt_tokens": row["prompt_tokens"],
         "completion_tokens": row["completion_tokens"],
@@ -551,6 +565,7 @@ def _snapshot_from_row(row: sqlite3.Row) -> dict[str, Any]:
 def _alarm_from_row(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "id": row["id"],
+        "session_id": row["session_id"],
         "type": row["type"],
         "severity": row["severity"],
         "context": _from_json(row["context_json"]),

@@ -4,7 +4,7 @@ from agile_ai_htb import db
 from agile_ai_htb.demo_seed import DEMO_TASKS, seed_demo_tasks
 
 
-def test_seed_demo_tasks_inserts_six_backlog_tasks_once(tmp_path):
+def test_seed_demo_tasks_inserts_six_estimated_tasks_once(tmp_path):
     db_path = tmp_path / "harness.db"
     db.init_db(db_path)
 
@@ -16,7 +16,7 @@ def test_seed_demo_tasks_inserts_six_backlog_tasks_once(tmp_path):
     assert second == []
     assert len(tasks) == 6
     assert [task["id"] for task in tasks] == ["DEMO_TASK_2099_T1", "DEMO_TASK_2099_T2", "DEMO_TASK_2099_T3", "DEMO_TASK_2099_T4", "DEMO_TASK_2099_T5", "DEMO_TASK_2099_T6"]
-    assert {task["status"] for task in tasks} == {"Backlog"}
+    assert {task["status"] for task in tasks} == {"Estimated"}
 
 
 def test_seeded_tasks_match_demo_plan_metadata(tmp_path):

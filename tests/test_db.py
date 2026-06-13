@@ -28,6 +28,9 @@ def test_init_db_creates_schema_idempotently_with_foreign_keys(tmp_path):
             )
         }
         foreign_keys_enabled = conn.execute("pragma foreign_keys").fetchone()[0]
+        token_turn_columns = {
+            row["name"] for row in conn.execute("pragma table_info(token_turns)").fetchall()
+        }
 
     assert {
         "sessions",
@@ -40,6 +43,7 @@ def test_init_db_creates_schema_idempotently_with_foreign_keys(tmp_path):
         "action_history",
     }.issubset(tables)
     assert foreign_keys_enabled == 1
+    assert "usage_kind" in token_turn_columns
 
 
 def test_create_and_get_session_round_trips_json_overrides(tmp_path):
@@ -126,6 +130,7 @@ def test_session_artifact_rebuilds_persisted_session_rows(tmp_path):
     assert artifact["session"]["task_description"] == "Implement snip list"
     token_turn = artifact["token_log"][0]
     assert token_turn == {
+        "usage_kind": "worker",
         "model": "claude-sonnet",
         "prompt_tokens": 1200,
         "completion_tokens": 300,
@@ -153,6 +158,7 @@ def test_session_artifact_rebuilds_persisted_session_rows(tmp_path):
     alarm = artifact["alarms"][0]
     assert alarm == {
         "id": "alarm-1",
+        "session_id": session["id"],
         "type": "BUDGET_YELLOW",
         "severity": "LOW",
         "context": {"zone": "yellow"},
@@ -187,3 +193,86 @@ def test_foreign_keys_reject_rows_for_unknown_session(tmp_path):
         return
 
     raise AssertionError("expected sqlite3.IntegrityError for unknown session")
+
+
+def test_record_token_turn_persists_explicit_usage_kind(tmp_path):
+    db_path = tmp_path / "harness.db"
+    init_db(db_path)
+    session = create_session(
+        db_path,
+        task_description="Estimate task",
+        model="gpt-4o-mini",
+        session_key_hash="hash-estimator",
+        guardrail_overrides={},
+    )
+
+    record_token_turn(
+        db_path,
+        session_id=session["id"],
+        usage_kind="estimation",
+        model="gpt-4o-mini",
+        prompt_tokens=200,
+        completion_tokens=50,
+        cost=0.001,
+        raw_usage={"prompt_tokens": 200, "completion_tokens": 50, "total_tokens": 250},
+    )
+
+    artifact = build_session_artifact(db_path, session["id"])
+
+    assert artifact["token_log"][0]["usage_kind"] == "estimation"
+
+
+def test_init_db_migrates_existing_token_turns_to_worker_usage_kind(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            create table sessions (
+                id text primary key,
+                task_description text not null,
+                model text not null,
+                session_key_hash text not null,
+                started_at text not null,
+                status text not null,
+                guardrail_overrides_json text not null
+            );
+            create table token_turns (
+                id integer primary key autoincrement,
+                session_id text not null references sessions(id) on delete cascade,
+                model text not null,
+                prompt_tokens integer not null,
+                completion_tokens integer not null,
+                total_tokens integer not null,
+                cost real not null,
+                raw_usage_json text not null,
+                created_at text not null
+            );
+            insert into sessions (
+                id, task_description, model, session_key_hash, started_at, status,
+                guardrail_overrides_json
+            ) values (
+                'sess_legacy', 'Legacy task', 'claude-haiku', 'legacy-hash',
+                '2026-01-01T00:00:00+00:00', 'running', '{}'
+            );
+            insert into token_turns (
+                session_id, model, prompt_tokens, completion_tokens, total_tokens,
+                cost, raw_usage_json, created_at
+            ) values (
+                'sess_legacy', 'claude-haiku', 10, 5, 15, 0.01,
+                '{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}',
+                '2026-01-01T00:00:00+00:00'
+            );
+            """
+        )
+
+    init_db(db_path)
+
+    artifact = build_session_artifact(db_path, "sess_legacy")
+    with connect(db_path) as conn:
+        token_turn_columns = {
+            row["name"] for row in conn.execute("pragma table_info(token_turns)").fetchall()
+        }
+
+    assert "usage_kind" in token_turn_columns
+    assert artifact["token_log"][0]["usage_kind"] == "worker"

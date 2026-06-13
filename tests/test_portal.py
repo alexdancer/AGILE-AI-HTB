@@ -33,6 +33,54 @@ def test_portal_routes_require_operator_bearer_token(tmp_path, monkeypatch):
             assert client.get(path, headers=_portal_headers()).status_code == 200
 
 
+def test_portal_login_sets_signed_http_only_cookie_and_logout_clears_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        login = client.post("/login", data={"token": PORTAL_TOKEN}, follow_redirects=False)
+
+        assert login.status_code == 303
+        assert login.headers["location"] == "/dashboard"
+        cookie = login.headers["set-cookie"]
+        assert "agile_ai_htb_portal=" in cookie
+        assert "HttpOnly" in cookie
+        assert "SameSite=lax" in cookie
+        assert "Max-Age=43200" in cookie
+        assert "Secure" not in cookie
+
+        assert client.get("/dashboard").status_code == 200
+
+        logout = client.post("/logout", follow_redirects=False)
+        assert logout.status_code == 303
+        assert logout.headers["location"] == "/login"
+        assert "agile_ai_htb_portal=\"\"" in logout.headers["set-cookie"]
+        assert client.get("/dashboard").status_code == 401
+
+
+def test_portal_rejects_tampered_or_expired_login_cookie(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        login = client.post("/login", data={"token": PORTAL_TOKEN})
+        assert login.status_code == 200
+        signed_cookie = client.cookies.get("agile_ai_htb_portal")
+        assert signed_cookie is not None
+
+        client.cookies.set("agile_ai_htb_portal", signed_cookie + "tampered")
+        assert client.get("/dashboard").status_code == 401
+
+        from agile_ai_htb.auth import sign_portal_cookie
+
+        client.cookies.set("agile_ai_htb_portal", sign_portal_cookie(PORTAL_TOKEN, max_age_seconds=-1))
+        assert client.get("/dashboard").status_code == 401
+
+
+def test_portal_login_rejects_wrong_token(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.post("/login", data={"token": "wrong"})
+
+    assert response.status_code == 401
+
+
 def test_dashboard_renders_budget_alarm_and_navigation_sections(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     with _client(tmp_path) as client:
@@ -71,9 +119,13 @@ def test_dashboard_renders_budget_alarm_and_navigation_sections(tmp_path, monkey
     assert "Sessions" in html
     assert "Alarms" in html
     assert "Task board" in html
-    assert "Session history" in html
-    assert "https://unpkg.com/htmx.org" in html
-    assert "https://cdn.jsdelivr.net/npm/chart.js" in html
+    assert "Active sessions" in html
+    assert started["session_id"] in html
+    assert "Build portal" in html
+    assert "AGILE-AI-HTB" in html
+    assert "live harness" in html
+    assert "https://unpkg.com/htmx.org" not in html
+    assert "https://cdn.jsdelivr.net/npm/chart.js" not in html
     assert "PROVIDER_API_KEY" not in html
     assert "sk_sess_" not in html
 
@@ -135,25 +187,94 @@ def test_board_renders_columns_and_task_cards(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     html = response.text
-    for column in ["Backlog", "Estimated", "Running", "Review", "Done", "Other"]:
+    for column in ["Estimated", "Ready", "Running", "Review", "Done", "Blocked"]:
         assert column in html
+    assert "Backlog" not in html
+    assert "Other" not in html
     assert "repeat(6," in html
     assert "Add streaming proxy tests" in html
     assert "25,000" in html
     assert "claude-sonnet" in html
     assert "12,000" in html
+    assert "Configure Worker Adapter to launch." in html
     assert created["id"] in html
 
 
-def test_board_renders_unexpected_statuses_in_other_column(tmp_path, monkeypatch):
+def test_board_renders_unexpected_statuses_as_blocked(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     with _client(tmp_path) as client:
-        client.post("/tasks", json={"description": "Odd status task", "status": "Blocked"})
+        client.post("/tasks", json={"description": "Odd status task", "status": "Legacy Backlog"})
         response = client.get("/board", headers=_portal_headers())
 
     assert response.status_code == 200
-    assert "Other" in response.text
+    assert "Blocked" in response.text
+    assert "Other" not in response.text
     assert "Odd status task" in response.text
+    assert "Unsupported task status: Legacy Backlog" in response.text
+
+
+def test_sessions_index_renders_mockup_style_session_table(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        started = client.post(
+            "/session/start",
+            json={"task_description": "Review live portal", "model": "claude-haiku"},
+        ).json()
+        db.record_token_turn(
+            tmp_path / "harness.db",
+            session_id=started["session_id"],
+            model="claude-haiku",
+            prompt_tokens=80,
+            completion_tokens=20,
+            cost=0.01,
+            raw_usage={"total_tokens": 100},
+        )
+        response = client.get("/sessions", headers=_portal_headers())
+
+    assert response.status_code == 200
+    html = response.text
+    assert "All sessions" in html
+    assert "Review live portal" in html
+    assert "100" in html
+    assert "zone:" in html
+
+
+def test_alarms_browser_accept_renders_html_inbox_without_breaking_json_api(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        started = client.post(
+            "/session/start",
+            json={"task_description": "Alarm inbox", "model": "claude-haiku"},
+        ).json()
+        db.record_alarm(
+            tmp_path / "harness.db",
+            session_id=started["session_id"],
+            alarm={
+                "id": "alarm-inbox-1",
+                "type": "DAILY_CAP_EXCEEDED",
+                "severity": "HIGH",
+                "context": {"daily_cap": 100},
+                "recommended_action": "Ask human to raise budget.",
+            },
+        )
+
+        resolved = client.post("/alarms/alarm-inbox-1/resolve", json={"action": "continue"})
+        assert resolved.status_code == 200
+
+        api_response = client.get("/alarms")
+        html_response = client.get(
+            "/alarms",
+            headers={**_portal_headers(), "accept": "text/html"},
+        )
+
+    assert api_response.status_code == 200
+    assert api_response.json()["alarms"][0]["id"] == "alarm-inbox-1"
+    assert html_response.status_code == 200
+    assert "text/html" in html_response.headers["content-type"]
+    assert "Resolved" in html_response.text
+    assert "DAILY_CAP_EXCEEDED" in html_response.text
+    assert started["session_id"] in html_response.text
+    assert "Ask human to raise budget." in html_response.text
 
 
 def test_session_report_renders_totals_alarm_checkpoint_without_internal_artifact_link(tmp_path, monkeypatch):
