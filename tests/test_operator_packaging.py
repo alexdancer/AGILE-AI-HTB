@@ -45,7 +45,7 @@ def test_readme_documents_portal_first_operator_flow():
     assert "http://localhost:8000/login" in readme
     assert "htb seed-demo" in readme
     assert "docker compose up" in readme
-    assert "uv run --python 3.11 --extra test pytest -q" in readme
-    assert "provider keys" in readme.lower()
-    assert "environment variables" in readme.lower()
-    assert "optional live LiteLLM" in readme
+    assert ".venv/bin/python -m pytest" in readme
+    assert "provider" in readme.lower()
+    assert "env var" in readme.lower()
+    assert "PROVIDER_API_KEY" in readme

@@ -37,6 +37,11 @@ class WorkerVerifyRequest(BaseModel):
     proxy_url: str = Field(default=DEFAULT_PROXY_URL, min_length=1)
 
 
+@router.get("/")
+def root() -> RedirectResponse:
+    return RedirectResponse("/login")
+
+
 @router.get("/login", response_class=HTMLResponse)
 def login_form(request: Request):
     return templates.TemplateResponse(request, "login.html", {"active_page": "login"})
