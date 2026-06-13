@@ -143,6 +143,16 @@ def get_session(path: Path | str, session_id: str) -> dict[str, Any]:
     return _session_from_row(row)
 
 
+def get_session_by_key_hash(path: Path | str, session_key_hash: str) -> dict[str, Any]:
+    with connect(path) as conn:
+        row = conn.execute(
+            "select * from sessions where session_key_hash = ?", (session_key_hash,)
+        ).fetchone()
+    if row is None:
+        raise KeyError("session not found for key")
+    return _session_from_row(row)
+
+
 def record_token_turn(
     path: Path | str,
     *,
@@ -447,6 +457,27 @@ def build_session_artifact(path: Path | str, session_id: str) -> dict[str, Any]:
         "guardrail_snapshots": [_snapshot_from_row(row) for row in snapshot_rows],
         "checkpoint_results": [_checkpoint_from_row(row) for row in checkpoint_rows],
     }
+
+
+def total_token_usage(path: Path | str, *, since: str | None = None) -> int:
+    with connect(path) as conn:
+        if since is None:
+            row = conn.execute("select coalesce(sum(total_tokens), 0) as total from token_turns").fetchone()
+        else:
+            row = conn.execute(
+                "select coalesce(sum(total_tokens), 0) as total from token_turns where created_at >= ?",
+                (since,),
+            ).fetchone()
+    return int(row["total"])
+
+
+def session_token_usage(path: Path | str, session_id: str) -> int:
+    with connect(path) as conn:
+        row = conn.execute(
+            "select coalesce(sum(total_tokens), 0) as total from token_turns where session_id = ?",
+            (session_id,),
+        ).fetchone()
+    return int(row["total"])
 
 
 def _session_from_row(row: sqlite3.Row) -> dict[str, Any]:
