@@ -11,6 +11,7 @@ class Settings:
     guardrails_path: Path = Path("guardrails.yaml")
     timezone: str = "local"
     provider_api_key_env: str = "PROVIDER_API_KEY"
+    portal_token_env: str = "TOKEN_TRACKER_PORTAL_TOKEN"
 
     def __init__(
         self,
@@ -18,6 +19,7 @@ class Settings:
         guardrails_path: Path | str | None = None,
         timezone: str | None = None,
         provider_api_key_env: str | None = None,
+        portal_token_env: str | None = None,
     ) -> None:
         object.__setattr__(
             self,
@@ -39,4 +41,9 @@ class Settings:
             "provider_api_key_env",
             provider_api_key_env
             or os.getenv("TOKEN_TRACKER_PROVIDER_API_KEY_ENV", "PROVIDER_API_KEY"),
+        )
+        object.__setattr__(
+            self,
+            "portal_token_env",
+            portal_token_env or os.getenv("TOKEN_TRACKER_PORTAL_TOKEN_ENV", "TOKEN_TRACKER_PORTAL_TOKEN"),
         )

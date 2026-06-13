@@ -30,3 +30,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+# Honor the project's standing rule that demo-data invariant suites are
+# named <DemoName>FakeDataInvariantTests (not the default Test*).
+# pytest's python_classes option is startswith-based, so we use __test__
+# = True on those classes instead of fighting the default.

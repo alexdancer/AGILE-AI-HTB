@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Token Tracker Harness{% endblock %}</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; background: #0f172a; color: #e2e8f0; }
+    header, main { max-width: 1120px; margin: 0 auto; padding: 1rem; }
+    nav a { color: #93c5fd; margin-right: 1rem; text-decoration: none; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
+    .card, .column { background: #111827; border: 1px solid #334155; border-radius: .75rem; padding: 1rem; }
+    .metric { font-size: 2rem; font-weight: 700; }
+    .muted { color: #94a3b8; }
+    .columns { display: grid; grid-template-columns: repeat(6, minmax(180px, 1fr)); gap: 1rem; overflow-x: auto; }
+    .task { background: #1e293b; border-radius: .5rem; padding: .75rem; margin: .75rem 0; }
+    .review { border-color: #f97316; box-shadow: 0 0 0 1px #f97316 inset; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #334155; padding: .5rem; text-align: left; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Token Tracker Harness</h1>
+    <nav>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/board">Task board</a>
+      <a href="/alarms">Alarms API</a>
+    </nav>
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>
