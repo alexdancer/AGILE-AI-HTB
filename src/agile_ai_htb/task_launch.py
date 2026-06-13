@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import secrets
 import subprocess
@@ -17,7 +18,12 @@ from agile_ai_htb.worker_adapters import (
     subprocess_runner,
 )
 
-DEFAULT_PROXY_URL = "http://127.0.0.1:8000/v1"
+
+def _harness_port() -> str:
+    return os.environ.get("PORT", "8000")
+
+
+DEFAULT_PROXY_URL = f"http://127.0.0.1:{_harness_port()}/v1"
 LAUNCHABLE_TASK_STATUSES = {"Estimated", "Ready"}
 SESSION_KEY_PATTERN = re.compile(r"sk_sess_[A-Za-z0-9_\-.]+")
 SECRETISH_PATTERNS = (
