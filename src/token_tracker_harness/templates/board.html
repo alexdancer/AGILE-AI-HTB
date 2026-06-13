@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Task board | Token Tracker Harness{% endblock %}
+{% block content %}
+<h2>AGILE board</h2>
+<section class="columns">
+  {% for column in columns %}
+  <article class="column">
+    <h3>{{ column }}</h3>
+    {% for task in tasks_by_status.get(column, []) %}
+    <div class="task" id="{{ task.id }}">
+      <strong>{{ task.description }}</strong>
+      <p class="muted">Task: {{ task.id }}</p>
+      {% if task.estimate_tokens is not none %}<p>Estimate: {{ "{:,}".format(task.estimate_tokens) }} tokens</p>{% endif %}
+      {% if task.recommended_model %}<p>Model: {{ task.recommended_model }}</p>{% endif %}
+      {% if task.actual_tokens is not none %}<p>Actual: {{ "{:,}".format(task.actual_tokens) }} tokens</p>{% endif %}
+      {% if task.session_id %}<p><a href="/sessions/{{ task.session_id }}">Session report</a></p>{% endif %}
+    </div>
+    {% else %}
+    <p class="muted">No tasks.</p>
+    {% endfor %}
+  </article>
+  {% endfor %}
+</section>
+{% endblock %}

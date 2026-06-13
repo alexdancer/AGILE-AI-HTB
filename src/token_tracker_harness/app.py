@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from token_tracker_harness import db
 from token_tracker_harness.guardrails import load_guardrails
 from token_tracker_harness.llm import LLMClient
-from token_tracker_harness.routes import alarms, proxy, sessions, tasks
+from token_tracker_harness.routes import alarms, portal, proxy, sessions, tasks
 from token_tracker_harness.settings import Settings
 
 
@@ -34,4 +34,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(tasks.router)
     app.include_router(alarms.router)
     app.include_router(proxy.router)
+    app.include_router(portal.router)
     return app

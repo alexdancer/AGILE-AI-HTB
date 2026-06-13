@@ -8,11 +8,16 @@ from token_tracker_harness.settings import Settings
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PORTAL_TOKEN = "test-portal-token"
 
 
 def _client(tmp_path):
     settings = Settings(database_path=tmp_path / "harness.db", guardrails_path=ROOT / "guardrails.yaml")
     return TestClient(create_app(settings))
+
+
+def _portal_headers():
+    return {"Authorization": f"Bearer {PORTAL_TOKEN}"}
 
 
 def test_session_start_returns_key_zone_and_report_url(tmp_path):
@@ -52,7 +57,8 @@ def test_session_report_current_zone_includes_prior_daily_budget_usage(tmp_path)
     assert report.json()["current_zone"] == "red"
 
 
-def test_session_report_artifact_and_checkpoint_evaluation(tmp_path):
+def test_session_report_artifact_and_checkpoint_evaluation(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     with _client(tmp_path) as client:
         started = client.post(
             "/session/start",
@@ -90,7 +96,8 @@ def test_session_report_artifact_and_checkpoint_evaluation(tmp_path):
         )
 
         report = client.get(f"/session/{session_id}/report")
-        artifact = client.get(f"/session/{session_id}/artifact")
+        artifact_without_auth = client.get(f"/session/{session_id}/artifact")
+        artifact = client.get(f"/session/{session_id}/artifact", headers=_portal_headers())
         checkpoints = client.post(f"/session/{session_id}/checkpoint/evaluate")
         report_after = client.get(f"/session/{session_id}/report")
 
@@ -101,6 +108,7 @@ def test_session_report_artifact_and_checkpoint_evaluation(tmp_path):
     assert report_body["current_zone"] == "green"
     assert report_body["tool_breakdown"] == {"read_file": {"calls": 1}}
     assert report_body["alarms"][0]["id"] == "alarm-session-1"
+    assert artifact_without_auth.status_code == 401
     assert artifact.status_code == 200
     assert artifact.json()["token_log"][0]["total_tokens"] == 1500
     assert checkpoints.status_code == 200

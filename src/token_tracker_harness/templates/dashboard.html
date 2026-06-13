@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Dashboard | Token Tracker Harness{% endblock %}
+{% block content %}
+<section class="grid">
+  <article class="card">
+    <h2>Daily budget</h2>
+    <div class="metric">{{ "{:,}".format(token_total) }}</div>
+    <p class="muted">tokens used{% if daily_cap %} / {{ "{:,}".format(daily_cap) }} cap{% endif %}</p>
+    <p>Zone: <strong>{{ current_zone }}</strong></p>
+  </article>
+  <article class="card">
+    <h2>Sessions</h2>
+    <div class="metric">{{ session_count }}</div>
+    <p>Session history appears below.</p>
+  </article>
+  <article class="card">
+    <h2>Alarms</h2>
+    <div class="metric">{{ alarm_count }}</div>
+    <p><a href="/alarms">Alarm log</a></p>
+  </article>
+  <article class="card">
+    <h2>Task board</h2>
+    <p>Backlog, Estimated, Running, Review, Done.</p>
+    <p><a href="/board">Open Task board</a></p>
+  </article>
+</section>
+
+<section class="card">
+  <h2>Burn chart</h2>
+  <canvas id="budgetChart" aria-label="Daily budget chart"></canvas>
+</section>
+
+<section class="grid">
+  <article class="card">
+    <h2>Recent sessions</h2>
+    <ul>
+      {% for session in recent_sessions %}
+      <li><a href="/sessions/{{ session.id }}">{{ session.task_description }}</a> — {{ session.status }}</li>
+      {% else %}
+      <li class="muted">No sessions yet.</li>
+      {% endfor %}
+    </ul>
+  </article>
+  <article class="card">
+    <h2>Recent alarms</h2>
+    <ul>
+      {% for alarm in recent_alarms %}
+      <li>{{ alarm.type }} — {{ alarm.severity }}</li>
+      {% else %}
+      <li class="muted">No alarms yet.</li>
+      {% endfor %}
+    </ul>
+  </article>
+</section>
+
+<script>
+new Chart(document.getElementById("budgetChart"), {
+  type: "bar",
+  data: { labels: ["Used"], datasets: [{ label: "Tokens", data: [{{ token_total }}] }] },
+  options: { responsive: true, plugins: { legend: { display: false } } }
+});
+</script>
+{% endblock %}

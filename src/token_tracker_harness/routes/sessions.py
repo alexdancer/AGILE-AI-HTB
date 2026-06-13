@@ -4,10 +4,11 @@ import hashlib
 import secrets
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from token_tracker_harness import db
+from token_tracker_harness.auth import require_portal_auth
 from token_tracker_harness.checkpoints import evaluate_checkpoints
 from token_tracker_harness.guardrails import get_budget_zone
 
@@ -80,7 +81,7 @@ def session_report(session_id: str, request: Request) -> dict[str, Any]:
     }
 
 
-@router.get("/session/{session_id}/artifact")
+@router.get("/session/{session_id}/artifact", dependencies=[Depends(require_portal_auth)])
 def session_artifact(session_id: str, request: Request) -> dict[str, Any]:
     return _artifact_or_404(request, session_id)
 

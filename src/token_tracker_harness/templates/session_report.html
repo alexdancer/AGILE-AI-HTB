@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Session report | Token Tracker Harness{% endblock %}
+{% block content %}
+<article class="card {% if requires_review %}review{% endif %}">
+  <h2>Session report</h2>
+  <p><strong>{{ session.task_description }}</strong></p>
+  <p class="muted">{{ session.id }} · {{ session.model }} · {{ session.status }}</p>
+  {% if requires_review %}<p><strong>Requires review</strong></p>{% endif %}
+</article>
+
+<section class="grid">
+  <article class="card">
+    <h3>Token totals</h3>
+    <p>Total: {{ "{:,}".format(token_totals.total_tokens) }}</p>
+    <p>Prompt: {{ "{:,}".format(token_totals.prompt_tokens) }}</p>
+    <p>Completion: {{ "{:,}".format(token_totals.completion_tokens) }}</p>
+  </article>
+  <article class="card">
+    <h3>Zone timeline</h3>
+    <ul>
+      {% for snapshot in zone_timeline %}
+      <li>{{ snapshot.zone }} — max {{ snapshot.decision.max_tokens }}</li>
+      {% else %}
+      <li class="muted">No snapshots.</li>
+      {% endfor %}
+    </ul>
+  </article>
+</section>
+
+<section class="grid">
+  <article class="card">
+    <h3>Alarms</h3>
+    <ul>
+      {% for alarm in artifact.alarms %}
+      <li>{{ alarm.type }} — {{ alarm.severity }} — {{ alarm.recommended_action }}</li>
+      {% else %}
+      <li class="muted">No alarms.</li>
+      {% endfor %}
+    </ul>
+  </article>
+  <article class="card">
+    <h3>Checkpoint results</h3>
+    <ul>
+      {% for checkpoint in artifact.checkpoint_results %}
+      <li>{{ checkpoint.name }} — {% if checkpoint.passed %}pass{% else %}fail{% endif %}</li>
+      {% else %}
+      <li class="muted">No checkpoint results.</li>
+      {% endfor %}
+    </ul>
+  </article>
+</section>
+{% endblock %}

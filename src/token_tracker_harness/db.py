@@ -334,6 +334,18 @@ def update_task(path: Path | str, task_id: str, updates: dict[str, Any]) -> dict
     return get_task(path, task_id)
 
 
+def list_tasks(path: Path | str) -> list[dict[str, Any]]:
+    with connect(path) as conn:
+        rows = conn.execute("select * from tasks order by created_at, id").fetchall()
+    return [_task_from_row(row) for row in rows]
+
+
+def list_sessions(path: Path | str) -> list[dict[str, Any]]:
+    with connect(path) as conn:
+        rows = conn.execute("select * from sessions order by started_at, id").fetchall()
+    return [_session_from_row(row) for row in rows]
+
+
 def list_alarms(
     path: Path | str,
     *,
