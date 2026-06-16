@@ -20,10 +20,12 @@ from agile_ai_htb.auth import (
     require_portal_auth,
     sign_portal_cookie,
 )
+from agile_ai_htb.execution_backend import LocalExecutionBackend
 from agile_ai_htb.guardrails import get_budget_zone
 from agile_ai_htb.launch_guardrails import adapter_launchable_for_ui
-from agile_ai_htb.task_launch import DEFAULT_PROXY_URL
-from agile_ai_htb.worker_adapters import verify_worker_adapter
+from agile_ai_htb.llm import extract_usage, response_to_dict
+from agile_ai_htb.task_launch import DEFAULT_PROXY_URL, TaskLaunchBlocked, launch_task
+from agile_ai_htb.worker_adapters import detect_worker_adapter, discover_worker_models, verify_worker_adapter
 
 
 router = APIRouter()
@@ -35,6 +37,11 @@ BOARD_COLUMNS = ["Estimated", "Ready", "Running", "Review", "Done", "Blocked"]
 class WorkerVerifyRequest(BaseModel):
     model: str = Field(min_length=1)
     proxy_url: str = Field(default=DEFAULT_PROXY_URL, min_length=1)
+    tracking_mode: str = Field(default="proxy_governed", pattern="^(proxy_governed|native_usage)$")
+
+
+class ProjectConnectRequest(BaseModel):
+    root_path: str = Field(min_length=1)
 
 
 @router.get("/")
@@ -83,10 +90,9 @@ def logout(request: Request):
 def dashboard(request: Request):
     database_path = request.app.state.settings.database_path
     config = request.app.state.guardrails
-    token_total = db.total_token_usage(
-        database_path,
-        since=_current_day_start_iso(request.app.state.settings.timezone),
-    )
+    day_start = _current_day_start_iso(request.app.state.settings.timezone)
+    token_total = db.total_token_usage(database_path, since=day_start)
+    token_breakdown = db.token_usage_breakdown(database_path, since=day_start)
     daily_cap = config.daily_cap.tokens if config.daily_cap.enabled else None
     alarms = db.list_alarms(database_path)
     sessions = db.list_sessions(database_path)
@@ -103,6 +109,7 @@ def dashboard(request: Request):
         {
             "active_page": "dashboard",
             "token_total": token_total,
+            "token_breakdown": token_breakdown,
             "daily_cap": daily_cap,
             "current_zone": get_budget_zone(token_total, daily_cap, config),
             "session_count": len(sessions),
@@ -155,7 +162,10 @@ def worker_settings(request: Request):
             {
                 **adapter,
                 "verification_evidence": _safe_worker_evidence(adapter.get("verification_evidence", {})),
+                "diagnostics": detect_worker_adapter(adapter) if adapter.get("id") == "opencode" else None,
                 "launchable": adapter_launchable_for_ui(adapter),
+                "model_discovery": (adapter.get("config") or {}).get("model_discovery"),
+                "tracking_modes": (adapter.get("config") or {}).get("tracking_modes", ["native", "proxy_governed"]),
             }
         )
     return templates.TemplateResponse(
@@ -163,6 +173,142 @@ def worker_settings(request: Request):
         "workers.html",
         {"active_page": "workers", "adapters": adapters, "default_proxy_url": DEFAULT_PROXY_URL},
     )
+
+
+@router.get("/settings/control-plane", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
+def control_plane_settings(request: Request):
+    settings = request.app.state.settings
+    try:
+        connection_status = db.get_execution_backend_status(settings.database_path, "control_plane_model")
+    except KeyError:
+        connection_status = None
+    return templates.TemplateResponse(
+        request,
+        "control_plane.html",
+        {
+            "active_page": "control_plane",
+            "settings": settings,
+            "api_key_configured": bool(os.getenv(settings.control_plane_api_key_env)),
+            "legacy_api_key_configured": bool(os.getenv(settings.provider_api_key_env)),
+            "connection_status": connection_status,
+        },
+    )
+
+
+@router.post("/settings/control-plane/test", dependencies=[Depends(require_portal_auth)])
+async def test_control_plane_connection(request: Request):
+    settings = request.app.state.settings
+    payload = {
+        "model": settings.control_plane_model,
+        "messages": [{"role": "user", "content": "Return exactly AGILE_AI_HTB_CONTROL_PLANE_OK."}],
+        "max_tokens": 12,
+    }
+    try:
+        response = await request.app.state.llm_client.acompletion(payload)
+        status_record = db.upsert_execution_backend_status(
+            settings.database_path,
+            "control_plane_model",
+            name="Control Plane Model",
+            online=True,
+            details={
+                "provider": settings.control_plane_provider,
+                "model": settings.control_plane_model,
+                "api_key_env": settings.control_plane_api_key_env,
+                "usage": extract_usage(response),
+                "response": _safe_worker_evidence(response_to_dict(response)),
+            },
+        )
+        return JSONResponse(status_code=200, content={"passed": True, "status": status_record})
+    except Exception as exc:
+        status_record = db.upsert_execution_backend_status(
+            settings.database_path,
+            "control_plane_model",
+            name="Control Plane Model",
+            online=False,
+            details={
+                "provider": settings.control_plane_provider,
+                "model": settings.control_plane_model,
+                "api_key_env": settings.control_plane_api_key_env,
+                "error_type": type(exc).__name__,
+                "error": _safe_worker_evidence(str(exc)),
+            },
+        )
+        return JSONResponse(status_code=503, content={"passed": False, "status": status_record})
+
+
+@router.get("/settings/project", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
+def project_settings(request: Request):
+    database_path = request.app.state.settings.database_path
+    backend = _local_backend(request)
+    projects = []
+    for project in db.list_connected_projects(database_path):
+        capability = backend.project_capability(project) if backend else project.get("capability", {})
+        projects.append({**project, "capability": capability})
+    backend_status = backend.status() if backend else None
+    return templates.TemplateResponse(
+        request,
+        "project.html",
+        {
+            "active_page": "project",
+            "local_runner_enabled": request.app.state.settings.local_runner_enabled,
+            "backend_status": backend_status,
+            "projects": projects,
+            "error": None,
+        },
+    )
+
+
+@router.post("/settings/project/connect", dependencies=[Depends(require_portal_auth)])
+async def connect_project_route(request: Request):
+    payload, wants_html = await _project_connect_payload_from_request(request)
+    backend = _local_backend(request)
+    if backend is None:
+        message = "Local Runner backend is disabled. Start with htb serve --local-runner."
+        if wants_html:
+            return _project_settings_with_error(request, message)
+        return JSONResponse(status_code=409, content={"detail": message})
+
+    result = backend.connect_project(payload.root_path)
+    if result.error:
+        if wants_html:
+            return _project_settings_with_error(request, result.error)
+        return JSONResponse(status_code=422, content={"detail": result.error})
+
+    if wants_html:
+        return RedirectResponse("/settings/project", status_code=status.HTTP_303_SEE_OTHER)
+    return JSONResponse(status_code=200, content={"project": result.project})
+
+
+@router.post("/settings/project/{project_id}/read-only-proof", dependencies=[Depends(require_portal_auth)])
+async def launch_read_only_proof_route(project_id: str, request: Request):
+    backend = _local_backend(request)
+    if backend is None:
+        return JSONResponse(status_code=409, content={"detail": "Local Runner backend is disabled."})
+    database_path = request.app.state.settings.database_path
+    project = next((item for item in db.list_connected_projects(database_path) if item["id"] == project_id), None)
+    if project is None:
+        raise HTTPException(status_code=404, detail="connected project not found")
+    capability = backend.project_capability(project)
+    if capability.get("state") != "launch_ready":
+        return JSONResponse(status_code=409, content={"detail": "Project is not Launch-ready via Local Runner.", "capability": capability})
+
+    task = backend.create_read_only_proof_task({**project, "capability": capability})
+    try:
+        result = launch_task(
+            database_path,
+            task["id"],
+            adapter_id="opencode",
+            model=task.get("recommended_model"),
+            proxy_url=DEFAULT_PROXY_URL,
+            runner=getattr(request.app.state, "local_runner_proof_runner", None)
+            or getattr(request.app.state, "task_launch_runner", None),
+        )
+    except TaskLaunchBlocked as exc:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"task": exc.task, "launch_guardrails": {"passed": False, "reasons": exc.reasons}},
+        )
+    return JSONResponse(status_code=200, content=result.as_response())
 
 
 @router.post("/settings/workers/{adapter_id}/verify", dependencies=[Depends(require_portal_auth)])
@@ -174,6 +320,7 @@ async def verify_worker_adapter_route(adapter_id: str, request: Request):
             adapter_id,
             model=payload.model,
             proxy_url=payload.proxy_url or DEFAULT_PROXY_URL,
+            tracking_mode=payload.tracking_mode,
             runner=getattr(request.app.state, "worker_adapter_verification_runner", None),
             token_recorder=getattr(request.app.state, "worker_adapter_verification_token_recorder", None),
         )
@@ -187,6 +334,31 @@ async def verify_worker_adapter_route(adapter_id: str, request: Request):
             "passed": result.passed,
             "adapter_id": result.adapter_id,
             "session_id": result.session_id,
+            "reasons": result.reasons,
+            "evidence": _safe_worker_evidence(result.evidence),
+        },
+    )
+
+
+@router.post("/settings/workers/{adapter_id}/discover-models", dependencies=[Depends(require_portal_auth)])
+async def discover_worker_models_route(adapter_id: str, request: Request):
+    try:
+        result = discover_worker_models(
+            request.app.state.settings.database_path,
+            adapter_id,
+            runner=getattr(request.app.state, "worker_model_discovery_runner", None),
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="worker adapter not found") from exc
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept and "application/json" not in accept:
+        return RedirectResponse("/settings/workers", status_code=status.HTTP_303_SEE_OTHER)
+    return JSONResponse(
+        status_code=200 if result.passed else 409,
+        content={
+            "passed": result.passed,
+            "adapter_id": result.adapter_id,
+            "models": result.models,
             "reasons": result.reasons,
             "evidence": _safe_worker_evidence(result.evidence),
         },
@@ -227,6 +399,7 @@ def session_report_view(session_id: str, request: Request):
         raise HTTPException(status_code=404, detail="session not found") from exc
 
     token_totals = _token_totals(artifact)
+    token_breakdown = db.session_token_breakdown(request.app.state.settings.database_path, session_id)
     requires_review = bool(artifact["alarms"]) or any(
         not checkpoint["passed"] for checkpoint in artifact["checkpoint_results"]
     )
@@ -238,6 +411,7 @@ def session_report_view(session_id: str, request: Request):
             "active_page": "sessions",
             "session": artifact["session"],
             "token_totals": token_totals,
+            "token_breakdown": token_breakdown,
             "requires_review": requires_review,
             "zone_timeline": artifact["guardrail_snapshots"],
         },
@@ -263,6 +437,54 @@ async def _worker_verify_payload_from_request(request: Request) -> tuple[WorkerV
         except ValidationError as exc:
             raise HTTPException(status_code=422, detail=exc.errors()) from exc
     raise HTTPException(status_code=422, detail="model is required")
+
+
+async def _project_connect_payload_from_request(request: Request) -> tuple[ProjectConnectRequest, bool]:
+    content_type = request.headers.get("content-type", "")
+    accept = request.headers.get("accept", "")
+    wants_html = "text/html" in accept and "application/json" not in accept
+    if "application/json" in content_type:
+        raw = await request.json()
+        try:
+            return ProjectConnectRequest.model_validate(raw or {}), False
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+    if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        form = await request.form()
+        raw = {key: value for key, value in form.items() if value not in (None, "")}
+        try:
+            return ProjectConnectRequest.model_validate(raw), True
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+    raise HTTPException(status_code=422, detail="root_path is required")
+
+
+def _local_backend(request: Request) -> LocalExecutionBackend | None:
+    if not request.app.state.settings.local_runner_enabled:
+        return None
+    backend = getattr(request.app.state, "execution_backend", None)
+    if backend is None:
+        backend = LocalExecutionBackend(request.app.state.settings.database_path)
+        request.app.state.execution_backend = backend
+    return backend
+
+
+def _project_settings_with_error(request: Request, error: str):
+    database_path = request.app.state.settings.database_path
+    projects = db.list_connected_projects(database_path)
+    backend = _local_backend(request)
+    return templates.TemplateResponse(
+        request,
+        "project.html",
+        {
+            "active_page": "project",
+            "local_runner_enabled": request.app.state.settings.local_runner_enabled,
+            "backend_status": backend.status() if backend else None,
+            "projects": projects,
+            "error": error,
+        },
+        status_code=422,
+    )
 
 
 def _token_totals(artifact: dict[str, Any]) -> dict[str, int]:

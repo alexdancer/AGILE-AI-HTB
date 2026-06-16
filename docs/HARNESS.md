@@ -4,6 +4,8 @@ AGILE-AI-HTB is a token-tracker harness that governs AI coding agents through **
 
 ## Architecture Overview
 
+AGILE-AI-HTB uses a deployable control-plane / execution-plane architecture. The hosted Harness can coordinate work, govern budgets, expose the Portal, proxy model traffic, and track tokens, but actual repository access and coding-agent launch happen through a pluggable **Execution Backend**. The first launch-capable backend is a **Local Runner** running near the user's repo; a **Hosted Workspace/Sandbox** is the later cloud-native path; analysis-only Git workspaces are useful immediately for task breakdown and estimation but are not launch-ready until an execution backend is verified.
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                        HARNESS                              │
@@ -38,13 +40,86 @@ AGILE-AI-HTB is a token-tracker harness that governs AI coding agents through **
     └─────────┘
 ```
 
-**Single-process design**: The harness runs as one FastAPI application serving three roles:
+**Control Plane design**: The deployable harness runs as one FastAPI application serving three roles:
 
 1. **LLM Proxy** — The agent points its `OPENAI_BASE_URL` (or equivalent) at the harness. All API calls arrive at the harness, which uses [LiteLLM](https://github.com/BerriAI/litellm) (`litellm.acompletion()`) to forward to the real provider. LiteLLM normalizes request/response shapes across 100+ providers (OpenAI, Anthropic, Gemini, etc.) — token counts are always `response.usage.prompt_tokens` / `completion_tokens` regardless of provider. Governance layers (system prompt rewrite, max_tokens clamping, tool restriction) are injected into the request before forwarding.
 2. **REST API** — Session management (`/session/start`, `/session/{id}/report`), guardrail CRUD, checkpoint evaluation, alarm history.
 3. **Portal UI** — HTML served via HTMX + Jinja2. Dashboard with token charts, AGILE task board, session history, alarm log.
 
-**Deployment**: Single Docker container. Runs identically on `localhost` or cloud (Fly.io, Railway). SQLite backs the artifact store — no external database dependency.
+**Deployment**: The Control Plane can deploy as a single Docker container. SQLite backs the artifact store for the initial demo. Local launch against a user's private/local repo requires a paired Local Runner; a hosted deployment cannot directly access a laptop filesystem. Git URL projects may be analysis-ready in the hosted Control Plane before they are launch-ready.
+
+### Control plane and execution backends
+
+The Harness separates coordination from execution:
+
+| Concept | Responsibility | First target |
+|---|---|---|
+| **Control Plane** | Portal, AGILE Board, budgets, Task Breakdown Agent, Estimator LLM, Proxy Engine, token accounting, reports | Render/Fly/Railway deployable web app |
+| **Local Runner** | Runs near the user's local repo, launches local Claude Code/Codex/OpenCode/Hermes adapters, sends model traffic through the Harness proxy | Built into all-in-one local mode first; split/tunnel runner later |
+| **Hosted Workspace/Sandbox** | Clones Git repos for hosted analysis and later cloud-side Worker execution | Future launch backend; analysis-only first |
+| **Analysis-only backend** | Allows task breakdown and estimation without Worker launch | Available for hosted Git URL workspaces |
+
+Project capability is explicit in the Portal:
+
+- **Not connected** — no project context.
+- **Analysis-ready** — enough context for Task Breakdown and Task Estimation, but no verified execution backend.
+- **Launch-ready via Local Runner** — runner is online, paired, has repo access, and Worker Adapter verification passed.
+- **Launch-ready via Hosted Workspace/Sandbox** — hosted execution environment is sandboxed, configured, and verified.
+- **Blocked** — project exists but no execution backend satisfies Launch Guardrails.
+
+This prevents the hosted product from claiming it can run a user's local coding agent when no local execution bridge exists.
+
+The minimum scale proof is one Control Plane coordinating multiple project/backend states, not every backend being fully launchable. The demo should show at least:
+
+- one project **Launch-ready via Local Runner** with OpenCode verified end-to-end;
+- one project **Analysis-ready** through a Git/Hosted Workspace profile where breakdown and estimation work but launch is disabled;
+- one project or adapter **Blocked** because Launch Guardrails lack a verified execution backend.
+
+This proves the Control Plane can govern heterogeneous execution readiness at scale while keeping launch claims truthful.
+
+The first implementation slice is the **local execution slice**. It must prove real governance before expanding the dashboard: `htb serve --local-runner`, connect a local repo path, detect OpenCode, run adapter verification through the Harness Proxy, record `adapter_verification` tokens, mark the project **Launch-ready via Local Runner**, launch one tiny task through OpenCode, and prove Worker tokens hit the Harness ledger. The first launch proof should be read-only: OpenCode inspects the connected repo and writes a short session report artifact summarizing language, test command, and top-level structure. After that passes, a second proof may perform a tiny docs-only codebase change.
+
+Launch Guardrails distinguish read-only from write-capable sessions. Read-only repo inspection may run even when the connected repository has uncommitted changes. Write-capable sessions require a detected git repository, visible current branch, and clean working tree before launch so Worker changes do not mix with pre-existing user edits. After the clean-tree check passes, the runner creates a task branch such as `htb/task-123-short-title`, launches the Worker on that branch, and records the branch name in the Session Artifact and Portal review flow. The Worker may edit files on the task branch, but the Harness owns final git history: after configured verification passes, the Harness creates the commit with task/session metadata. Commit gating uses the Project Profile test command plus a Harness-generated git diff review summary. If no test command is configured, verification is marked "missing test command" and manual approval is required before commit. If verification fails, changes remain uncommitted for review or retry. Pull request creation is optional, not required for the first local execution slice: when a GitHub remote and authenticated `gh` CLI are available, the Portal may show an Open PR action after the Harness-Owned Commit exists.
+
+Worker failure handling is conservative in the first implementation: no automatic retry. If OpenCode crashes, exits non-zero, times out, exceeds budget, fails verification, or produces no observed Harness Proxy traffic, the Task moves to **Blocked**. The Harness preserves logs, token ledger entries, failure reason, branch name, and any uncommitted diff for user review or later retry.
+
+### Local run modes
+
+The first local implementation should be **all-in-one local mode**:
+
+```bash
+htb serve --local-runner
+```
+
+In this mode, the Control Plane and Local Runner run on the same machine and may share one process. The Portal connects a local repo path, validates the Project Profile, detects Worker Adapters, verifies launch capability, and launches Workers in that repo. Worker model traffic still goes through the Harness Proxy, not directly to the provider.
+
+Local execution smoke path:
+
+```bash
+# Start the all-in-one Control Plane + Local Runner
+uv run htb serve --local-runner
+
+# In another shell, run the reproducible synthetic smoke.
+# It requires OpenCode on PATH, initializes a temporary git repo, connects it
+# through LocalExecutionBackend, marks synthetic adapter-verification evidence,
+# launches a read-only proof, then runs a write-capable docs-only session with
+# budget override and Harness-owned commit verification.
+uv run python scripts/local_runner_smoke.py
+```
+
+The smoke intentionally does not require provider secrets. It records synthetic `task_execution` token rows through the same SQLite ledger APIs used by the proxy path, so Launch Guardrails still prove that session accounting, budget override metadata, overrun alarms, task branch creation, test-command gating, diff summary capture, and Harness-owned commit persistence all work. For a real Worker Adapter verification, use the Portal Worker Setup flow so OpenCode makes the sentinel model call through `/v1/chat/completions` and the Harness records adapter-verification token usage.
+
+Later modes preserve the same Execution Backend contract:
+
+| Mode | Shape | Purpose |
+|---|---|---|
+| **All-in-one local** | `htb serve --local-runner` | First demo/dev path; proves real local repo + local Worker launch |
+| **Split local** | `htb serve` plus `htb-runner serve --server http://localhost:8000 --project /path/to/repo` | Tests runner lifecycle and mirrors hosted architecture |
+| **Hosted + tunnel** | `htb-runner connect --server https://... --project /path/to/repo --tunnel ngrok|cloudflare` | Deployed Control Plane controlling a local execution backend |
+
+The local-first implementation must keep the code boundary as an `ExecutionBackend` so split runner, tunnel runner, and hosted sandbox can be added without rewriting the AGILE Board.
+
+The first verified local Worker Adapter target is **OpenCode**. Claude Code, Codex, and Hermes remain first-class adapter presets in the Portal, but Launch Guardrails keep them non-launchable until adapter verification proves they can route model traffic through the Harness Proxy and report session status. Adapter verification is not an install-only check: it must run a tiny sentinel prompt through the Worker Adapter, inject a harness session key and proxy base URL, and prove at least one model call was recorded in the token ledger under `adapter_verification` orchestration spend. Provider API keys live only in the Harness process. Workers receive only a session-scoped Harness key and Harness Proxy base URL, for example `OPENAI_BASE_URL=http://127.0.0.1:8000/v1` and `OPENAI_API_KEY=<harness-session-key>`, so Worker Adapters cannot bypass token tracking by calling the provider directly.
 
 **Multi-provider support**: Because LiteLLM normalizes all providers into a common interface, the harness supports any agent that speaks OpenAI-compatible or Anthropic-native APIs. The proxy endpoint `/v1/chat/completions` forwards via `litellm.acompletion()`, which auto-detects the target provider from the `model` field. Adding a new provider is a configuration change, not a code change.
 
@@ -123,7 +198,7 @@ Guardrails are **declared** in `guardrails.yaml`, not buried in code. Each sessi
 
 The harness uses a **three-layer graduated enforcement** model. No layer hard-stops the agent, but each layer constrains behavior more tightly as the budget depletes — the agent *cannot* ignore the constraints.
 
-These are **runtime guardrails**: they apply after a Session has started and the Worker is already making model calls through the Proxy Engine.
+These are **runtime guardrails**: they apply after a Session has started and the Worker is already making model calls through the Proxy Engine. Budget guardrails are not automatic mid-task kill switches: if a running Worker Session exceeds estimate or budget, the Harness records the overrun, raises alarms, and lets the task finish unless the user/admin manually aborts. Exhausted budget blocks new launches through Launch Guardrails unless the User explicitly approves a budget override. If a Task estimate exceeds remaining budget before launch, the Portal changes the action to **Launch with budget override**, records `budget_override=true`, and audits the approval.
 
 ### Launch guardrails
 
@@ -260,7 +335,7 @@ Clean interfaces for passing material between the **user**, the **harness**, and
 
 ### AGILE Board
 
-The AGILE Board is the user-facing orchestration surface for coding work, not a passive Kanban board. Canonical columns are **Estimated → Ready → Running → Review → Done**, with **Blocked** for failed estimation or tasks that need human changes before launch or continuation. There is no normal unestimated Backlog because task intake exists to estimate and budget token spend. Each task card shows:
+The AGILE Board is the user-facing Kanban-style orchestration surface for coding work, not a full Scrum/Jira replacement. Canonical columns are **Estimated → Ready → Running → Review → Done**, with **Blocked** for failed estimation or tasks that need human changes before launch or continuation. There is no normal unestimated Backlog because task intake exists to break down, estimate, and budget token spend. Each task card shows:
 - Task description
 - Estimated token budget (user-overridable)
 - Recommended model (task-complexity driven, user-overridable)
@@ -270,7 +345,7 @@ The AGILE Board is the user-facing orchestration surface for coding work, not a 
 - Actual token cost + estimate vs. actual delta (populated on completion)
 - Session link
 
-**Task intake**: The primary task form is labeled **Estimate task**, not **Create task**. Submitting it creates the Task and immediately runs Task Estimation. Tasks are not saved to the board as ordinary backlog items without an estimate; budgeting token spend is the point of intake. On success, the Task appears in Estimated with rationale and recommendations. On estimator failure, the Task appears in Blocked with manual estimate/model entry.
+**Task intake**: The primary task form is labeled **Estimate task**, not **Create task**. Submitting work does not immediately create a board card. All manual task text and Markdown imports first go through a harness-owned **Task Breakdown Agent**. The Task Breakdown Agent reads the input semantically and decides whether the work is a single Task or should be separated into multiple smaller Tasks; it is not a simple character-count or bullet-count classifier. The Task Breakdown Agent may use lightweight project context such as language, framework, test command, top-level folders, README, CONTEXT.md, and HARNESS docs, but it does not inspect arbitrary source files during normal breakdown. If deeper code inspection is needed, it should recommend a Spike rather than silently performing implementation discovery. If the input is single-task work, it proceeds directly to Task Estimation. If the input is multi-task work, Stage 1 produces a **Proposed Task Breakdown** review screen before board cards are created. Task breakdown follows tracer-bullet vertical-slice rules: proposed tasks should be independently grabbable, narrow, demoable or verifiable on their own, dependency-aware, and should cut through the needed product layers rather than splitting work by schema/API/UI/test layer. Each proposed task shows title, implementation prompt, acceptance criteria, blockers, HITL/AFK category, decomposition confidence, and the agent's reason for splitting. The User can accept, reject, or edit proposed tasks. Stage 2 runs Task Estimation only for the single Task or accepted breakdown items; only then do Tasks appear in Estimated with official token estimate, model recommendation, rationale, confidence, risks, and Spike recommendation. Task Breakdown Agent spend counts against the daily budget as **orchestration tokens** labeled `task_breakdown`. Estimation spend is separately labeled `estimation`. On estimator failure, the affected Task appears in Blocked with manual estimate/model entry.
 
 **Token estimation (LLM-assisted)**: User types a task description. The harness calls a harness-owned **Estimator LLM** with the task, lightweight project context (language/framework summary, test command, relevant file/path hints if supplied), current budget context, and model-routing policy. It does not use the User's Worker Adapter and does not full-scan the repository for every estimate. The Estimator LLM returns structured output: token estimate, complexity, recommended model, confidence, rationale, assumptions, risk flags, and whether a spike is needed because the estimate is low-confidence. The result is displayed on the task card; user can override estimate or model before launch. Estimator LLM spend counts against the daily budget as **orchestration tokens**, but is labeled separately from Worker Session tokens.
 

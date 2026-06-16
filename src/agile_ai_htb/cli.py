@@ -22,6 +22,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         guardrails_path = _arg_path(args, "serve_guardrails_path", "global_guardrails_path")
         _set_path_env("TOKEN_TRACKER_DATABASE_PATH", database_path)
         _set_path_env("TOKEN_TRACKER_GUARDRAILS_PATH", guardrails_path)
+        if getattr(args, "local_runner", False):
+            os.environ["TOKEN_TRACKER_LOCAL_RUNNER"] = "1"
         uvicorn.run(
             APP_REF,
             host=getattr(args, "host", "127.0.0.1"),
@@ -82,6 +84,12 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="serve_guardrails_path",
         default=None,
         help="Guardrails YAML path. Overrides TOKEN_TRACKER_GUARDRAILS_PATH.",
+    )
+    serve.add_argument(
+        "--local-runner",
+        action="store_true",
+        default=False,
+        help="Enable the in-process Local Runner Execution Backend.",
     )
 
     seed_demo = subparsers.add_parser("seed-demo", help="Insert synthetic DEMO snip tasks.")

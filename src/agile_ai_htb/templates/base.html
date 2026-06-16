@@ -134,6 +134,8 @@
       </nav>
       <div class="group">Settings</div>
       <nav>
+        <a href="/settings/control-plane" class="{% if active_page == 'control_plane' %}active{% endif %}">Control plane model</a>
+        <a href="/settings/project" class="{% if active_page == 'project' %}active{% endif %}">Connected project</a>
         <a href="/settings/workers" class="{% if active_page == 'workers' %}active{% endif %}">Worker adapters</a>
       </nav>
       <form class="logout" action="/logout" method="post"><button type="submit">Logout</button></form>

@@ -105,6 +105,25 @@ create table if not exists worker_adapters (
     created_at text not null,
     updated_at text not null
 );
+
+create table if not exists connected_projects (
+    id text primary key,
+    name text not null,
+    root_path text not null unique,
+    profile_json text not null default '{}',
+    capability_json text not null default '{}',
+    backend_id text not null default 'local_runner',
+    created_at text not null,
+    updated_at text not null
+);
+
+create table if not exists execution_backend_status (
+    id text primary key,
+    name text not null,
+    online integer not null default 0,
+    details_json text not null default '{}',
+    checked_at text not null
+);
 """
 
 WORKER_ADAPTER_PRESETS = [
@@ -128,6 +147,13 @@ WORKER_ADAPTER_PRESETS = [
         "name": "OpenCode",
         "config": {"verification_template": ["opencode", "run", "{prompt}"], "launch_template": ["opencode"]},
         "supported_models": ["opencode/gpt-5.1", "gpt-5.1-codex"],
+    },
+    {
+        "id": "hermes",
+        "kind": "hermes",
+        "name": "Hermes",
+        "config": {"verification_template": ["hermes", "--prompt", "{prompt}"], "launch_template": ["hermes"]},
+        "supported_models": ["anthropic/claude-sonnet-4", "openai/gpt-5.1"],
     },
 ]
 
@@ -176,6 +202,38 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
                 verified_at text,
                 created_at text not null,
                 updated_at text not null
+            )
+            """
+        )
+
+    existing_tables = {
+        row["name"]
+        for row in conn.execute("select name from sqlite_master where type = 'table'").fetchall()
+    }
+    if "connected_projects" not in existing_tables:
+        conn.execute(
+            """
+            create table connected_projects (
+                id text primary key,
+                name text not null,
+                root_path text not null unique,
+                profile_json text not null default '{}',
+                capability_json text not null default '{}',
+                backend_id text not null default 'local_runner',
+                created_at text not null,
+                updated_at text not null
+            )
+            """
+        )
+    if "execution_backend_status" not in existing_tables:
+        conn.execute(
+            """
+            create table execution_backend_status (
+                id text primary key,
+                name text not null,
+                online integer not null default 0,
+                details_json text not null default '{}',
+                checked_at text not null
             )
             """
         )
@@ -273,6 +331,7 @@ def record_token_turn(
     cost: float,
     raw_usage: dict[str, Any],
 ) -> None:
+    raw_usage = _classified_raw_usage(usage_kind, raw_usage)
     total_tokens = int(raw_usage.get("total_tokens", prompt_tokens + completion_tokens))
     with connect(path) as conn:
         conn.execute(
@@ -517,6 +576,10 @@ def mark_worker_adapter_verification(
     evidence: dict[str, Any],
 ) -> dict[str, Any]:
     now = _now_iso()
+    sanitized_evidence = _sanitize_evidence(evidence)
+    if verified:
+        sanitized_evidence.setdefault("tracking_mode", "proxy_governed")
+        sanitized_evidence.setdefault("tracking_authoritative", True)
     with connect(path) as conn:
         cursor = conn.execute(
             """
@@ -526,7 +589,7 @@ def mark_worker_adapter_verification(
             """,
             (
                 "verified" if verified else "failed",
-                _to_json(_sanitize_evidence(evidence)),
+                _to_json(sanitized_evidence),
                 now if verified else None,
                 now,
                 adapter_id,
@@ -556,6 +619,99 @@ def has_adapter_verification_token(path: Path | str, *, session_id: str, model: 
             (session_id, model),
         ).fetchone()
     return row is not None
+
+
+def upsert_connected_project(
+    path: Path | str,
+    *,
+    name: str,
+    root_path: str,
+    profile: dict[str, Any],
+    capability: dict[str, Any],
+    backend_id: str = "local_runner",
+) -> dict[str, Any]:
+    now = _now_iso()
+    project_id = f"proj_{uuid.uuid4().hex}"
+    with connect(path) as conn:
+        conn.execute(
+            """
+            insert into connected_projects (
+                id, name, root_path, profile_json, capability_json, backend_id, created_at, updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?)
+            on conflict(root_path) do update set
+                name = excluded.name,
+                profile_json = excluded.profile_json,
+                capability_json = excluded.capability_json,
+                backend_id = excluded.backend_id,
+                updated_at = excluded.updated_at
+            """,
+            (
+                project_id,
+                name,
+                root_path,
+                _to_json(profile),
+                _to_json(capability),
+                backend_id,
+                now,
+                now,
+            ),
+        )
+    return get_connected_project_by_path(path, root_path)
+
+
+def list_connected_projects(path: Path | str) -> list[dict[str, Any]]:
+    with connect(path) as conn:
+        rows = conn.execute("select * from connected_projects order by updated_at desc, id").fetchall()
+    return [_connected_project_from_row(row) for row in rows]
+
+
+def get_connected_project(path: Path | str, project_id: str) -> dict[str, Any]:
+    with connect(path) as conn:
+        row = conn.execute("select * from connected_projects where id = ?", (project_id,)).fetchone()
+    if row is None:
+        raise KeyError(f"connected project not found: {project_id}")
+    return _connected_project_from_row(row)
+
+
+def get_connected_project_by_path(path: Path | str, root_path: str) -> dict[str, Any]:
+    with connect(path) as conn:
+        row = conn.execute("select * from connected_projects where root_path = ?", (root_path,)).fetchone()
+    if row is None:
+        raise KeyError(f"connected project not found: {root_path}")
+    return _connected_project_from_row(row)
+
+
+def upsert_execution_backend_status(
+    path: Path | str,
+    backend_id: str,
+    *,
+    name: str,
+    online: bool,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    checked_at = _now_iso()
+    with connect(path) as conn:
+        conn.execute(
+            """
+            insert into execution_backend_status (id, name, online, details_json, checked_at)
+            values (?, ?, ?, ?, ?)
+            on conflict(id) do update set
+                name = excluded.name,
+                online = excluded.online,
+                details_json = excluded.details_json,
+                checked_at = excluded.checked_at
+            """,
+            (backend_id, name, 1 if online else 0, _to_json(details or {}), checked_at),
+        )
+    return get_execution_backend_status(path, backend_id)
+
+
+def get_execution_backend_status(path: Path | str, backend_id: str) -> dict[str, Any]:
+    with connect(path) as conn:
+        row = conn.execute("select * from execution_backend_status where id = ?", (backend_id,)).fetchone()
+    if row is None:
+        raise KeyError(f"execution backend not found: {backend_id}")
+    return _execution_backend_status_from_row(row)
 
 
 def list_alarms(
@@ -695,6 +851,11 @@ def total_token_usage(path: Path | str, *, since: str | None = None) -> int:
     return int(row["total"])
 
 
+def token_usage_breakdown(path: Path | str, *, since: str | None = None) -> dict[str, Any]:
+    turns = _token_turns_for_breakdown(path, since=since)
+    return _summarize_token_turns(turns)
+
+
 def session_token_usage(path: Path | str, session_id: str) -> int:
     with connect(path) as conn:
         row = conn.execute(
@@ -702,6 +863,85 @@ def session_token_usage(path: Path | str, session_id: str) -> int:
             (session_id,),
         ).fetchone()
     return int(row["total"])
+
+
+def session_token_breakdown(path: Path | str, session_id: str) -> dict[str, Any]:
+    turns = _token_turns_for_breakdown(path, session_id=session_id)
+    return _summarize_token_turns(turns)
+
+
+def _classified_raw_usage(usage_kind: str, raw_usage: dict[str, Any]) -> dict[str, Any]:
+    usage = dict(raw_usage or {})
+    usage.setdefault("spend_category", _spend_category_for_usage_kind(usage_kind))
+    usage.setdefault("usage_source", _usage_source_for_usage_kind(usage_kind, usage["spend_category"]))
+    return usage
+
+
+def _spend_category_for_usage_kind(usage_kind: str) -> str:
+    if usage_kind == "estimation":
+        return "control_plane"
+    if usage_kind in {"worker", "task_execution"}:
+        return "worker_execution"
+    if usage_kind == "adapter_verification":
+        return "adapter_verification"
+    if usage_kind in {"reporting", "summary"}:
+        return "reporting_summary"
+    return "other"
+
+
+def _usage_source_for_usage_kind(usage_kind: str, spend_category: str) -> str:
+    if spend_category == "control_plane":
+        return "control_plane"
+    if spend_category == "adapter_verification":
+        return "harness_proxy"
+    if usage_kind in {"worker", "task_execution"}:
+        return "harness_proxy"
+    return "unspecified"
+
+
+def _token_turns_for_breakdown(
+    path: Path | str,
+    *,
+    since: str | None = None,
+    session_id: str | None = None,
+) -> list[dict[str, Any]]:
+    query = "select * from token_turns"
+    clauses: list[str] = []
+    params: list[str] = []
+    if since is not None:
+        clauses.append("created_at >= ?")
+        params.append(since)
+    if session_id is not None:
+        clauses.append("session_id = ?")
+        params.append(session_id)
+    if clauses:
+        query += " where " + " and ".join(clauses)
+    with connect(path) as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return [_token_turn_from_row(row) for row in rows]
+
+
+def _summarize_token_turns(turns: list[dict[str, Any]]) -> dict[str, Any]:
+    by_category = {
+        "control_plane": 0,
+        "worker_execution": 0,
+        "adapter_verification": 0,
+        "reporting_summary": 0,
+        "other": 0,
+    }
+    by_source: dict[str, int] = {}
+    total = 0
+    for turn in turns:
+        tokens = int(turn.get("total_tokens") or 0)
+        raw_usage = turn.get("raw_usage") or {}
+        category = str(raw_usage.get("spend_category") or _spend_category_for_usage_kind(str(turn.get("usage_kind") or "")))
+        source = str(raw_usage.get("usage_source") or _usage_source_for_usage_kind(str(turn.get("usage_kind") or ""), category))
+        if category not in by_category:
+            category = "other"
+        by_category[category] += tokens
+        by_source[source] = by_source.get(source, 0) + tokens
+        total += tokens
+    return {"total_tokens": total, "by_category": by_category, "by_source": by_source}
 
 
 def _session_from_row(row: sqlite3.Row) -> dict[str, Any]:
@@ -811,6 +1051,29 @@ def _worker_adapter_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "configured": bool(row["workdir"]) or bool(config.get("command")),
+    }
+
+
+def _connected_project_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "root_path": row["root_path"],
+        "profile": _from_json(row["profile_json"]),
+        "capability": _from_json(row["capability_json"]),
+        "backend_id": row["backend_id"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _execution_backend_status_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "online": bool(row["online"]),
+        "details": _from_json(row["details_json"]),
+        "checked_at": row["checked_at"],
     }
 
 

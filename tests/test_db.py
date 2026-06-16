@@ -43,6 +43,8 @@ def test_init_db_creates_schema_idempotently_with_foreign_keys(tmp_path):
         "checkpoint_results",
         "action_history",
         "worker_adapters",
+        "connected_projects",
+        "execution_backend_status",
     }.issubset(tables)
     assert foreign_keys_enabled == 1
     assert "usage_kind" in token_turn_columns
@@ -155,7 +157,13 @@ def test_session_artifact_rebuilds_persisted_session_rows(tmp_path):
         "completion_tokens": 300,
         "total_tokens": 1600,
         "cost": 0.0123,
-        "raw_usage": {"prompt_tokens": 1200, "completion_tokens": 300, "total_tokens": 1600},
+        "raw_usage": {
+            "prompt_tokens": 1200,
+            "completion_tokens": 300,
+            "total_tokens": 1600,
+            "spend_category": "worker_execution",
+            "usage_source": "harness_proxy",
+        },
         "created_at": token_turn["created_at"],
     }
     assert token_turn["created_at"]

@@ -10,9 +10,37 @@ ROOT = Path(__file__).resolve().parents[1]
 PORTAL_TOKEN = "test-portal-token"
 
 
+class FakeControlPlaneLLM:
+    def __init__(self, *, exc: Exception | None = None):
+        self.exc = exc
+        self.requests = []
+
+    async def acompletion(self, request):
+        self.requests.append(request)
+        if self.exc:
+            raise self.exc
+        return {
+            "choices": [{"message": {"content": "AGILE_AI_HTB_CONTROL_PLANE_OK"}}],
+            "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10},
+            "api_key": "sk_should_not_render",
+        }
+
+
 def _client(tmp_path):
     settings = Settings(database_path=tmp_path / "harness.db", guardrails_path=ROOT / "guardrails.yaml")
     return TestClient(create_app(settings))
+
+
+def _client_with_control_plane_llm(tmp_path, llm):
+    settings = Settings(
+        database_path=tmp_path / "harness.db",
+        guardrails_path=ROOT / "guardrails.yaml",
+        control_plane_model="anthropic/claude-sonnet-4-20250514",
+        control_plane_api_key_env="TEST_CONTROL_PLANE_KEY",
+    )
+    app = create_app(settings)
+    app.state.llm_client = llm
+    return TestClient(app)
 
 
 def _portal_headers():
@@ -249,6 +277,8 @@ def test_settings_workers_page_requires_auth_and_renders_safe_adapter_cards(tmp_
     assert "Claude Code" in html
     assert "Codex" in html
     assert "OpenCode" in html
+    assert "OpenCode diagnostics" in html
+    assert "Hermes" in html
     assert "configured" in html
     assert "unconfigured" in html
     assert "verified" in html
@@ -258,6 +288,77 @@ def test_settings_workers_page_requires_auth_and_renders_safe_adapter_cards(tmp_
     assert "super-secret-key" not in html
     assert "OPENAI_API_KEY" not in html
     assert "sk_sess_" not in html
+
+
+def test_worker_model_discovery_route_uses_native_harness_and_updates_portal(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        calls = []
+
+        def fake_discovery_runner(plan):
+            calls.append(plan)
+            return {
+                "returncode": 0,
+                "stdout": '[{"id":"anthropic/claude-sonnet-4"},{"id":"openai/gpt-5.1"}]',
+                "stderr": "",
+            }
+
+        getattr(client.app, "state").worker_model_discovery_runner = fake_discovery_runner
+        response = client.post("/settings/workers/opencode/discover-models", headers=_portal_headers())
+        page = client.get("/settings/workers", headers=_portal_headers())
+
+    assert response.status_code == 200
+    assert response.json()["models"] == ["anthropic/claude-sonnet-4", "openai/gpt-5.1"]
+    assert calls[0].env == {}
+    assert "Native model discovery" in page.text
+    assert "anthropic/claude-sonnet-4" in page.text
+    assert "native, proxy_governed" in page.text
+
+
+def test_control_plane_settings_page_separates_control_model_from_worker_auth(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    monkeypatch.setenv("TEST_CONTROL_PLANE_KEY", "sk_should_not_render")
+    with _client_with_control_plane_llm(tmp_path, FakeControlPlaneLLM()) as client:
+        response = client.get("/settings/control-plane", headers=_portal_headers())
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Control plane model" in html
+    assert "anthropic/claude-sonnet-4-20250514" in html
+    assert "TEST_CONTROL_PLANE_KEY" in html
+    assert "AGILE-AI-HTB orchestration model" in html
+    assert "Worker Harness" in html
+    assert "sk_should_not_render" not in html
+
+
+def test_control_plane_connection_test_records_sanitized_status(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeControlPlaneLLM()
+    with _client_with_control_plane_llm(tmp_path, llm) as client:
+        response = client.post("/settings/control-plane/test", headers=_portal_headers())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["passed"] is True
+    assert body["status"]["online"] is True
+    assert body["status"]["details"]["model"] == "anthropic/claude-sonnet-4-20250514"
+    assert body["status"]["details"]["usage"]["total_tokens"] == 10
+    assert "sk_should_not_render" not in str(body)
+    assert llm.requests[0]["model"] == "anthropic/claude-sonnet-4-20250514"
+
+
+def test_control_plane_connection_failure_records_no_secret_values(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeControlPlaneLLM(exc=RuntimeError("secret sk_bad_key"))
+    with _client_with_control_plane_llm(tmp_path, llm) as client:
+        response = client.post("/settings/control-plane/test", headers=_portal_headers())
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body["passed"] is False
+    assert body["status"]["online"] is False
+    assert "sk_bad_key" not in str(body)
+    assert "***REDACTED***" in body["status"]["details"]["error"]
 
 
 def test_board_uses_verified_worker_adapter_status(tmp_path, monkeypatch):

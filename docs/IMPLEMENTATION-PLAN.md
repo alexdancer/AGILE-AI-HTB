@@ -239,7 +239,6 @@ Until these three portal forms exist, the demo loop requires `curl` for every st
 
 **Files:**
 - Modify: `docs/DEMO.md`
-- Modify: `docs/HARNESS-SUMMARY.md`
 - Modify: `docs/mockup/portal-v2.html`
 - Modify: `docs/mockup/js/fixtures.js` if present
 - Leave: `docs/IMPLEMENTATION-PLAN.md` current by this plan

@@ -43,6 +43,7 @@ class TaskUpdateRequest(BaseModel):
 
 class EstimateRequest(BaseModel):
     description: str = Field(min_length=1)
+    adapter_id: str | None = None
     remaining_daily_tokens: NonNegativeStrictInt | None = None
     daily_cap_tokens: PositiveStrictInt | None = None
 
@@ -52,6 +53,7 @@ class TaskLaunchRequest(BaseModel):
     model: str | None = None
     proxy_url: str | None = None
     estimate_tokens: PositiveStrictInt | None = None
+    budget_override: bool = False
 
 
 @router.post("/tasks")
@@ -101,6 +103,7 @@ async def launch_task_endpoint(task_id: str, request: Request):
             model=payload.model,
             proxy_url=payload.proxy_url or DEFAULT_PROXY_URL,
             estimate_tokens=payload.estimate_tokens,
+            budget_override=payload.budget_override,
             runner=runner,
         )
     except KeyError as exc:
@@ -138,7 +141,7 @@ async def estimate(payload: EstimateRequest, request: Request) -> dict[str, Any]
             payload.description,
             request.app.state.guardrails,
             llm_client=request.app.state.llm_client,
-            estimator_model=settings.estimator_model,
+            estimator_model=settings.control_plane_model,
             remaining_daily_tokens=payload.remaining_daily_tokens,
             daily_cap_tokens=payload.daily_cap_tokens,
         )
@@ -158,7 +161,7 @@ async def estimate(payload: EstimateRequest, request: Request) -> dict[str, Any]
     estimation_session = db.create_session(
         database_path,
         task_description=payload.description,
-        model=settings.estimator_model,
+        model=settings.control_plane_model,
         session_key_hash=_estimation_session_key_hash(payload.description),
         guardrail_overrides={},
         status="completed",
@@ -168,12 +171,17 @@ async def estimate(payload: EstimateRequest, request: Request) -> dict[str, Any]
         database_path,
         session_id=estimation_session["id"],
         usage_kind="estimation",
-        model=settings.estimator_model,
+        model=settings.control_plane_model,
         prompt_tokens=usage["prompt_tokens"],
         completion_tokens=usage["completion_tokens"],
-        cost=calculate_cost(settings.estimator_model, usage["prompt_tokens"], usage["completion_tokens"])
+        cost=calculate_cost(settings.control_plane_model, usage["prompt_tokens"], usage["completion_tokens"])
         or 0.0,
         raw_usage={**usage, "response": response_to_dict(llm_response)},
+    )
+    recommended_model, model_metadata = _constrained_recommended_model(
+        database_path,
+        result.recommended_model,
+        adapter_id=payload.adapter_id,
     )
     metadata = {
         "estimation_source": result.source,
@@ -185,16 +193,53 @@ async def estimate(payload: EstimateRequest, request: Request) -> dict[str, Any]
         "spike_recommendation": result.spike_recommendation,
         "budget_note": result.budget_note,
         "estimation_session_id": estimation_session["id"],
+        **model_metadata,
     }
     task = db.create_task(
         database_path,
         description=payload.description,
         status="Estimated",
         estimate_tokens=result.token_estimate,
-        recommended_model=result.recommended_model,
+        recommended_model=recommended_model,
         metadata=metadata,
     )
-    return {**task, **result.as_dict()}
+    return {**task, **result.as_dict(), "recommended_model": recommended_model}
+
+
+def _constrained_recommended_model(
+    database_path: Path | str,
+    recommended_model: str,
+    *,
+    adapter_id: str | None,
+) -> tuple[str, dict[str, Any]]:
+    adapter = None
+    if adapter_id:
+        try:
+            adapter = db.get_worker_adapter(database_path, adapter_id)
+        except KeyError:
+            adapter = None
+    else:
+        adapters = db.list_worker_adapters(database_path)
+        adapter = next((item for item in adapters if item.get("is_default")), adapters[0] if adapters else None)
+    if not adapter:
+        return recommended_model, {"worker_model_constraint": {"state": "no_adapter", "original_model": recommended_model}}
+    models = adapter.get("supported_models") or []
+    metadata = {
+        "worker_model_constraint": {
+            "state": "constrained_by_discovered_models",
+            "adapter_id": adapter["id"],
+            "available_models": models,
+            "original_model": recommended_model,
+        }
+    }
+    if not models:
+        metadata["worker_model_constraint"]["state"] = "no_discovered_models"
+        return recommended_model, metadata
+    if recommended_model in models:
+        metadata["worker_model_constraint"]["selected_model"] = recommended_model
+        return recommended_model, metadata
+    metadata["worker_model_constraint"].update({"selected_model": models[0], "reason": "estimator_model_not_discovered"})
+    return str(models[0]), metadata
 
 
 @router.post("/tasks/estimate-form", dependencies=[Depends(require_portal_auth)])

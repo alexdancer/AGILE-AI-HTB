@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Connected project | AGILE-AI-HTB{% endblock %}
+{% block content %}
+<h1 class="page-title">Connected project</h1>
+<p class="page-sub">connect local repo · detect project profile · show local runner capability</p>
+
+{% if error %}
+<section class="alarm high">
+  <div class="head"><strong>Validation failed</strong></div>
+  <div class="body">{{ error }}</div>
+</section>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-header"><h3>Local Runner</h3></div>
+  <div class="panel-body">
+    {% if local_runner_enabled %}
+      <span class="pill green">enabled</span>
+      {% if backend_status and backend_status.online %}<span class="pill green">online</span>{% endif %}
+    {% else %}
+      <span class="pill yellow">disabled</span>
+      <p class="muted mono">Start with <code>htb serve --local-runner</code> to enable launch capability.</p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-header"><h3>Connect local repo</h3></div>
+  <div class="panel-body">
+    <form method="post" action="/settings/project/connect">
+      <label class="mono" for="root-path">Local repository path</label>
+      <input id="root-path" name="root_path" placeholder="/Users/alex/path/to/repo" required>
+      <button type="submit" class="primary" style="margin-top:10px">Connect project</button>
+    </form>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-header"><h3>Project Profile</h3></div>
+  <div class="panel-body">
+    {% for project in projects %}
+    <article class="card">
+      <div class="flex" style="justify-content:space-between;align-items:flex-start">
+        <h2 class="mono" style="font-size:16px;margin:0 0 10px">{{ project.name }}</h2>
+        {% if project.capability.state == 'launch_ready' %}<span class="pill green">{{ project.capability.label }}</span>{% elif project.capability.state == 'analysis_ready' %}<span class="pill blue">{{ project.capability.label }}</span>{% else %}<span class="pill red">{{ project.capability.label }}</span>{% endif %}
+      </div>
+      <div class="kv">
+        <div class="k">Root</div><div class="v">{{ project.root_path }}</div>
+        <div class="k">Git branch</div><div class="v">{{ project.profile.git_branch or 'not detected' }}</div>
+        <div class="k">Languages</div><div class="v">{{ project.profile.language_hints|join(', ') or 'not detected' }}</div>
+        <div class="k">Frameworks</div><div class="v">{{ project.profile.framework_hints|join(', ') or 'not detected' }}</div>
+        <div class="k">Package managers</div><div class="v">{{ project.profile.package_manager_hints|join(', ') or 'not detected' }}</div>
+        <div class="k">Test command</div><div class="v">{{ project.profile.test_command or 'not detected' }}</div>
+        <div class="k">Run command</div><div class="v">{{ project.profile.run_command or 'not detected' }}</div>
+        <div class="k">Top folders</div><div class="v">{{ project.profile.top_level_folders|join(', ') or 'none' }}</div>
+        <div class="k">Docs</div><div class="v">{{ project.profile.relevant_docs|join(', ') or 'none' }}</div>
+      </div>
+      {% if project.capability.reasons %}
+      <h3 class="mono" style="font-size:12px;text-transform:uppercase;margin-top:16px;color:var(--fg-2)">Missing launch capability</h3>
+      <ul class="mono muted">
+        {% for reason in project.capability.reasons %}<li>{{ reason }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+      {% if project.capability.state == 'launch_ready' %}
+      <form method="post" action="/settings/project/{{ project.id }}/read-only-proof" style="margin-top:14px">
+        <button type="submit" class="primary">Run read-only proof</button>
+      </form>
+      {% endif %}
+    </article>
+    {% else %}
+    <p class="muted">No connected project yet.</p>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

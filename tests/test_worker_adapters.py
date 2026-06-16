@@ -3,7 +3,14 @@ import subprocess
 from pathlib import Path
 
 from agile_ai_htb import db
-from agile_ai_htb.worker_adapters import CommandPlan, get_adapter_builder, redact_command_plan, subprocess_runner
+from agile_ai_htb.worker_adapters import (
+    CommandPlan,
+    detect_worker_adapter,
+    discover_worker_models,
+    get_adapter_builder,
+    redact_command_plan,
+    subprocess_runner,
+)
 
 
 def test_init_db_seeds_worker_adapter_presets_idempotently_and_preserves_updates(tmp_path):
@@ -22,7 +29,8 @@ def test_init_db_seeds_worker_adapter_presets_idempotently_and_preserves_updates
 
     adapters = db.list_worker_adapters(db_path)
     by_id = {adapter["id"]: adapter for adapter in adapters}
-    assert {"claude_code", "codex", "opencode"}.issubset(by_id)
+    assert {"claude_code", "codex", "opencode", "hermes"}.issubset(by_id)
+    assert by_id["hermes"]["verification_status"] == "unverified"
     assert by_id["codex"]["workdir"] == str(tmp_path)
     assert by_id["codex"]["supported_models"] == ["gpt-5.1-codex"]
     assert by_id["codex"]["is_default"] is True
@@ -84,6 +92,93 @@ def test_worker_adapter_builders_create_safe_configurable_command_plans(tmp_path
     assert plan.env["OPENAI_API_KEY"] == session_api_key
     assert session_api_key not in str(safe)
     assert safe["env"]["OPENAI_API_KEY"] == "***REDACTED***"
+
+
+def test_detect_worker_adapter_reports_missing_command_without_verifying(monkeypatch):
+    adapter = {
+        "id": "opencode",
+        "kind": "opencode",
+        "config": {"verification_template": ["opencode", "run", "{prompt}"]},
+    }
+    monkeypatch.setattr("agile_ai_htb.worker_adapters.shutil.which", lambda command: None)
+
+    diagnostics = detect_worker_adapter(adapter)
+
+    assert diagnostics["installed"] is False
+    assert diagnostics["callable"] is False
+    assert diagnostics["command"] == "opencode"
+    assert "not found on PATH" in diagnostics["failure_reason"]
+
+
+def test_detect_worker_adapter_reports_callable_version_without_launch_verification(monkeypatch):
+    adapter = {
+        "id": "opencode",
+        "kind": "opencode",
+        "config": {"verification_template": ["opencode", "run", "{prompt}"]},
+    }
+    monkeypatch.setattr("agile_ai_htb.worker_adapters.shutil.which", lambda command: "/usr/local/bin/opencode")
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 0, stdout="opencode 1.2.3", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    diagnostics = detect_worker_adapter(adapter)
+
+    assert diagnostics["installed"] is True
+    assert diagnostics["callable"] is True
+    assert diagnostics["executable"] == "/usr/local/bin/opencode"
+    assert diagnostics["version"] == "opencode 1.2.3"
+    assert diagnostics["failure_reason"] is None
+
+
+def test_discover_worker_models_updates_adapter_from_native_json_without_proxy_env(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(
+        db_path,
+        "opencode",
+        workdir=str(tmp_path),
+        config={"model_discovery_template": ["opencode", "models", "--json"]},
+        supported_models=[],
+    )
+    plans = []
+
+    def fake_runner(plan):
+        plans.append(plan)
+        return subprocess.CompletedProcess(
+            plan.command,
+            0,
+            stdout='{"models":[{"id":"anthropic/claude-sonnet-4"},{"id":"openai/gpt-5.1"}]}',
+            stderr="",
+        )
+
+    result = discover_worker_models(db_path, "opencode", runner=fake_runner)
+
+    assert result.passed is True
+    assert result.models == ["anthropic/claude-sonnet-4", "openai/gpt-5.1"]
+    assert plans[0].env == {}
+    assert plans[0].metadata["purpose"] == "native_model_discovery"
+    adapter = db.get_worker_adapter(db_path, "opencode")
+    assert adapter["supported_models"] == ["anthropic/claude-sonnet-4", "openai/gpt-5.1"]
+    assert adapter["config"]["model_discovery"]["tracking_mode"] == "native"
+
+
+def test_discover_worker_models_reports_failure_without_overwriting_models(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    before = db.get_worker_adapter(db_path, "opencode")["supported_models"]
+
+    def fake_runner(plan):
+        return subprocess.CompletedProcess(plan.command, 1, stdout="", stderr="secret sk_bad_key")
+
+    result = discover_worker_models(db_path, "opencode", runner=fake_runner)
+
+    assert result.passed is False
+    assert "Model discovery command failed." in result.reasons
+    assert "No Worker Harness models were discovered natively." in result.reasons
+    assert "sk_bad_key" not in str(result.evidence)
+    assert db.get_worker_adapter(db_path, "opencode")["supported_models"] == before
 
 
 def test_redact_command_plan_redacts_secret_flag_values_without_over_redacting(tmp_path):

@@ -62,6 +62,26 @@ def test_serve_cli_arguments_override_environment(monkeypatch, tmp_path):
     assert calls[0][1]["env_file"] is None
 
 
+def test_serve_local_runner_flag_sets_backend_environment(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.delenv("TOKEN_TRACKER_LOCAL_RUNNER", raising=False)
+    monkeypatch.setattr("agile_ai_htb.cli.uvicorn.run", lambda app_ref, **kwargs: calls.append((app_ref, kwargs)))
+
+    exit_code = main([
+        "serve",
+        "--database-path",
+        str(tmp_path / "cli-harness.db"),
+        "--guardrails-path",
+        str(ROOT / "guardrails.yaml"),
+        "--local-runner",
+    ])
+
+    assert exit_code == 0
+    assert calls[0][0] == "agile_ai_htb.app:create_app"
+    assert calls[0][1]["factory"] is True
+    assert __import__("os").environ["TOKEN_TRACKER_LOCAL_RUNNER"] == "1"
+
+
 def test_seed_demo_inserts_synthetic_tasks(tmp_path, capsys):
     db_path = tmp_path / "harness.db"
 

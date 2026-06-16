@@ -20,8 +20,27 @@
     <div class="kv">
       <div class="k">Workdir</div><div class="v">{{ adapter.workdir or 'not set' }}</div>
       <div class="k">Models</div><div class="v">{{ adapter.supported_models|join(', ') }}</div>
+      <div class="k">Tracking</div><div class="v">{{ adapter.tracking_modes|join(', ') }}</div>
       <div class="k">Verified at</div><div class="v">{{ adapter.verified_at or 'never' }}</div>
     </div>
+    {% if adapter.diagnostics %}
+    <h3 class="mono" style="font-size:12px;text-transform:uppercase;margin-top:16px;color:var(--fg-2)">OpenCode diagnostics</h3>
+    <div class="kv">
+      <div class="k">Installed</div><div class="v">{{ 'yes' if adapter.diagnostics.installed else 'no' }}</div>
+      <div class="k">Callable</div><div class="v">{{ 'yes' if adapter.diagnostics.callable else 'no' }}</div>
+      <div class="k">Command</div><div class="v">{{ adapter.diagnostics.command or 'not configured' }}</div>
+      <div class="k">Executable</div><div class="v">{{ adapter.diagnostics.executable or 'not found' }}</div>
+      <div class="k">Version</div><div class="v">{{ adapter.diagnostics.version or 'not detected' }}</div>
+      <div class="k">Failure</div><div class="v">{{ adapter.diagnostics.failure_reason or 'none' }}</div>
+    </div>
+    {% endif %}
+    <form method="post" action="/settings/workers/{{ adapter.id }}/discover-models" style="margin-top:14px">
+      <button type="submit">Discover native models</button>
+    </form>
+    {% if adapter.model_discovery %}
+    <h3 class="mono" style="font-size:12px;text-transform:uppercase;margin-top:16px;color:var(--fg-2)">Native model discovery</h3>
+    <pre class="mono" style="white-space:pre-wrap;background:var(--bg-0);border:1px solid var(--line);padding:10px;border-radius:4px;max-height:160px;overflow:auto">{{ adapter.model_discovery }}</pre>
+    {% endif %}
     <form method="post" action="/settings/workers/{{ adapter.id }}/verify" style="margin-top:14px">
       <label class="mono" for="verify-model-{{ adapter.id }}">Model</label>
       <input id="verify-model-{{ adapter.id }}" name="model" value="{{ adapter.supported_models[0] if adapter.supported_models else '' }}" required>

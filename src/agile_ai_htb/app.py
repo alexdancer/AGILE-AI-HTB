@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from agile_ai_htb import db
 from agile_ai_htb.guardrails import load_guardrails
 from agile_ai_htb.llm import LLMClient
+from agile_ai_htb.execution_backend import LocalExecutionBackend
 from agile_ai_htb.routes import alarms, portal, proxy, sessions, tasks
 from agile_ai_htb.settings import Settings
 
@@ -22,13 +23,20 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.guardrails = load_guardrails(settings.guardrails_path)
     if not hasattr(app.state, "llm_client"):
         app.state.llm_client = LLMClient()
+    if settings.local_runner_enabled:
+        app.state.execution_backend = LocalExecutionBackend(settings.database_path)
+        app.state.execution_backend.status()
     _bridge_provider_key(settings)
     yield
 
 
 def _bridge_provider_key(settings: Settings) -> None:
-    """Copy PROVIDER_API_KEY to provider-specific env vars so LiteLLM finds it."""
-    key_value = os.getenv(settings.provider_api_key_env)
+    """Copy the control-plane key to provider-specific env vars so LiteLLM finds it.
+
+    AGILE-AI-HTB's control-plane model auth is separate from Worker Harness
+    auth. The legacy provider key env remains a compatibility fallback only.
+    """
+    key_value = os.getenv(settings.control_plane_api_key_env) or os.getenv(settings.provider_api_key_env)
     if not key_value:
         return
     for env_name in _PROVIDER_KEY_ENVS:

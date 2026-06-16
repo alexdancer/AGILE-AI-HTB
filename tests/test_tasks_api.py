@@ -260,6 +260,37 @@ def test_estimate_uses_llm_structured_json_creates_estimated_task_and_tracks_usa
     assert "133" in dashboard.text
 
 
+def test_estimate_constrains_recommended_model_to_selected_adapter_discovered_models(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM()
+    with _client_with_llm(tmp_path, llm) as client:
+        db.update_worker_adapter(
+            tmp_path / "harness.db",
+            "opencode",
+            workdir=str(tmp_path),
+            config={"command": "opencode"},
+            supported_models=["opencode/gpt-5.1", "opencode/other"],
+            is_default=True,
+        )
+        response = client.post(
+            "/estimate",
+            headers=_auth_headers(),
+            json={"description": "Add endpoint", "adapter_id": "opencode"},
+        )
+
+    task = response.json()
+    assert response.status_code == 200
+    assert task["recommended_model"] == "opencode/gpt-5.1"
+    assert task["metadata"]["worker_model_constraint"] == {
+        "state": "constrained_by_discovered_models",
+        "adapter_id": "opencode",
+        "available_models": ["opencode/gpt-5.1", "opencode/other"],
+        "original_model": "claude-3-5-sonnet-20240620",
+        "selected_model": "opencode/gpt-5.1",
+        "reason": "estimator_model_not_discovered",
+    }
+
+
 def test_estimate_requires_portal_auth_before_llm_call(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     llm = FakeEstimatorLLM()

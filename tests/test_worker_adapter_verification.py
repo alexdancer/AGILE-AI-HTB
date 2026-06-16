@@ -1,3 +1,4 @@
+import json
 import subprocess
 from pathlib import Path
 
@@ -68,6 +69,8 @@ def test_verify_worker_adapter_uses_fake_runner_sentinel_and_requires_token_row(
     assert result.passed is True
     assert session["status"] == "completed"
     assert adapter["verification_status"] == "verified"
+    assert adapter["verification_evidence"]["tracking_mode"] == "proxy_governed"
+    assert adapter["verification_evidence"]["tracking_authoritative"] is True
     assert adapter["verification_evidence"]["sentinel_matched"] is True
     assert artifact["token_log"][0]["usage_kind"] == "adapter_verification"
     assert artifact["token_log"][0]["model"] == "opencode/gpt-5.1"
@@ -75,7 +78,11 @@ def test_verify_worker_adapter_uses_fake_runner_sentinel_and_requires_token_row(
     assert runner.calls[0].env["AGILE_AI_HTB_SESSION_API_KEY"].startswith("sk_sess_")
     assert runner.calls[0].env["OPENAI_BASE_URL"] == "http://127.0.0.1:8000/v1"
     assert runner.calls[0].env["OPENAI_API_KEY"] == runner.calls[0].env["AGILE_AI_HTB_SESSION_API_KEY"]
-    assert runner.calls[0].command == ["opencode", "run", "Reply exactly AGILE_AI_HTB_ADAPTER_OK"]
+    assert runner.calls[0].command == [
+        "opencode",
+        "run",
+        "Verification only. Do not read files, write files, run tools, or inspect the repository. Reply exactly AGILE_AI_HTB_ADAPTER_OK",
+    ]
     assert runner.calls[0].cwd == tmp_path
     assert "sk_sess_" not in str(adapter["verification_evidence"])
 
@@ -105,7 +112,71 @@ def test_verify_worker_adapter_fails_when_token_row_missing_even_if_sentinel_mat
     assert session["status"] == "failed"
     assert "No adapter_verification token row was recorded for selected model." in result.reasons
     assert adapter["verification_status"] == "failed"
+    assert adapter["verification_evidence"]["tracking_mode"] == "observed_only"
+    assert adapter["verification_evidence"]["tracking_authoritative"] is False
     assert adapter["verification_evidence"]["sentinel_matched"] is True
+
+
+def test_direct_proxy_token_row_without_adapter_process_does_not_mark_launchable(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    session = db.create_session(
+        db_path,
+        task_description="Direct proxy call",
+        model="opencode/gpt-5.1",
+        session_key_hash="hash-direct",
+        guardrail_overrides={},
+    )
+    db.record_token_turn(
+        db_path,
+        session_id=session["id"],
+        usage_kind="adapter_verification",
+        model="opencode/gpt-5.1",
+        prompt_tokens=1,
+        completion_tokens=1,
+        cost=0,
+        raw_usage={"total_tokens": 2},
+    )
+
+    adapter = db.get_worker_adapter(db_path, "opencode")
+
+    assert adapter["verification_status"] == "unverified"
+    assert db.has_verified_worker_adapter(db_path) is False
+
+
+def test_verify_worker_adapter_does_not_pass_provider_api_key_to_worker_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("PROVIDER_API_KEY", "provider-secret")
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(
+        db_path,
+        "opencode",
+        workdir=str(tmp_path),
+        config={"verification_template": ["opencode", "run", "{prompt}"]},
+        supported_models=["opencode/gpt-5.1"],
+    )
+    runner = FakeRunner()
+
+    verify_worker_adapter(
+        db_path,
+        "opencode",
+        model="opencode/gpt-5.1",
+        proxy_url="http://127.0.0.1:8000/v1",
+        runner=runner,
+        token_recorder=lambda session_id: db.record_token_turn(
+            db_path,
+            session_id=session_id,
+            usage_kind="adapter_verification",
+            model="opencode/gpt-5.1",
+            prompt_tokens=5,
+            completion_tokens=1,
+            cost=0,
+            raw_usage={"total_tokens": 6},
+        ),
+    )
+
+    assert "PROVIDER_API_KEY" not in runner.calls[0].env
+    assert "provider-secret" not in str(runner.calls[0].env)
 
 
 def test_verify_worker_adapter_fails_for_wrong_sentinel_without_real_cli(tmp_path):
@@ -231,6 +302,132 @@ def test_verify_worker_adapter_returns_sanitized_evidence(tmp_path):
     assert "secret" not in serialized
     assert "sk_sess_" not in serialized
     assert "***REDACTED***" in serialized
+
+
+def test_verify_worker_adapter_native_usage_records_authoritative_token_row(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(
+        db_path,
+        "opencode",
+        workdir=str(tmp_path),
+        config={"native_verification_template": ["opencode", "run", "--model", "{model}", "--format", "json", "{prompt}"]},
+        supported_models=["opencode/gpt-5.1"],
+    )
+    stdout = "\n".join(
+        [
+            json.dumps({"type": "message", "content": SENTINEL_RESPONSE}),
+            json.dumps(
+                {
+                    "type": "usage",
+                    "model": "opencode/gpt-5.1",
+                    "usage": {
+                        "input_tokens": 7,
+                        "output_tokens": 2,
+                        "total_tokens": 9,
+                        "cost_usd": 0.001,
+                    },
+                }
+            ),
+        ]
+    )
+    runner = FakeRunner(stdout=stdout)
+
+    result = verify_worker_adapter(
+        db_path,
+        "opencode",
+        model="opencode/gpt-5.1",
+        proxy_url="http://127.0.0.1:8000/v1",
+        tracking_mode="native_usage",
+        runner=runner,
+    )
+
+    adapter = db.get_worker_adapter(db_path, "opencode")
+    artifact = db.build_session_artifact(db_path, result.session_id)
+    assert result.passed is True
+    assert adapter["verification_status"] == "verified"
+    assert adapter["verification_evidence"]["tracking_mode"] == "native_usage"
+    assert adapter["verification_evidence"]["tracking_authoritative"] is True
+    assert adapter["verification_evidence"]["native_usage"]["usage"]["total_tokens"] == 9
+    assert artifact["token_log"][0]["usage_kind"] == "adapter_verification"
+    assert artifact["token_log"][0]["prompt_tokens"] == 7
+    assert artifact["token_log"][0]["completion_tokens"] == 2
+    assert artifact["token_log"][0]["raw_usage"]["usage_source"] == "native_usage"
+    assert runner.calls[0].env == {}
+    assert runner.calls[0].command == [
+        "opencode",
+        "run",
+        "--model",
+        "opencode/gpt-5.1",
+        "--format",
+        "json",
+        "Verification only. Do not read files, write files, run tools, or inspect the repository. Reply exactly AGILE_AI_HTB_ADAPTER_OK",
+    ]
+
+
+def test_verify_worker_adapter_native_usage_fails_without_usage_evidence(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(
+        db_path,
+        "opencode",
+        workdir=str(tmp_path),
+        config={"native_verification_template": ["opencode", "run", "--format", "json", "{prompt}"]},
+        supported_models=["opencode/gpt-5.1"],
+    )
+    runner = FakeRunner(stdout=json.dumps({"type": "message", "content": SENTINEL_RESPONSE}))
+
+    result = verify_worker_adapter(
+        db_path,
+        "opencode",
+        model="opencode/gpt-5.1",
+        proxy_url="http://127.0.0.1:8000/v1",
+        tracking_mode="native_usage",
+        runner=runner,
+    )
+
+    adapter = db.get_worker_adapter(db_path, "opencode")
+    assert result.passed is False
+    assert "No trustworthy native usage evidence was emitted for selected model." in result.reasons
+    assert adapter["verification_evidence"]["tracking_mode"] == "observed_only"
+    assert adapter["verification_evidence"]["tracking_authoritative"] is False
+
+
+def test_verify_worker_adapter_native_usage_rejects_wrong_model_usage(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(
+        db_path,
+        "opencode",
+        workdir=str(tmp_path),
+        config={"native_verification_template": ["opencode", "run", "--format", "json", "{prompt}"]},
+        supported_models=["opencode/gpt-5.1", "opencode/other"],
+    )
+    stdout = "\n".join(
+        [
+            json.dumps({"type": "message", "content": SENTINEL_RESPONSE}),
+            json.dumps(
+                {
+                    "type": "usage",
+                    "model": "opencode/other",
+                    "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+                }
+            ),
+        ]
+    )
+
+    result = verify_worker_adapter(
+        db_path,
+        "opencode",
+        model="opencode/gpt-5.1",
+        proxy_url="http://127.0.0.1:8000/v1",
+        tracking_mode="native_usage",
+        runner=FakeRunner(stdout=stdout),
+    )
+
+    adapter = db.get_worker_adapter(db_path, "opencode")
+    assert result.passed is False
+    assert adapter["verification_evidence"]["tracking_mode"] == "observed_only"
 
 
 def test_worker_adapter_verify_route_requires_auth_uses_injected_runner_and_token_recorder(tmp_path, monkeypatch):

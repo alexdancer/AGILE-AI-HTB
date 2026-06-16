@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Control plane model | AGILE-AI-HTB{% endblock %}
+{% block content %}
+<h1 class="page-title">Control plane model</h1>
+<p class="page-sub">AGILE-AI-HTB orchestration model · separate from Worker Harness models and credentials</p>
+
+<section class="grid cols-2">
+  <article class="panel">
+    <div class="panel-header"><h3>Configured connection</h3></div>
+    <div class="panel-body">
+      <div class="kv">
+        <div class="k">Provider</div><div class="v">{{ settings.control_plane_provider }}</div>
+        <div class="k">Model</div><div class="v">{{ settings.control_plane_model }}</div>
+        <div class="k">API key env</div><div class="v">{{ settings.control_plane_api_key_env }}</div>
+        <div class="k">API key present</div><div class="v">{{ 'yes' if api_key_configured else 'no' }}</div>
+        <div class="k">Legacy env fallback</div><div class="v">{{ settings.provider_api_key_env if legacy_api_key_configured else 'not set' }}</div>
+      </div>
+      <p class="muted" style="margin-top:14px">This connection powers estimation, planning, recommendations, and budget reporting. It is not passed into OpenCode, Claude Code, Codex, or other Worker Harnesses.</p>
+      <form method="post" action="/settings/control-plane/test" style="margin-top:14px">
+        <button type="submit" class="primary">Test control-plane connection</button>
+      </form>
+    </div>
+  </article>
+
+  <article class="panel">
+    <div class="panel-header"><h3>Last connection test</h3></div>
+    <div class="panel-body">
+      {% if connection_status %}
+      <p>
+        {% if connection_status.online %}<span class="pill green">online</span>{% else %}<span class="pill red">offline</span>{% endif %}
+        <span class="pill muted">{{ connection_status.checked_at }}</span>
+      </p>
+      <pre class="mono" style="white-space:pre-wrap;background:var(--bg-0);border:1px solid var(--line);padding:10px;border-radius:4px;max-height:260px;overflow:auto">{{ connection_status.details }}</pre>
+      {% else %}
+      <p class="muted">No control-plane connection test has been recorded yet.</p>
+      {% endif %}
+    </div>
+  </article>
+</section>
+{% endblock %}

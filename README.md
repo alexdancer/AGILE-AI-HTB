@@ -1,8 +1,8 @@
 # AGILE-AI-HTB
 
-A portal-first token-budget governance harness for AI coding agents. It sits between your agent and the LLM provider, tracking every token, enforcing budget guardrails through three-layer graduated enforcement, and escalating to a human — never the agent — when things go wrong.
+A portal-first token-budget governance harness for AI coding agents. AGILE-AI-HTB has two model layers: a control-plane model used by the portal for estimates/planning/reports, and Worker Harness models used by local coding CLIs such as OpenCode, Claude Code, or Codex. It tracks spend by category, enforces Worker execution budgets, and escalates to a human — never the agent — when things go wrong.
 
-Agent-agnostic. Any OpenAI-compatible agent works. LiteLLM normalizes 100+ providers.
+Agent-agnostic. Proxy-governed mode works with OpenAI-compatible agents through LiteLLM. Native Worker mode uses the installed harness's own CLI/config/auth and imports trustworthy usage evidence when available.
 
 ## Four pillars
 
@@ -54,11 +54,27 @@ docker compose exec agile-ai-htb htb seed-demo
 
 1. **Type a task** — "Add a save command to the CLI" in the board intake form
 2. **Estimate** — Estimator LLM (real LiteLLM call) returns token budget, complexity, model recommendation, confidence. Tracked as `usage_kind=estimation`.
-3. **Launch** — Pre-seeded verified demo worker adapter passes launch guardrails. Session starts.
-4. **Worker runs** — `htb-demo-worker` makes 3 proxy requests with real LLM calls. Governance applies at every turn.
+3. **Launch** — Verified Worker adapter passes launch guardrails. Native mode launches the selected discovered Worker model; proxy-governed mode routes through the Harness Proxy.
+4. **Worker runs** — Worker execution tokens are recorded as Worker spend. Control-plane estimation/reporting spend stays separate.
 5. **Report** — Session artifact shows token totals, tool breakdown, zone snapshots, alarms, checkpoint results.
 
-Set `PROVIDER_API_KEY` to your OpenAI/Anthropic key for real LLM calls. Without it, the estimate step creates a Blocked task.
+Set `AGILE_AI_HTB_CONTROL_API_KEY` for real control-plane LLM calls. `PROVIDER_API_KEY` remains a compatibility alias for older deployments and proxy-governed Worker mode, but native OpenCode mode uses the installed `opencode` CLI's own config/auth.
+
+### Local OpenCode read-only proof
+
+Start portal with Local Runner enabled, then run script:
+
+```bash
+export TOKEN_TRACKER_PORTAL_TOKEN=demo-token
+export AGILE_AI_HTB_CONTROL_API_KEY=your-control-plane-key
+uv run htb serve --local-runner --host 127.0.0.1 --port 8000
+
+# second terminal
+export TOKEN_TRACKER_PORTAL_TOKEN=demo-token
+PROJECT_ROOT=$PWD scripts/local-opencode-readonly-demo.sh
+```
+
+Flow: tests control-plane connection → discovers OpenCode Worker models → verifies native usage tracking → connects local project → launches read-only proof. No OpenAI-style Worker credential is required for native OpenCode; configure OpenCode itself first.
 
 ## Deploy to Render
 
@@ -80,9 +96,11 @@ Full runbook: [`docs/DEPLOY.md`](docs/DEPLOY.md)
 | `TOKEN_TRACKER_GUARDRAILS_PATH` | `guardrails.yaml` | Guardrail config |
 | `TOKEN_TRACKER_PORTAL_TOKEN` | — | Portal login/bearer token (required) |
 | `TOKEN_TRACKER_PORTAL_COOKIE_SECURE` | `false` | Set `true` for HTTPS |
-| `TOKEN_TRACKER_ESTIMATOR_MODEL` | `gpt-4o-mini` | Model for the Estimator LLM |
-| `TOKEN_TRACKER_PROVIDER_API_KEY_ENV` | `PROVIDER_API_KEY` | Env var holding provider key |
-| `PROVIDER_API_KEY` | — | Your LLM provider API key |
+| `TOKEN_TRACKER_CONTROL_PLANE_MODEL` / `AGILE_AI_HTB_CONTROL_MODEL` | `gpt-4o-mini` | Control-plane model for estimates, summaries, and reports |
+| `AGILE_AI_HTB_CONTROL_API_KEY_ENV` | `AGILE_AI_HTB_CONTROL_API_KEY` | Env var name holding control-plane API key |
+| `AGILE_AI_HTB_CONTROL_API_KEY` | — | Control-plane model API key |
+| `TOKEN_TRACKER_PROVIDER_API_KEY_ENV` | `PROVIDER_API_KEY` | Legacy/proxy-governed Worker provider-key env var name |
+| `PROVIDER_API_KEY` | — | Compatibility alias; not required for native OpenCode Worker mode |
 
 ## Tests
 
@@ -137,7 +155,6 @@ docs/
   PRD.md              Product requirements
   IMPLEMENTATION-PLAN.md  Implementation plan + status
   HARNESS.md          Architecture reference
-  HARNESS-SUMMARY.md  One-page summary
   DEMO.md             Demo scenario
   DEMO_VIDEO_SCRIPT.md 6-minute video script
   DEPLOY.md           Render deployment runbook
