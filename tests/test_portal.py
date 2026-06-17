@@ -245,7 +245,8 @@ def test_board_renders_columns_and_task_cards(tmp_path, monkeypatch):
     assert "25,000" in html
     assert "claude-sonnet" in html
     assert "12,000" in html
-    assert "Configure Worker Adapter to launch." in html
+    assert "Launch task" in html
+    assert "adapter_id" in html
     assert created["id"] in html
 
 
@@ -386,7 +387,7 @@ def test_board_uses_verified_worker_adapter_status(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert "Launchable estimated task" in response.text
-    assert "Configure Worker Adapter to launch." not in response.text
+    assert "Launch task" in response.text
 
 
 def test_board_renders_unexpected_statuses_as_blocked(tmp_path, monkeypatch):
@@ -527,3 +528,218 @@ def test_session_report_missing_session_returns_404(tmp_path, monkeypatch):
         response = client.get("/sessions/missing", headers=_portal_headers())
 
     assert response.status_code == 404
+
+
+# ── Adapter configuration workflow tests ──
+
+def test_configure_route_sets_workdir(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/settings/workers/opencode/configure",
+            headers=_portal_headers(),
+            data={"workdir": str(tmp_path / "my-project")},
+            follow_redirects=False,
+        )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings/workers"
+    adapter = db.get_worker_adapter(tmp_path / "harness.db", "opencode")
+    assert adapter["workdir"] == str(tmp_path / "my-project")
+    assert adapter["configured"] is True
+
+
+def test_configure_route_sets_default_and_clears_previous(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        # Set opencode as default
+        client.post(
+            "/settings/workers/opencode/configure",
+            headers=_portal_headers(),
+            data={"workdir": str(tmp_path), "is_default": "1"},
+        )
+        # Set codex as default - should clear opencode
+        client.post(
+            "/settings/workers/codex/configure",
+            headers=_portal_headers(),
+            data={"workdir": str(tmp_path), "is_default": "1"},
+        )
+    assert db.get_worker_adapter(database_path, "opencode")["is_default"] is False
+    assert db.get_worker_adapter(database_path, "codex")["is_default"] is True
+
+
+def test_workers_page_shows_diagnostics_for_all_adapters(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.get("/settings/workers", headers=_portal_headers())
+    assert response.status_code == 200
+    html = response.text
+    assert "Claude Code diagnostics" in html or "Codex diagnostics" in html or "Hermes diagnostics" in html
+
+
+def test_board_shows_adapter_and_model_selectors(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        db.create_task(
+            database_path,
+            description="Test task",
+            status="Estimated",
+            estimate_tokens=1000,
+            recommended_model="gpt-5.1-codex",
+        )
+        response = client.get("/board", headers=_portal_headers())
+    assert response.status_code == 200
+    html = response.text
+    assert "adapter_id" in html
+    assert 'name="model"' in html
+
+
+def test_board_launch_button_visible_without_verified_adapter(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        db.create_task(
+            database_path,
+            description="Unverified launch test",
+            status="Estimated",
+            estimate_tokens=500,
+            recommended_model="claude-sonnet",
+        )
+        response = client.get("/board", headers=_portal_headers())
+    assert response.status_code == 200
+    assert "Launch task" in response.text
+
+
+def test_launch_unverified_adapter_shows_error_banner(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        task = db.create_task(
+            database_path,
+            description="Will fail launch",
+            status="Estimated",
+            estimate_tokens=500,
+            recommended_model="gpt-5.1-codex",
+        )
+        response = client.post(
+            f"/tasks/{task['id']}/launch",
+            headers={**_portal_headers(), "Accept": "text/html"},
+            data={"adapter_id": "codex", "model": "gpt-5.1-codex"},
+            follow_redirects=False,
+        )
+    assert response.status_code == 303
+    location = response.headers["location"]
+    assert "error=" in location
+    assert response.headers["location"].startswith("/board?error=")
+    board = client.get("/board?error=Worker%20adapter%20is%20not%20configured.", headers=_portal_headers())
+    assert "Open Worker Setup" in board.text
+    assert "/settings/workers" in board.text
+
+
+def test_guided_worker_setup_selects_default_adapter_and_keeps_advanced_details(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        db.update_worker_adapter(database_path, "codex", workdir=str(tmp_path), config={"command": "codex"}, is_default=True)
+        response = client.get("/settings/workers", headers=_portal_headers())
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Codex setup" in html
+    assert "Choose active adapter" in html
+    assert "Advanced details" in html
+    assert "Proxy-governed LiteLLM usage" in html
+    assert "PROVIDER_API_KEY" not in html
+
+
+def test_refresh_diagnostics_route_forces_redetection(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/settings/workers/opencode/refresh-diagnostics",
+            headers=_portal_headers(),
+            follow_redirects=False,
+        )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings/workers"
+
+
+def test_setup_overview_and_budget_settings_flow(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        setup = client.get("/setup", headers=_portal_headers())
+        assert setup.status_code == 200
+        assert "First-run setup" in setup.text
+        assert "Token budget" in setup.text
+
+        saved = client.post(
+            "/settings/budget",
+            headers={**_portal_headers(), "Accept": "text/html"},
+            data={"daily_cap_tokens": "999000", "session_cap_tokens": "111000"},
+            follow_redirects=False,
+        )
+        assert saved.status_code == 303
+        assert saved.headers["location"] == "/setup"
+        page = client.get("/settings/budget", headers=_portal_headers())
+
+    assert page.status_code == 200
+    assert 'value="999000"' in page.text
+    assert 'value="111000"' in page.text
+    assert db.get_token_budget_settings(tmp_path / "harness.db") == {
+        "confirmed": True,
+        "daily_cap_tokens": 999000,
+        "session_cap_tokens": 111000,
+    }
+
+
+def test_saved_budget_gates_launch_and_is_carried_to_session(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        db.set_token_budget_settings(database_path, daily_cap_tokens=1000, session_cap_tokens=700)
+        db.update_worker_adapter(
+            database_path,
+            "codex",
+            workdir=str(tmp_path),
+            config={"command": "codex"},
+            supported_models=["gpt-5.1-codex"],
+            is_default=True,
+        )
+        db.mark_worker_adapter_verification(database_path, "codex", verified=True, evidence={"ok": True})
+        blocked = db.create_task(
+            database_path,
+            description="Too large for saved budget",
+            status="Estimated",
+            estimate_tokens=1200,
+            recommended_model="gpt-5.1-codex",
+        )
+        ok = db.create_task(
+            database_path,
+            description="Within saved budget",
+            status="Estimated",
+            estimate_tokens=500,
+            recommended_model="gpt-5.1-codex",
+        )
+        blocked_response = client.post(
+            f"/tasks/{blocked['id']}/launch",
+            headers=_portal_headers(),
+            json={"adapter_id": "codex", "model": "gpt-5.1-codex"},
+        )
+
+        def fake_runner(plan):
+            return {"returncode": 0, "stdout": "", "stderr": ""}
+
+        getattr(client.app, "state").task_launch_runner = fake_runner
+        launched = client.post(
+            f"/tasks/{ok['id']}/launch",
+            headers=_portal_headers(),
+            json={"adapter_id": "codex", "model": "gpt-5.1-codex"},
+        )
+
+    assert blocked_response.status_code == 409
+    assert "Task estimate exceeds remaining launch budget." in str(blocked_response.json())
+    assert launched.status_code == 200
+    session = launched.json()["session"]
+    assert session["guardrail_overrides"]["budget"]["daily_cap_tokens"] == 1000
+    assert session["guardrail_overrides"]["budget"]["session_cap_tokens"] == 700

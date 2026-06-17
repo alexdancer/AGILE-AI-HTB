@@ -477,8 +477,10 @@ def abort_worker_session(database_path: Path | str, session_id: str, *, reason: 
 
 
 def _evaluate_launch_budget(database_path: Path | str, task: dict[str, Any]) -> dict[str, Any]:
-    budget = (task.get("metadata") or {}).get("budget") or {}
+    budget = dict(db.get_token_budget_settings(database_path))
+    budget.update((task.get("metadata") or {}).get("budget") or {})
     daily_cap = _optional_int(budget.get("daily_cap_tokens"))
+    session_cap = _optional_int(budget.get("session_cap_tokens"))
     daily_used = _optional_int(budget.get("daily_used_tokens")) or 0
     if daily_cap is None:
         return {"passed": True, "reason": None, "estimate_tokens": task.get("estimate_tokens"), "remaining_tokens": None}
@@ -491,6 +493,7 @@ def _evaluate_launch_budget(database_path: Path | str, task: dict[str, Any]) -> 
         "reason": None if passed else "Task estimate exceeds remaining launch budget.",
         "estimate_tokens": estimate,
         "daily_cap_tokens": daily_cap,
+        "session_cap_tokens": session_cap,
         "daily_used_tokens": daily_used,
         "current_recorded_tokens": current_used,
         "remaining_tokens": remaining,
@@ -518,6 +521,9 @@ def _mark_budget_launch_blocked(database_path: Path | str, task: dict[str, Any],
 
 def _session_budget_overrides(task: dict[str, Any], budget_check: dict[str, Any], budget_override: bool) -> dict[str, Any]:
     budget = dict((task.get("metadata") or {}).get("budget") or {})
+    for key in ("daily_cap_tokens", "session_cap_tokens", "daily_used_tokens"):
+        if budget_check.get(key) is not None:
+            budget.setdefault(key, budget_check[key])
     budget["launch_budget_check"] = budget_check
     if budget_override:
         budget["budget_override"] = True

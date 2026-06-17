@@ -5,6 +5,16 @@
 <h1 class="page-title">Task board</h1>
 <p class="page-sub">estimate task · ready to launch · running work · review gates · done · blocked</p>
 
+{% if error %}
+<div class="demo-banner" style="background:var(--danger);color:white;padding:10px 16px;border-radius:4px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:12px">
+  <span>{{ error }}</span>
+  <span class="btn-row">
+    {% if 'adapter' in error|lower or 'tracking' in error|lower or 'worker' in error|lower %}<a href="/settings/workers" style="color:white;text-decoration:underline;font-weight:bold">Open Worker Setup</a>{% endif %}
+    <a href="/board" style="color:white;text-decoration:none;font-weight:bold">&times;</a>
+  </span>
+</div>
+{% endif %}
+
 <form method="post" action="/tasks/estimate-form" style="margin-bottom:24px;display:flex;gap:10px;align-items:flex-end">
   <div style="flex:1">
     <label for="intake-description">Describe a coding task</label>
@@ -24,12 +34,31 @@
       {% if task.estimate_tokens is not none %}<p class="mono">Estimate: {{ "{:,}".format(task.estimate_tokens) }} tokens</p>{% endif %}
       {% if task.recommended_model %}<p class="mono">Model: {{ task.recommended_model }}</p>{% endif %}
       {% if task.actual_tokens is not none %}<p class="mono">Actual: {{ "{:,}".format(task.actual_tokens) }} tokens</p>{% endif %}
-      {% if column == 'Estimated' and not has_verified_worker_adapter %}<p class="muted">Configure Worker Adapter to launch.</p>{% endif %}
-      {% if column in ['Estimated', 'Ready'] and has_verified_worker_adapter %}
-      <form method="post" action="/tasks/{{ task.id }}/launch">
+      {% if column in ['Estimated', 'Ready'] and adapters %}
+      <form method="post" action="/tasks/{{ task.id }}/launch" style="margin-top:8px">
         <input type="hidden" name="proxy_url" value="{{ default_proxy_url }}">
-        <button type="submit">Launch task</button>
+        {% if adapters|length > 0 %}
+        <label class="mono" style="font-size:11px">Adapter</label>
+        <select name="adapter_id" onchange="updateModels(this, 'models-{{ task.id }}')" style="width:100%;margin-bottom:4px">
+          {% for a in adapters %}
+          <option value="{{ a.id }}" {% if a.is_default %}selected{% endif %} data-models="{{ a.supported_models|join(',') }}">{{ a.name }}</option>
+          {% endfor %}
+        </select>
+        <label class="mono" style="font-size:11px">Model</label>
+        <select id="models-{{ task.id }}" name="model" style="width:100%;margin-bottom:6px">
+          {% set default_adapter = adapters|selectattr("is_default")|first or adapters[0] %}
+          {% for m in default_adapter.supported_models %}
+          <option value="{{ m }}" {% if m == task.recommended_model %}selected{% endif %}>{{ m }}</option>
+          {% endfor %}
+          {% if not default_adapter.supported_models %}
+          <option value="{{ task.recommended_model }}">{{ task.recommended_model }} (no discovered models)</option>
+          {% endif %}
+        </select>
+        {% endif %}
+        <button type="submit" style="width:100%">Launch task</button>
       </form>
+      {% elif column in ['Estimated', 'Ready'] and not adapters %}
+      <p class="muted">No worker adapters configured.</p>
       {% endif %}
       {% if column == 'Running' %}
       <form method="post" action="/tasks/{{ task.id }}/refresh">
@@ -47,4 +76,26 @@
   </article>
   {% endfor %}
 </section>
+
+<script>
+function updateModels(adapterSelect, modelSelectId) {
+  var modelSelect = document.getElementById(modelSelectId);
+  var selectedOption = adapterSelect.options[adapterSelect.selectedIndex];
+  var models = selectedOption.getAttribute('data-models');
+  modelSelect.innerHTML = '';
+  if (models) {
+    models.split(',').forEach(function(m) {
+      var opt = document.createElement('option');
+      opt.value = m.trim();
+      opt.textContent = m.trim();
+      modelSelect.appendChild(opt);
+    });
+  } else {
+    var opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '(no discovered models)';
+    modelSelect.appendChild(opt);
+  }
+}
+</script>
 {% endblock %}

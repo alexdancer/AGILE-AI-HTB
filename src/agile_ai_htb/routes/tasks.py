@@ -110,7 +110,9 @@ async def launch_task_endpoint(task_id: str, request: Request):
         raise HTTPException(status_code=404, detail="task not found") from exc
     except TaskLaunchBlocked as exc:
         if wants_html:
-            return RedirectResponse("/board", status_code=303)
+            from urllib.parse import quote
+            error_msg = "; ".join(exc.reasons) if exc.reasons else "Launch failed."
+            return RedirectResponse(f"/board?error={quote(error_msg)}", status_code=303)
         return JSONResponse(
             status_code=exc.status_code,
             content={

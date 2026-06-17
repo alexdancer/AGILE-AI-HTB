@@ -6,10 +6,10 @@
 
 <section class="grid cols-4" style="margin-bottom:20px">
   <article class="kpi">
-    <div class="label">Daily budget</div>
-    <div class="value mono">{{ "{:,}".format(token_total) }}{% if daily_cap %} / {{ "{:,}".format(daily_cap) }}{% endif %}</div>
-    <div class="sub">zone: {{ current_zone }}</div>
-    {% if daily_cap %}<div class="bar"><span style="width:{{ [100, ((token_total / daily_cap) * 100)|round(1)]|min }}%"></span></div>{% endif %}
+    <div class="label">Daily budget (Worker execution)</div>
+    <div class="value mono">{{ "{:,}".format(worker_token_total) }}{% if daily_cap %} / {{ "{:,}".format(daily_cap) }}{% endif %}</div>
+    <div class="sub">zone: {{ current_zone }} · control-plane/setup spend is separate</div>
+    {% if daily_cap %}<div class="bar"><span style="width:{{ [100, ((worker_token_total / daily_cap) * 100)|round(1)]|min }}%"></span></div>{% endif %}
   </article>
   <article class="kpi">
     <div class="label">Active sessions</div>

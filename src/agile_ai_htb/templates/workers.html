@@ -1,60 +1,122 @@
 {% extends "base.html" %}
-{% block title %}Worker adapters | AGILE-AI-HTB{% endblock %}
+{% block title %}Worker setup | AGILE-AI-HTB{% endblock %}
 {% block content %}
 <h1 class="page-title">Worker adapters</h1>
-<p class="page-sub">configure adapter presets · verify token tracking · keep secrets out of portal evidence</p>
+<p class="page-sub">guided setup for one active coding harness; advanced details stay available below</p>
 
-<section class="grid cols-3">
-  {% for adapter in adapters %}
-  <article class="card">
-    <div class="flex" style="justify-content:space-between;align-items:flex-start">
-      <h2 class="mono" style="font-size:16px;margin:0 0 10px">{{ adapter.name }}</h2>
-      {% if adapter.is_default %}<span class="pill purple">default</span>{% endif %}
+<section class="panel">
+  <div class="panel-header"><h3>Choose active adapter</h3></div>
+  <div class="panel-body">
+    <div class="btn-row">
+      {% for a in adapters %}
+      <a class="btn {% if active_adapter and a.id == active_adapter.id %}primary{% endif %}" href="/settings/workers?adapter_id={{ a.id }}">{{ a.name }}</a>
+      {% endfor %}
     </div>
-    <p class="muted mono">{{ adapter.id }} · {{ adapter.kind }}</p>
-    <p>
-      {% if adapter.configured %}<span class="pill green">configured</span>{% else %}<span class="pill yellow">unconfigured</span>{% endif %}
-      {% if adapter.verification_status == 'verified' %}<span class="pill green">verified</span>{% else %}<span class="pill yellow">unverified</span>{% endif %}
-      {% if adapter.launchable %}<span class="pill green">launchable</span>{% else %}<span class="pill red">non-launchable</span>{% endif %}
-    </p>
-    <div class="kv">
-      <div class="k">Workdir</div><div class="v">{{ adapter.workdir or 'not set' }}</div>
-      <div class="k">Models</div><div class="v">{{ adapter.supported_models|join(', ') }}</div>
-      <div class="k">Tracking</div><div class="v">{{ adapter.tracking_modes|join(', ') }}</div>
-      <div class="k">Verified at</div><div class="v">{{ adapter.verified_at or 'never' }}</div>
+  </div>
+</section>
+
+{% if active_adapter %}
+<section class="panel">
+  <div class="panel-header">
+    <h3>{{ active_adapter.name }} setup</h3>
+    <span class="pill {% if active_adapter.launchable %}green{% elif active_adapter.verification_status == 'failed' %}red{% else %}yellow{% endif %}">{% if active_adapter.launchable %}launchable{% else %}setup needed{% endif %}</span>
+  </div>
+  <div class="panel-body grid cols-2">
+    <div class="card">
+      <h3>1. Configure Worker project</h3>
+      <form method="post" action="/settings/workers/{{ active_adapter.id }}/configure">
+        <label>Workdir</label>
+        <input name="workdir" value="{{ active_adapter.workdir or '' }}" placeholder="/path/to/repo">
+        <input type="hidden" name="is_default" value="1">
+        <p class="muted">This becomes the default Worker adapter used by task launch.</p>
+        <button class="primary" type="submit">Save adapter</button>
+      </form>
     </div>
-    {% if adapter.diagnostics %}
-    <h3 class="mono" style="font-size:12px;text-transform:uppercase;margin-top:16px;color:var(--fg-2)">OpenCode diagnostics</h3>
-    <div class="kv">
-      <div class="k">Installed</div><div class="v">{{ 'yes' if adapter.diagnostics.installed else 'no' }}</div>
-      <div class="k">Callable</div><div class="v">{{ 'yes' if adapter.diagnostics.callable else 'no' }}</div>
-      <div class="k">Command</div><div class="v">{{ adapter.diagnostics.command or 'not configured' }}</div>
-      <div class="k">Executable</div><div class="v">{{ adapter.diagnostics.executable or 'not found' }}</div>
-      <div class="k">Version</div><div class="v">{{ adapter.diagnostics.version or 'not detected' }}</div>
-      <div class="k">Failure</div><div class="v">{{ adapter.diagnostics.failure_reason or 'none' }}</div>
+    <div class="card">
+      <h3>2. Discover Worker models</h3>
+      <p class="muted">Use the Worker CLI's native model list when available. Do not guess model names.</p>
+      <form method="post" action="/settings/workers/{{ active_adapter.id }}/discover-models">
+        <button type="submit">Discover models</button>
+      </form>
+      {% if active_adapter.supported_models %}
+      <p class="mono">{{ active_adapter.supported_models|join(', ') }}</p>
+      {% else %}
+      <p class="muted">No discovered models yet.</p>
+      {% endif %}
     </div>
-    {% endif %}
-    <form method="post" action="/settings/workers/{{ adapter.id }}/discover-models" style="margin-top:14px">
-      <button type="submit">Discover native models</button>
-    </form>
-    {% if adapter.model_discovery %}
-    <h3 class="mono" style="font-size:12px;text-transform:uppercase;margin-top:16px;color:var(--fg-2)">Native model discovery</h3>
-    <pre class="mono" style="white-space:pre-wrap;background:var(--bg-0);border:1px solid var(--line);padding:10px;border-radius:4px;max-height:160px;overflow:auto">{{ adapter.model_discovery }}</pre>
-    {% endif %}
-    <form method="post" action="/settings/workers/{{ adapter.id }}/verify" style="margin-top:14px">
-      <label class="mono" for="verify-model-{{ adapter.id }}">Model</label>
-      <input id="verify-model-{{ adapter.id }}" name="model" value="{{ adapter.supported_models[0] if adapter.supported_models else '' }}" required>
-      <label class="mono" for="verify-proxy-{{ adapter.id }}">Proxy URL</label>
-      <input id="verify-proxy-{{ adapter.id }}" name="proxy_url" value="{{ default_proxy_url }}" required>
-      <button type="submit">Verify</button>
-    </form>
-    <h3 class="mono" style="font-size:12px;text-transform:uppercase;margin-top:16px;color:var(--fg-2)">Last evidence</h3>
-    {% if adapter.verification_evidence %}
-      <pre class="mono" style="white-space:pre-wrap;background:var(--bg-0);border:1px solid var(--line);padding:10px;border-radius:4px;max-height:220px;overflow:auto">{{ adapter.verification_evidence }}</pre>
-    {% else %}
-      <p class="muted">No verification evidence yet.</p>
-    {% endif %}
-  </article>
-  {% endfor %}
+    <div class="card">
+      <h3>3. Verify token tracking</h3>
+      <form method="post" action="/settings/workers/{{ active_adapter.id }}/verify">
+        <label>Model</label>
+        <select name="model">
+          {% for model in active_adapter.supported_models %}<option value="{{ model }}">{{ model }}</option>{% endfor %}
+          {% if not active_adapter.supported_models %}<option value="">Discover models first</option>{% endif %}
+        </select>
+        <label>Tracking mode</label>
+        <select name="tracking_mode">
+          <option value="proxy_governed">Proxy-governed LiteLLM usage</option>
+          <option value="native_usage">Native Worker usage evidence</option>
+        </select>
+        <details style="margin:10px 0">
+          <summary>Advanced details</summary>
+          <label>Proxy URL</label>
+          <input name="proxy_url" value="{{ default_proxy_url }}">
+        </details>
+        <button type="submit">Verify tracking</button>
+      </form>
+    </div>
+    <div class="card">
+      <h3>4. Launch readiness</h3>
+      <p><span class="pill {% if active_adapter.configured %}green{% else %}yellow{% endif %}">{% if active_adapter.configured %}configured{% else %}unconfigured{% endif %}</span></p>
+      <p><span class="pill {% if active_adapter.verification_status == 'verified' %}green{% elif active_adapter.verification_status == 'failed' %}red{% else %}yellow{% endif %}">{{ active_adapter.verification_status }}</span></p>
+      <p><span class="pill {% if active_adapter.launchable %}green{% else %}yellow{% endif %}">{% if active_adapter.launchable %}launchable{% else %}not launchable{% endif %}</span></p>
+      {% if active_adapter.is_default %}<p><span class="pill blue">default</span></p>{% endif %}
+      {% if active_adapter.launchable %}<p><a class="btn primary" href="/board">Open board</a></p>{% endif %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-header"><h3>All adapters</h3></div>
+  <div class="panel-body tight">
+    <table>
+      <thead><tr><th>Adapter</th><th>Status</th><th>Models</th><th>Diagnostics</th><th>Advanced details</th></tr></thead>
+      <tbody>
+      {% for adapter in adapters %}
+      <tr>
+        <td><a href="/settings/workers?adapter_id={{ adapter.id }}">{{ adapter.name }}</a>{% if adapter.is_default %} <span class="pill blue">default</span>{% endif %}</td>
+        <td>
+          <span class="pill {% if adapter.configured %}green{% else %}yellow{% endif %}">{% if adapter.configured %}configured{% else %}unconfigured{% endif %}</span>
+          <span class="pill {% if adapter.verification_status == 'verified' %}green{% elif adapter.verification_status == 'failed' %}red{% else %}yellow{% endif %}">{{ adapter.verification_status }}</span>
+          {% if adapter.launchable %}<span class="pill green">launchable</span>{% endif %}
+        </td>
+        <td>{{ adapter.supported_models|join(', ') if adapter.supported_models else 'No discovered models' }}</td>
+        <td>
+          <strong>{{ adapter.name }} diagnostics</strong><br>
+          {% if adapter.diagnostics %}
+          <span class="mono">{{ adapter.diagnostics.get('status', 'cached') }}</span>
+          {% else %}
+          <span class="muted">No cached diagnostics. Refresh to check PATH.</span>
+          {% endif %}
+          <form method="post" action="/settings/workers/{{ adapter.id }}/refresh-diagnostics" style="margin-top:6px"><button type="submit">Refresh diagnostics</button></form>
+        </td>
+        <td>
+          <details>
+            <summary>Advanced details</summary>
+            <div class="kv" style="margin-top:8px">
+              <div class="k">kind</div><div class="v">{{ adapter.kind }}</div>
+              <div class="k">workdir</div><div class="v">{{ adapter.workdir or 'not configured' }}</div>
+              <div class="k">tracking modes</div><div class="v">{{ adapter.tracking_modes|join(', ') }}</div>
+              <div class="k">model discovery</div><div class="v">{% if adapter.model_discovery %}Native model discovery: {{ adapter.model_discovery }}{% else %}not run{% endif %}</div>
+              <div class="k">verification evidence</div><div class="v"><pre>{{ adapter.verification_evidence }}</pre></div>
+            </div>
+          </details>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </section>
 {% endblock %}

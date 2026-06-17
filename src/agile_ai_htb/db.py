@@ -124,6 +124,12 @@ create table if not exists execution_backend_status (
     details_json text not null default '{}',
     checked_at text not null
 );
+
+create table if not exists portal_settings (
+    key text primary key,
+    value_json text not null,
+    updated_at text not null
+);
 """
 
 WORKER_ADAPTER_PRESETS = [
@@ -234,6 +240,16 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
                 online integer not null default 0,
                 details_json text not null default '{}',
                 checked_at text not null
+            )
+            """
+        )
+    if "portal_settings" not in existing_tables:
+        conn.execute(
+            """
+            create table portal_settings (
+                key text primary key,
+                value_json text not null,
+                updated_at text not null
             )
             """
         )
@@ -704,6 +720,51 @@ def upsert_execution_backend_status(
             (backend_id, name, 1 if online else 0, _to_json(details or {}), checked_at),
         )
     return get_execution_backend_status(path, backend_id)
+
+
+def get_portal_setting(path: Path | str, key: str, default: dict[str, Any] | None = None) -> dict[str, Any]:
+    with connect(path) as conn:
+        row = conn.execute("select value_json from portal_settings where key = ?", (key,)).fetchone()
+    if row is None:
+        return dict(default or {})
+    return _from_json(row["value_json"])
+
+
+def set_portal_setting(path: Path | str, key: str, value: dict[str, Any]) -> dict[str, Any]:
+    now = _now_iso()
+    with connect(path) as conn:
+        conn.execute(
+            """
+            insert into portal_settings (key, value_json, updated_at)
+            values (?, ?, ?)
+            on conflict(key) do update set
+                value_json = excluded.value_json,
+                updated_at = excluded.updated_at
+            """,
+            (key, _to_json(value), now),
+        )
+    return get_portal_setting(path, key)
+
+
+def get_token_budget_settings(path: Path | str) -> dict[str, Any]:
+    return get_portal_setting(path, "token_budget", {})
+
+
+def set_token_budget_settings(
+    path: Path | str,
+    *,
+    daily_cap_tokens: int,
+    session_cap_tokens: int,
+) -> dict[str, Any]:
+    return set_portal_setting(
+        path,
+        "token_budget",
+        {
+            "daily_cap_tokens": int(daily_cap_tokens),
+            "session_cap_tokens": int(session_cap_tokens),
+            "confirmed": True,
+        },
+    )
 
 
 def get_execution_backend_status(path: Path | str, backend_id: str) -> dict[str, Any]:

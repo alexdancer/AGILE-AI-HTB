@@ -122,6 +122,10 @@
       <div class="meta">live harness · human-in-loop governance</div>
     </header>
     <aside class="sidebar">
+      <div class="group">Setup</div>
+      <nav>
+        <a href="/setup" class="{% if active_page == 'setup' %}active{% endif %}">First-run setup</a>
+      </nav>
       <div class="group">Governance</div>
       <nav>
         <a href="/dashboard" class="{% if active_page == 'dashboard' %}active{% endif %}">Dashboard</a>
@@ -135,6 +139,7 @@
       <div class="group">Settings</div>
       <nav>
         <a href="/settings/control-plane" class="{% if active_page == 'control_plane' %}active{% endif %}">Control plane model</a>
+        <a href="/settings/budget" class="{% if active_page == 'budget' %}active{% endif %}">Token budget</a>
         <a href="/settings/project" class="{% if active_page == 'project' %}active{% endif %}">Connected project</a>
         <a href="/settings/workers" class="{% if active_page == 'workers' %}active{% endif %}">Worker adapters</a>
       </nav>

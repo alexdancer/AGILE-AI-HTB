@@ -345,8 +345,6 @@ def _model_discovery_plan(adapter: dict[str, Any]) -> CommandPlan:
 
 def _default_model_discovery_template(adapter: dict[str, Any]) -> list[str]:
     command = _adapter_command_name(adapter) or str(adapter.get("kind") or "worker")
-    if adapter.get("kind") == "opencode":
-        return [command, "models", "--json"]
     return [command, "models"]
 
 

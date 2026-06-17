@@ -27,7 +27,7 @@ async def chat_completions(payload: dict[str, Any], request: Request):
     budget = session.get("guardrail_overrides", {}).get("budget", {})
 
     daily_used_before = int(budget.get("daily_used_tokens", 0)) + _current_day_worker_token_usage(request)
-    zone = get_budget_zone(daily_used_before, _daily_cap_tokens(budget, config), config)
+    zone = get_budget_zone(daily_used_before, _daily_cap_tokens(budget, config, database_path), config)
     decision = apply_governance(payload, zone, config)
 
     if decision.request.get("stream") is True:
@@ -114,7 +114,7 @@ def _persist_budget_alarms(request: Request, session: dict[str, Any], budget: di
     config = request.app.state.guardrails
     daily_used_tokens = int(budget.get("daily_used_tokens", 0)) + _current_day_worker_token_usage(request)
     session_used_tokens = db.session_token_breakdown(database_path, session["id"])["by_category"]["worker_execution"]
-    daily_cap_tokens = _daily_cap_tokens(budget, config)
+    daily_cap_tokens = _daily_cap_tokens(budget, config, database_path)
     zone = get_budget_zone(daily_used_tokens, daily_cap_tokens, config)
     previous_alarms = [
         {**alarm, "session_id": session["id"]}
@@ -126,16 +126,20 @@ def _persist_budget_alarms(request: Request, session: dict[str, Any], budget: di
         daily_used_tokens=daily_used_tokens,
         daily_cap_tokens=daily_cap_tokens,
         session_used_tokens=session_used_tokens,
-        session_cap_tokens=_session_cap_tokens(budget, config),
+        session_cap_tokens=_session_cap_tokens(budget, config, database_path),
         previous_alarms=previous_alarms,
     )
     for alarm in alarms:
         db.record_alarm(database_path, session_id=session["id"], alarm=alarm.as_dict())
 
 
-def _daily_cap_tokens(budget: dict[str, Any], config) -> int | None:
+def _daily_cap_tokens(budget: dict[str, Any], config, database_path=None) -> int | None:
     if "daily_cap_tokens" in budget:
         return int(budget["daily_cap_tokens"])
+    if database_path is not None:
+        stored = db.get_token_budget_settings(database_path)
+        if stored.get("daily_cap_tokens") is not None:
+            return int(stored["daily_cap_tokens"])
     if config.daily_cap.enabled:
         return config.daily_cap.tokens
     return None
@@ -158,9 +162,13 @@ def _current_day_start_iso(timezone: str) -> str:
     return start.astimezone(UTC).isoformat()
 
 
-def _session_cap_tokens(budget: dict[str, Any], config) -> int | None:
+def _session_cap_tokens(budget: dict[str, Any], config, database_path=None) -> int | None:
     if "session_cap_tokens" in budget:
         return int(budget["session_cap_tokens"])
+    if database_path is not None:
+        stored = db.get_token_budget_settings(database_path)
+        if stored.get("session_cap_tokens") is not None:
+            return int(stored["session_cap_tokens"])
     if config.session_cap.enabled:
         return config.session_cap.tokens
     return None

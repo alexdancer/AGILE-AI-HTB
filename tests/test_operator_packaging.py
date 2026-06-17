@@ -44,8 +44,8 @@ def test_readme_documents_portal_first_operator_flow():
     assert "AGILE-AI-HTB" in readme
     assert "http://localhost:8000/login" in readme
     assert "htb seed-demo" in readme
-    assert "docker compose up" in readme
-    assert ".venv/bin/python -m pytest" in readme
+    assert "docker-compose up" in readme
+    assert "uv run python -m pytest" in readme
     assert "provider" in readme.lower()
     assert "env var" in readme.lower()
     assert "PROVIDER_API_KEY" in readme

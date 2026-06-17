@@ -139,7 +139,6 @@ def test_discover_worker_models_updates_adapter_from_native_json_without_proxy_e
         db_path,
         "opencode",
         workdir=str(tmp_path),
-        config={"model_discovery_template": ["opencode", "models", "--json"]},
         supported_models=[],
     )
     plans = []
@@ -158,6 +157,7 @@ def test_discover_worker_models_updates_adapter_from_native_json_without_proxy_e
     assert result.passed is True
     assert result.models == ["anthropic/claude-sonnet-4", "openai/gpt-5.1"]
     assert plans[0].env == {}
+    assert plans[0].command == ["opencode", "models"]
     assert plans[0].metadata["purpose"] == "native_model_discovery"
     adapter = db.get_worker_adapter(db_path, "opencode")
     assert adapter["supported_models"] == ["anthropic/claude-sonnet-4", "openai/gpt-5.1"]

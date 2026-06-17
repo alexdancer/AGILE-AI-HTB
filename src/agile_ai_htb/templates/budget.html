@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Token budget | AGILE-AI-HTB{% endblock %}
+{% block content %}
+<h1 class="page-title">Token budget</h1>
+<p class="page-sub">Worker execution spend is enforced; control-plane/setup spend is informational.</p>
+
+<section class="panel">
+  <div class="panel-header"><h3>Configure launch guardrails</h3></div>
+  <div class="panel-body">
+    {% if error %}<p class="pill red">{{ error }}</p>{% endif %}
+    <form method="post" action="/settings/budget" class="grid cols-2">
+      <div>
+        <label for="daily-cap">Daily Worker execution cap</label>
+        <input id="daily-cap" name="daily_cap_tokens" type="number" min="1" step="1" value="{{ budget.daily_cap_tokens or '' }}" required>
+        <p class="muted">Applied to Worker execution tokens only. Estimation, setup checks, and reporting are shown separately.</p>
+      </div>
+      <div>
+        <label for="session-cap">Per-session Worker execution cap</label>
+        <input id="session-cap" name="session_cap_tokens" type="number" min="1" step="1" value="{{ budget.session_cap_tokens or '' }}" required>
+        <p class="muted">Stored as launch/session budget context for proxy-governed and native-usage Workers.</p>
+      </div>
+      <div class="btn-row">
+        <button class="primary" type="submit">Save budget</button>
+        <a class="btn" href="/setup">Back to setup</a>
+      </div>
+    </form>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-header"><h3>Spend authority</h3></div>
+  <div class="panel-body grid cols-2">
+    <div class="card">
+      <h3>Enforced</h3>
+      <p><span class="pill green">worker_execution</span></p>
+      <p class="muted">Coding harness model calls through the Harness Proxy, or native Worker runs that emit trustworthy per-session usage evidence.</p>
+    </div>
+    <div class="card">
+      <h3>Informational</h3>
+      <p><span class="pill muted">control_plane</span> <span class="pill muted">adapter_verification</span> <span class="pill muted">reporting_summary</span></p>
+      <p class="muted">Setup and orchestration costs are reported separately so they do not hide Worker execution spend.</p>
+    </div>
+  </div>
+</section>
+{% endblock %}

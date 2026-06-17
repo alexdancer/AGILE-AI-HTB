@@ -44,6 +44,16 @@ class ProjectConnectRequest(BaseModel):
     root_path: str = Field(min_length=1)
 
 
+class WorkerConfigureRequest(BaseModel):
+    workdir: str = Field(default="", min_length=0)
+    is_default: bool = False
+
+
+class TokenBudgetSettingsRequest(BaseModel):
+    daily_cap_tokens: int = Field(gt=0)
+    session_cap_tokens: int = Field(gt=0)
+
+
 @router.get("/")
 def root() -> RedirectResponse:
     return RedirectResponse("/login")
@@ -93,7 +103,8 @@ def dashboard(request: Request):
     day_start = _current_day_start_iso(request.app.state.settings.timezone)
     token_total = db.total_token_usage(database_path, since=day_start)
     token_breakdown = db.token_usage_breakdown(database_path, since=day_start)
-    daily_cap = config.daily_cap.tokens if config.daily_cap.enabled else None
+    budget_settings = _effective_budget_settings(database_path, config)
+    daily_cap = budget_settings.get("daily_cap_tokens")
     alarms = db.list_alarms(database_path)
     sessions = db.list_sessions(database_path)
     active_sessions = [session for session in sessions if session["status"] in {"active", "running"}]
@@ -109,9 +120,10 @@ def dashboard(request: Request):
         {
             "active_page": "dashboard",
             "token_total": token_total,
+            "worker_token_total": token_breakdown["by_category"]["worker_execution"],
             "token_breakdown": token_breakdown,
             "daily_cap": daily_cap,
-            "current_zone": get_budget_zone(token_total, daily_cap, config),
+            "current_zone": get_budget_zone(token_breakdown["by_category"]["worker_execution"], daily_cap, config),
             "session_count": len(sessions),
             "active_session_count": len(active_sessions),
             "alarm_count": len(alarms),
@@ -122,6 +134,85 @@ def dashboard(request: Request):
             "recent_alarms": list(reversed(alarms[-5:])),
         },
     )
+
+
+@router.get("/setup", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
+def setup_overview(request: Request):
+    database_path = request.app.state.settings.database_path
+    config = request.app.state.guardrails
+    settings = request.app.state.settings
+    budget_settings = _effective_budget_settings(database_path, config)
+    adapters = _worker_adapter_view_models(database_path)
+    active_adapter = _active_adapter_for_request(adapters, request)
+    projects = db.list_connected_projects(database_path)
+    try:
+        control_status = db.get_execution_backend_status(database_path, "control_plane_model")
+    except KeyError:
+        control_status = None
+    steps = [
+        {
+            "name": "Control plane model",
+            "state": "ready" if bool(os.getenv(settings.control_plane_api_key_env)) or (control_status and control_status.get("online")) else "needs setup",
+            "href": "/settings/control-plane",
+            "detail": settings.control_plane_model,
+        },
+        {
+            "name": "Token budget",
+            "state": "ready" if budget_settings.get("confirmed") else "needs setup",
+            "href": "/settings/budget",
+            "detail": f"Daily {budget_settings.get('daily_cap_tokens'):,} · Session {budget_settings.get('session_cap_tokens'):,}" if budget_settings.get("daily_cap_tokens") and budget_settings.get("session_cap_tokens") else "No portal budget confirmed",
+        },
+        {
+            "name": "Worker adapter",
+            "state": "ready" if active_adapter and active_adapter.get("launchable") else "needs setup",
+            "href": "/settings/workers",
+            "detail": active_adapter["name"] if active_adapter else "No adapter selected",
+        },
+        {
+            "name": "Connected project",
+            "state": "ready" if projects else "optional",
+            "href": "/settings/project",
+            "detail": projects[0]["name"] if projects else "Connect a project for local Worker runs",
+        },
+    ]
+    ready_to_launch = all(step["state"] == "ready" for step in steps[:3])
+    return templates.TemplateResponse(
+        request,
+        "setup.html",
+        {
+            "active_page": "setup",
+            "steps": steps,
+            "ready_to_launch": ready_to_launch,
+            "active_adapter": active_adapter,
+            "budget_settings": budget_settings,
+        },
+    )
+
+
+@router.get("/settings/budget", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
+def budget_settings(request: Request):
+    database_path = request.app.state.settings.database_path
+    config = request.app.state.guardrails
+    budget = _effective_budget_settings(database_path, config)
+    return templates.TemplateResponse(
+        request,
+        "budget.html",
+        {"active_page": "budget", "budget": budget, "error": None},
+    )
+
+
+@router.post("/settings/budget", dependencies=[Depends(require_portal_auth)])
+async def save_budget_settings(request: Request):
+    payload, wants_html = await _budget_payload_from_request(request)
+    database_path = request.app.state.settings.database_path
+    saved = db.set_token_budget_settings(
+        database_path,
+        daily_cap_tokens=payload.daily_cap_tokens,
+        session_cap_tokens=payload.session_cap_tokens,
+    )
+    if wants_html:
+        return RedirectResponse("/setup", status_code=status.HTTP_303_SEE_OTHER)
+    return saved
 
 
 @router.get("/board", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
@@ -140,6 +231,8 @@ def board(request: Request):
             task["status"] = "Blocked"
         grouped[status].append(task)
     has_demo_tasks = any(str(task["id"]).startswith("DEMO_TASK_2099_") for task in tasks)
+    adapters = db.list_worker_adapters(database_path)
+    error = request.query_params.get("error", "")
     return templates.TemplateResponse(
         request,
         "board.html",
@@ -149,30 +242,61 @@ def board(request: Request):
             "tasks_by_status": grouped,
             "has_demo_tasks": has_demo_tasks,
             "has_verified_worker_adapter": db.has_verified_worker_adapter(database_path),
+            "adapters": adapters,
             "default_proxy_url": DEFAULT_PROXY_URL,
+            "error": error,
         },
     )
 
 
 @router.get("/settings/workers", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def worker_settings(request: Request):
-    adapters = []
-    for adapter in db.list_worker_adapters(request.app.state.settings.database_path):
-        adapters.append(
-            {
-                **adapter,
-                "verification_evidence": _safe_worker_evidence(adapter.get("verification_evidence", {})),
-                "diagnostics": detect_worker_adapter(adapter) if adapter.get("id") == "opencode" else None,
-                "launchable": adapter_launchable_for_ui(adapter),
-                "model_discovery": (adapter.get("config") or {}).get("model_discovery"),
-                "tracking_modes": (adapter.get("config") or {}).get("tracking_modes", ["native", "proxy_governed"]),
-            }
-        )
+    database_path = request.app.state.settings.database_path
+    adapters = _worker_adapter_view_models(database_path)
+    active_adapter = _active_adapter_for_request(adapters, request)
     return templates.TemplateResponse(
         request,
         "workers.html",
-        {"active_page": "workers", "adapters": adapters, "default_proxy_url": DEFAULT_PROXY_URL},
+        {
+            "active_page": "workers",
+            "adapters": adapters,
+            "active_adapter": active_adapter,
+            "default_proxy_url": DEFAULT_PROXY_URL,
+        },
     )
+
+
+@router.post("/settings/workers/{adapter_id}/configure", dependencies=[Depends(require_portal_auth)])
+async def configure_worker_adapter(adapter_id: str, request: Request):
+    """Accept workdir and is_default form fields, update adapter, redirect to workers page."""
+    database_path = request.app.state.settings.database_path
+    payload, _ = await _config_payload_from_request(request)
+    try:
+        db.update_worker_adapter(
+            database_path,
+            adapter_id,
+            workdir=payload.workdir if payload.workdir else None,
+            is_default=payload.is_default,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="worker adapter not found") from exc
+    return RedirectResponse("/settings/workers", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/settings/workers/{adapter_id}/refresh-diagnostics", dependencies=[Depends(require_portal_auth)])
+def refresh_worker_diagnostics(adapter_id: str, request: Request):
+    """Force re-detection of adapter binary on PATH."""
+    database_path = request.app.state.settings.database_path
+    try:
+        adapter = db.get_worker_adapter(database_path, adapter_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="worker adapter not found") from exc
+    config = dict(adapter.get("config") or {})
+    diag = detect_worker_adapter(adapter)
+    config["_diagnostics"] = diag
+    config["_diagnostics_at"] = datetime.now(UTC).timestamp()
+    db.update_worker_adapter(database_path, adapter_id, config=config)
+    return RedirectResponse("/settings/workers", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.get("/settings/control-plane", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
@@ -418,6 +542,26 @@ def session_report_view(session_id: str, request: Request):
     )
 
 
+async def _budget_payload_from_request(request: Request) -> tuple[TokenBudgetSettingsRequest, bool]:
+    content_type = request.headers.get("content-type", "")
+    accept = request.headers.get("accept", "")
+    wants_html = "text/html" in accept and "application/json" not in accept
+    if "application/json" in content_type:
+        raw = await request.json()
+        try:
+            return TokenBudgetSettingsRequest.model_validate(raw or {}), False
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+    if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        form = await request.form()
+        raw = {key: int(str(value)) for key, value in form.items() if value not in (None, "")}
+        try:
+            return TokenBudgetSettingsRequest.model_validate(raw), True
+        except (ValidationError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="daily and session caps must be positive integers") from exc
+    raise HTTPException(status_code=422, detail="budget settings are required")
+
+
 async def _worker_verify_payload_from_request(request: Request) -> tuple[WorkerVerifyRequest, bool]:
     content_type = request.headers.get("content-type", "")
     accept = request.headers.get("accept", "")
@@ -459,6 +603,26 @@ async def _project_connect_payload_from_request(request: Request) -> tuple[Proje
     raise HTTPException(status_code=422, detail="root_path is required")
 
 
+async def _config_payload_from_request(request: Request) -> tuple[WorkerConfigureRequest, bool]:
+    """Extract worker configure payload from JSON or form-encoded request."""
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        raw = await request.json()
+        try:
+            return WorkerConfigureRequest.model_validate(raw or {}), False
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+    if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        form = await request.form()
+        raw: dict[str, Any] = {key: value for key, value in form.items() if value not in (None, "")}
+        raw["is_default"] = "is_default" in raw
+        try:
+            return WorkerConfigureRequest.model_validate(raw), True
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+    return WorkerConfigureRequest(), True
+
+
 def _local_backend(request: Request) -> LocalExecutionBackend | None:
     if not request.app.state.settings.local_runner_enabled:
         return None
@@ -485,6 +649,51 @@ def _project_settings_with_error(request: Request, error: str):
         },
         status_code=422,
     )
+
+
+def _worker_adapter_view_models(database_path: Path | str) -> list[dict[str, Any]]:
+    adapters = []
+    for adapter in db.list_worker_adapters(database_path):
+        config = adapter.get("config") or {}
+        diag = config.get("_diagnostics") or {}
+        adapters.append(
+            {
+                **adapter,
+                "verification_evidence": _safe_worker_evidence(adapter.get("verification_evidence", {})),
+                "diagnostics": diag,
+                "launchable": adapter_launchable_for_ui(adapter),
+                "model_discovery": config.get("model_discovery"),
+                "tracking_modes": config.get("tracking_modes", ["native", "proxy_governed"]),
+            }
+        )
+    return adapters
+
+
+def _active_adapter_for_request(adapters: list[dict[str, Any]], request: Request) -> dict[str, Any] | None:
+    requested_id = request.query_params.get("adapter_id")
+    if requested_id:
+        requested = next((adapter for adapter in adapters if adapter["id"] == requested_id), None)
+        if requested:
+            return requested
+    return next(
+        (adapter for adapter in adapters if adapter.get("is_default")),
+        next((adapter for adapter in adapters if adapter.get("configured")), adapters[0] if adapters else None),
+    )
+
+
+def _effective_budget_settings(database_path: Path | str, config: Any) -> dict[str, Any]:
+    stored = db.get_token_budget_settings(database_path)
+    daily_cap = stored.get("daily_cap_tokens")
+    session_cap = stored.get("session_cap_tokens")
+    if daily_cap is None and config.daily_cap.enabled:
+        daily_cap = config.daily_cap.tokens
+    if session_cap is None and config.session_cap.enabled:
+        session_cap = config.session_cap.tokens
+    return {
+        "daily_cap_tokens": daily_cap,
+        "session_cap_tokens": session_cap,
+        "confirmed": bool(stored.get("confirmed")),
+    }
 
 
 def _token_totals(artifact: dict[str, Any]) -> dict[str, int]:
