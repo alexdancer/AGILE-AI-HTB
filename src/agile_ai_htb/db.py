@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import uuid
@@ -30,6 +31,29 @@ create table if not exists tasks (
     metadata_json text not null default '{}',
     created_at text not null
 );
+
+create table if not exists worker_runs (
+    id text primary key,
+    task_id text not null references tasks(id) on delete cascade,
+    session_id text not null references sessions(id) on delete cascade,
+    adapter_id text not null,
+    model text not null,
+    tracking_mode text not null,
+    status text not null,
+    command_plan_json text not null,
+    metadata_json text not null default '{}',
+    stdout text not null default '',
+    stderr text not null default '',
+    returncode integer,
+    error_type text,
+    error_message text,
+    created_at text not null,
+    started_at text,
+    completed_at text
+);
+
+create index if not exists idx_worker_runs_task_status on worker_runs(task_id, status);
+create index if not exists idx_worker_runs_session on worker_runs(session_id);
 
 create table if not exists token_turns (
     id integer primary key autoincrement,
@@ -253,6 +277,33 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
             )
             """
         )
+    if "worker_runs" not in existing_tables:
+        conn.execute(
+            """
+            create table worker_runs (
+                id text primary key,
+                task_id text not null references tasks(id) on delete cascade,
+                session_id text not null references sessions(id) on delete cascade,
+                adapter_id text not null,
+                model text not null,
+                tracking_mode text not null,
+                status text not null,
+                command_plan_json text not null,
+                metadata_json text not null default '{}',
+                stdout text not null default '',
+                stderr text not null default '',
+                returncode integer,
+                error_type text,
+                error_message text,
+                created_at text not null,
+                started_at text,
+                completed_at text
+            )
+            """
+        )
+    conn.execute("create index if not exists idx_worker_runs_task_status on worker_runs(task_id, status)")
+    conn.execute("create index if not exists idx_worker_runs_session on worker_runs(session_id)")
+    conn.execute("update tasks set status = 'Estimated' where status = 'Ready'")
 
 
 def _seed_worker_adapters(conn: sqlite3.Connection) -> None:
@@ -460,6 +511,8 @@ def create_task(
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     task_id = f"task_{uuid.uuid4().hex}"
+    if status == "Ready":
+        status = "Estimated"
     with connect(path) as conn:
         conn.execute(
             """
@@ -506,6 +559,8 @@ def update_task(path: Path | str, task_id: str, updates: dict[str, Any]) -> dict
     for key, value in updates.items():
         if key not in allowed or value is None:
             continue
+        if key == "status" and value == "Ready":
+            value = "Estimated"
         assignments.append(f"{allowed[key]} = ?")
         values.append(_to_json(value) if key == "metadata" else value)
     if not assignments:
@@ -519,6 +574,233 @@ def update_task(path: Path | str, task_id: str, updates: dict[str, Any]) -> dict
         if cursor.rowcount == 0:
             raise KeyError(f"task not found: {task_id}")
     return get_task(path, task_id)
+
+
+def mark_stale_worker_runs_interrupted(path: Path | str) -> list[dict[str, Any]]:
+    now = _now_iso()
+    interrupted: list[dict[str, Any]] = []
+    current_pid = os.getpid()
+    with connect(path) as conn:
+        rows = conn.execute(
+            "select * from worker_runs where status in ('queued', 'running') order by created_at, id"
+        ).fetchall()
+        for row in rows:
+            run = _worker_run_from_row(row)
+            metadata = run.get("metadata", {})
+            owner_pid = metadata.get("executor_pid")
+            if owner_pid == current_pid or _pid_is_alive(owner_pid):
+                continue
+            metadata = {**metadata, "interrupted_reason": "Worker Run was interrupted before completion."}
+            conn.execute(
+                """
+                update worker_runs
+                set status = 'failed', error_type = 'interrupted', error_message = ?, metadata_json = ?, completed_at = ?
+                where id = ?
+                """,
+                ("Worker Run was interrupted before completion.", _to_json(metadata), now, run["id"]),
+            )
+            conn.execute("update sessions set status = 'failed' where id = ?", (run["session_id"],))
+            task_row = conn.execute("select * from tasks where id = ?", (run["task_id"],)).fetchone()
+            if task_row is not None:
+                task = _task_from_row(task_row)
+                task_metadata = {
+                    **task.get("metadata", {}),
+                    "launch_error_type": "interrupted",
+                    "launch_blocked_reason": "Worker Run was interrupted before completion.",
+                    "launch_retryable": True,
+                    "active_worker_run_id": run["id"],
+                }
+                if task.get("status") == "Running":
+                    conn.execute(
+                        "update tasks set status = 'Estimated', metadata_json = ? where id = ?",
+                        (_to_json(task_metadata), run["task_id"]),
+                    )
+            interrupted.append({**run, "status": "failed", "error_type": "interrupted", "completed_at": now})
+    return interrupted
+
+
+def _pid_is_alive(pid: Any) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def create_worker_run(
+    path: Path | str,
+    *,
+    task_id: str,
+    session_id: str,
+    adapter_id: str,
+    model: str,
+    tracking_mode: str,
+    command_plan: dict[str, Any],
+    metadata: dict[str, Any] | None = None,
+    status: str = "running",
+) -> dict[str, Any]:
+    run_id = f"run_{uuid.uuid4().hex}"
+    now = _now_iso()
+    with connect(path) as conn:
+        conn.execute(
+            """
+            insert into worker_runs (
+                id, task_id, session_id, adapter_id, model, tracking_mode, status,
+                command_plan_json, metadata_json, created_at, started_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                task_id,
+                session_id,
+                adapter_id,
+                model,
+                tracking_mode,
+                status,
+                _to_json(command_plan),
+                _to_json({**(metadata or {}), "executor_pid": os.getpid()}),
+                now,
+                now if status == "running" else None,
+            ),
+        )
+    return get_worker_run(path, run_id)
+
+
+def get_worker_run(path: Path | str, run_id: str) -> dict[str, Any]:
+    with connect(path) as conn:
+        row = conn.execute("select * from worker_runs where id = ?", (run_id,)).fetchone()
+    if row is None:
+        raise KeyError(f"worker run not found: {run_id}")
+    return _worker_run_from_row(row)
+
+
+def get_active_worker_run_for_task(path: Path | str, task_id: str) -> dict[str, Any] | None:
+    with connect(path) as conn:
+        row = conn.execute(
+            """
+            select * from worker_runs
+            where task_id = ? and status in ('queued', 'running')
+            order by created_at desc, id desc
+            limit 1
+            """,
+            (task_id,),
+        ).fetchone()
+    return _worker_run_from_row(row) if row is not None else None
+
+
+def list_worker_runs(
+    path: Path | str,
+    *,
+    task_id: str | None = None,
+    session_id: str | None = None,
+) -> list[dict[str, Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    if task_id is not None:
+        clauses.append("task_id = ?")
+        params.append(task_id)
+    if session_id is not None:
+        clauses.append("session_id = ?")
+        params.append(session_id)
+    where = f" where {' and '.join(clauses)}" if clauses else ""
+    with connect(path) as conn:
+        rows = conn.execute("select * from worker_runs" + where + " order by created_at, id", params).fetchall()
+    return [_worker_run_from_row(row) for row in rows]
+
+
+def mark_worker_run_running(path: Path | str, run_id: str) -> dict[str, Any]:
+    now = _now_iso()
+    with connect(path) as conn:
+        conn.execute(
+            "update worker_runs set status = ?, started_at = coalesce(started_at, ?) where id = ?",
+            ("running", now, run_id),
+        )
+    return get_worker_run(path, run_id)
+
+
+def mark_worker_run_completed(
+    path: Path | str,
+    run_id: str,
+    *,
+    returncode: int,
+    stdout: str = "",
+    stderr: str = "",
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return _finish_worker_run(path, run_id, status="completed", returncode=returncode, stdout=stdout, stderr=stderr, metadata=metadata)
+
+
+def mark_worker_run_failed(
+    path: Path | str,
+    run_id: str,
+    *,
+    error_type: str,
+    error_message: str,
+    returncode: int | None = None,
+    stdout: str = "",
+    stderr: str = "",
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return _finish_worker_run(
+        path,
+        run_id,
+        status="failed",
+        returncode=returncode,
+        stdout=stdout,
+        stderr=stderr,
+        error_type=error_type,
+        error_message=error_message,
+        metadata=metadata,
+    )
+
+
+def mark_worker_run_interrupted(
+    path: Path | str,
+    run_id: str,
+    *,
+    error_message: str = "Worker Run was interrupted before completion.",
+) -> dict[str, Any]:
+    return mark_worker_run_failed(path, run_id, error_type="interrupted", error_message=error_message)
+
+
+def _finish_worker_run(
+    path: Path | str,
+    run_id: str,
+    *,
+    status: str,
+    returncode: int | None,
+    stdout: str,
+    stderr: str,
+    error_type: str | None = None,
+    error_message: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    now = _now_iso()
+    existing = get_worker_run(path, run_id)
+    merged_metadata = {**existing.get("metadata", {}), **(metadata or {})}
+    with connect(path) as conn:
+        conn.execute(
+            """
+            update worker_runs
+            set status = ?, returncode = ?, stdout = ?, stderr = ?, error_type = ?,
+                error_message = ?, metadata_json = ?, completed_at = ?
+            where id = ?
+            """,
+            (
+                status,
+                returncode,
+                _sanitize_evidence(stdout),
+                _sanitize_evidence(stderr),
+                error_type,
+                error_message,
+                _to_json(merged_metadata),
+                now,
+                run_id,
+            ),
+        )
+    return get_worker_run(path, run_id)
 
 
 def list_tasks(path: Path | str) -> list[dict[str, Any]]:
@@ -889,6 +1171,9 @@ def build_session_artifact(path: Path | str, session_id: str) -> dict[str, Any]:
         checkpoint_rows = conn.execute(
             "select * from checkpoint_results where session_id = ? order by id", (session_id,)
         ).fetchall()
+        worker_run_rows = conn.execute(
+            "select * from worker_runs where session_id = ? order by created_at, id", (session_id,)
+        ).fetchall()
 
     return {
         "session": _session_from_row(session_row),
@@ -897,6 +1182,7 @@ def build_session_artifact(path: Path | str, session_id: str) -> dict[str, Any]:
         "alarms": [_alarm_from_row(row) for row in alarm_rows],
         "guardrail_snapshots": [_snapshot_from_row(row) for row in snapshot_rows],
         "checkpoint_results": [_checkpoint_from_row(row) for row in checkpoint_rows],
+        "worker_runs": [_worker_run_from_row(row) for row in worker_run_rows],
     }
 
 
@@ -1021,13 +1307,35 @@ def _task_from_row(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "id": row["id"],
         "description": row["description"],
-        "status": row["status"],
+        "status": "Estimated" if row["status"] == "Ready" else row["status"],
         "estimate_tokens": row["estimate_tokens"],
         "recommended_model": row["recommended_model"],
         "actual_tokens": row["actual_tokens"],
         "session_id": row["session_id"],
         "metadata": _from_json(row["metadata_json"]),
         "created_at": row["created_at"],
+    }
+
+
+def _worker_run_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "task_id": row["task_id"],
+        "session_id": row["session_id"],
+        "adapter_id": row["adapter_id"],
+        "model": row["model"],
+        "tracking_mode": row["tracking_mode"],
+        "status": row["status"],
+        "command_plan": _from_json(row["command_plan_json"]),
+        "metadata": _from_json(row["metadata_json"]),
+        "stdout": row["stdout"],
+        "stderr": row["stderr"],
+        "returncode": row["returncode"],
+        "error_type": row["error_type"],
+        "error_message": row["error_message"],
+        "created_at": row["created_at"],
+        "started_at": row["started_at"],
+        "completed_at": row["completed_at"],
     }
 
 

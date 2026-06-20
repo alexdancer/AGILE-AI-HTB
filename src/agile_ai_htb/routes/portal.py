@@ -31,7 +31,7 @@ from agile_ai_htb.worker_adapters import detect_worker_adapter, discover_worker_
 router = APIRouter()
 templates = Jinja2Templates(directory=Path(__file__).resolve().parents[1] / "templates")
 
-BOARD_COLUMNS = ["Estimated", "Ready", "Running", "Review", "Done", "Blocked"]
+BOARD_COLUMNS = ["Estimated", "Running", "Review", "Done", "Blocked"]
 
 
 class WorkerVerifyRequest(BaseModel):
@@ -218,11 +218,12 @@ async def save_budget_settings(request: Request):
 @router.get("/board", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def board(request: Request):
     database_path = request.app.state.settings.database_path
+    db.mark_stale_worker_runs_interrupted(database_path)
     tasks = db.list_tasks(database_path)
     grouped = {column: [] for column in BOARD_COLUMNS}
     for task in tasks:
         task = dict(task)
-        status = task["status"] if task["status"] in grouped else "Blocked"
+        status = "Estimated" if task["status"] == "Ready" else task["status"] if task["status"] in grouped else "Blocked"
         if status == "Blocked" and task["status"] not in grouped:
             task["metadata"] = {
                 **task.get("metadata", {}),
@@ -449,7 +450,12 @@ async def verify_worker_adapter_route(adapter_id: str, request: Request):
             token_recorder=getattr(request.app.state, "worker_adapter_verification_token_recorder", None),
         )
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail="worker adapter not found") from exc
+        if "worker adapter not found" in str(exc):
+            raise HTTPException(status_code=404, detail="worker adapter not found") from exc
+        raise HTTPException(
+            status_code=422,
+            detail=f"worker adapter configuration invalid: missing template variable {exc}",
+        ) from exc
     if wants_html:
         return RedirectResponse("/settings/workers", status_code=status.HTTP_303_SEE_OTHER)
     return JSONResponse(

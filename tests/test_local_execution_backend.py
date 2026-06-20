@@ -1,8 +1,19 @@
 from pathlib import Path
+import time
 
 from agile_ai_htb import db
 from agile_ai_htb.execution_backend import LocalExecutionBackend, detect_project_profile, validate_local_project_path
 from agile_ai_htb.task_launch import TaskLaunchBlocked, launch_task
+
+
+def _wait_for_worker_run(db_path: Path, task_id: str, status: str | None = None):
+    deadline = time.time() + 2
+    while time.time() < deadline:
+        runs = db.list_worker_runs(db_path, task_id=task_id)
+        if runs and (status is None or runs[-1]["status"] == status):
+            return runs[-1]
+        time.sleep(0.01)
+    raise AssertionError("worker run did not reach expected status")
 
 
 def _project_root(tmp_path: Path) -> Path:
@@ -107,9 +118,12 @@ def test_read_only_proof_task_launches_in_connected_repo_and_persists_report(tmp
     )
 
     assert result.task["status"] == "Running"
+    _wait_for_worker_run(db_path, task["id"], "completed")
     assert runner_calls[0].cwd == root.resolve()
     assert runner_calls[0].env["OPENAI_BASE_URL"] == "http://127.0.0.1:8000/v1"
     refreshed = db.get_task(db_path, task["id"])
+    refreshed = db.get_task(db_path, task["id"])
+    assert refreshed["status"] == "Review"
     assert refreshed["metadata"]["session_report"]["test_command"] == "pytest"
     assert "src" in refreshed["metadata"]["session_report"]["top_level_structure"]
 
@@ -124,22 +138,23 @@ def test_read_only_proof_blocks_when_no_worker_model_call_observed(tmp_path):
     assert project is not None
     task = backend.create_read_only_proof_task(project)
 
-    try:
-        launch_task(
-            db_path,
-            task["id"],
-            adapter_id="opencode",
-            model="opencode/gpt-5.1",
-            proxy_url="http://127.0.0.1:8000/v1",
-            runner=lambda plan: {"returncode": 0, "stdout": "no model call", "stderr": ""},
-        )
-    except TaskLaunchBlocked as exc:
-        blocked = exc.task
-    else:
-        raise AssertionError("expected read-only proof to block")
+    launch_task(
+        db_path,
+        task["id"],
+        adapter_id="opencode",
+        model="opencode/gpt-5.1",
+        proxy_url="http://127.0.0.1:8000/v1",
+        runner=lambda plan: {"returncode": 0, "stdout": "no model call", "stderr": ""},
+    )
+    _wait_for_worker_run(db_path, task["id"], "failed")
+    blocked = db.get_task(db_path, task["id"])
 
-    assert blocked["status"] == "Blocked"
-    assert blocked["metadata"]["launch_blocked_reason"] == "No Worker model call was observed through the Harness Proxy."
+    assert blocked["status"] == "Estimated"
+    assert blocked["metadata"]["launch_error"] == "No Worker model call was observed through the Harness Proxy."
+    assert blocked["metadata"]["launch_failure_type"] == "missing_proxy_worker_usage"
+    assert blocked["metadata"]["launch_retryable"] is True
+    assert blocked["metadata"]["launch_guardrail_reasons"] == ["No Worker model call was observed through the Harness Proxy."]
+    assert "launch_blocked_reason" not in blocked["metadata"]
 
 
 def test_read_only_proof_blocks_when_worker_modifies_files(tmp_path):
@@ -176,19 +191,16 @@ def test_read_only_proof_blocks_when_worker_modifies_files(tmp_path):
         )
         return {"returncode": 0, "stdout": "modified", "stderr": ""}
 
-    try:
-        launch_task(
-            db_path,
-            task["id"],
-            adapter_id="opencode",
-            model="opencode/gpt-5.1",
-            proxy_url="http://127.0.0.1:8000/v1",
-            runner=modifying_runner,
-        )
-    except TaskLaunchBlocked as exc:
-        blocked = exc.task
-    else:
-        raise AssertionError("expected read-only proof to block")
+    launch_task(
+        db_path,
+        task["id"],
+        adapter_id="opencode",
+        model="opencode/gpt-5.1",
+        proxy_url="http://127.0.0.1:8000/v1",
+        runner=modifying_runner,
+    )
+    _wait_for_worker_run(db_path, task["id"], "failed")
+    blocked = db.get_task(db_path, task["id"])
 
     assert blocked["status"] == "Blocked"
     assert blocked["metadata"]["launch_blocked_reason"] == "Read-only Worker session modified the connected project."

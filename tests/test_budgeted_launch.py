@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from pathlib import Path
 
 from agile_ai_htb import db
@@ -21,11 +23,21 @@ def _verified_budget_task(db_path: Path, tmp_path: Path, *, estimate: int = 50, 
     return db.create_task(
         db_path,
         description="Budgeted launch",
-        status="Ready",
+        status="Estimated",
         estimate_tokens=estimate,
         recommended_model="opencode/gpt-5.1",
         metadata={"budget": budget or {"daily_used_tokens": 0, "daily_cap_tokens": 100, "session_cap_tokens": 100}},
     )
+
+
+def _wait_for_worker_run(db_path: Path, task_id: str, status: str | None = None):
+    deadline = time.time() + 2
+    while time.time() < deadline:
+        runs = db.list_worker_runs(db_path, task_id=task_id)
+        if runs and (status is None or runs[-1]["status"] == status):
+            return runs[-1]
+        time.sleep(0.01)
+    raise AssertionError("worker run did not reach expected status")
 
 
 def _runner_recording(db_path: Path, *, total_tokens: int = 10):
@@ -53,6 +65,81 @@ def test_estimate_within_budget_launches(tmp_path):
 
     assert result.task["status"] == "Running"
     assert result.task["metadata"]["budget_check"]["passed"] is True
+
+
+def test_launch_returns_before_long_running_worker_adapter_completes(tmp_path):
+    db_path = tmp_path / "harness.db"
+    task = _verified_budget_task(db_path, tmp_path, estimate=50, budget={"daily_used_tokens": 25, "daily_cap_tokens": 100})
+    release_runner = threading.Event()
+
+    def long_running_runner(plan):
+        db.record_token_turn(
+            db_path,
+            session_id=plan.metadata["session_id"],
+            usage_kind="task_execution",
+            model="opencode/gpt-5.1",
+            prompt_tokens=10,
+            completion_tokens=0,
+            cost=0,
+            raw_usage={"total_tokens": 10},
+        )
+        release_runner.wait(timeout=1)
+        return {"returncode": 0, "stdout": "done", "stderr": ""}
+
+    started_at = time.monotonic()
+    result = launch_task(db_path, task["id"], adapter_id="opencode", model=None, proxy_url=None, runner=long_running_runner)
+    elapsed = time.monotonic() - started_at
+
+    assert elapsed < 0.25
+    assert result.task["status"] == "Running"
+    assert db.get_task(db_path, task["id"])["status"] == "Running"
+    assert db.list_worker_runs(db_path, task_id=task["id"])[-1]["status"] == "running"
+
+    release_runner.set()
+    _wait_for_worker_run(db_path, task["id"], "completed")
+    assert db.get_task(db_path, task["id"])["status"] == "Review"
+
+
+def test_worker_adapter_launch_failure_preserves_launchable_status_and_records_retryable_error(tmp_path):
+    db_path = tmp_path / "harness.db"
+    task = _verified_budget_task(db_path, tmp_path, estimate=50, budget={"daily_used_tokens": 0, "daily_cap_tokens": 100})
+
+    result = launch_task(
+        db_path,
+        task["id"],
+        adapter_id="opencode",
+        model=None,
+        proxy_url=None,
+        runner=lambda plan: {"returncode": 124, "stdout": "", "stderr": "Command timed out after 60 seconds."},
+    )
+    _wait_for_worker_run(db_path, task["id"], "failed")
+    failed = db.get_task(db_path, task["id"])
+
+    session = db.get_session(db_path, failed["session_id"])
+    metadata = failed["metadata"]
+    assert failed["status"] == "Estimated"
+    assert session["status"] == "failed"
+    assert metadata["launch_error"] == "Worker adapter launch failed."
+    assert metadata["last_launch_failure"] == {
+        "type": "worker_adapter_failure",
+        "retryable": True,
+        "returncode": 124,
+        "stderr": "Command timed out after 60 seconds.",
+    }
+    assert metadata["launch_retryable"] is True
+    assert "launch_blocked_reason" not in metadata
+
+    relaunched = launch_task(
+        db_path,
+        task["id"],
+        adapter_id="opencode",
+        model=None,
+        proxy_url=None,
+        runner=_runner_recording(db_path),
+    )
+    assert relaunched.task["status"] == "Running"
+    assert "launch_error" not in relaunched.task["metadata"]
+    assert "last_launch_failure" not in relaunched.task["metadata"]
 
 
 def test_native_usage_launch_passes_selected_model_and_records_usage_metadata(tmp_path):
@@ -89,6 +176,7 @@ def test_native_usage_launch_passes_selected_model_and_records_usage_metadata(tm
         }
 
     result = launch_task(db_path, task["id"], adapter_id="opencode", model=None, proxy_url=None, runner=runner)
+    _wait_for_worker_run(db_path, task["id"], "completed")
     session = db.get_session(db_path, result.session["id"])
     with db.connect(db_path) as conn:
         token_turn = conn.execute("select * from token_turns where session_id = ?", (session["id"],)).fetchone()
@@ -115,22 +203,51 @@ def test_native_usage_launch_blocks_when_adapter_emits_no_usage_evidence(tmp_pat
         evidence={"tracking_mode": "native_usage", "tracking_authoritative": True},
     )
 
-    try:
-        launch_task(
-            db_path,
-            task["id"],
-            adapter_id="opencode",
-            model=None,
-            proxy_url=None,
-            runner=lambda plan: {"returncode": 0, "stdout": "HTB_SENTINEL_OK", "stderr": ""},
-        )
-    except TaskLaunchBlocked as exc:
-        blocked = exc.task
-    else:
-        raise AssertionError("expected native usage evidence block")
+    launch_task(
+        db_path,
+        task["id"],
+        adapter_id="opencode",
+        model=None,
+        proxy_url=None,
+        runner=lambda plan: {"returncode": 0, "stdout": "HTB_SENTINEL_OK", "stderr": ""},
+    )
+    _wait_for_worker_run(db_path, task["id"], "failed")
+    blocked = db.get_task(db_path, task["id"])
 
-    assert blocked["status"] == "Blocked"
-    assert blocked["metadata"]["launch_blocked_reason"] == "No budget-authoritative native Worker usage evidence was emitted by the adapter."
+    assert blocked["status"] == "Estimated"
+    assert blocked["metadata"]["launch_error"] == "No budget-authoritative native Worker usage evidence was emitted by the adapter."
+    assert blocked["metadata"]["launch_failure_type"] == "missing_native_usage_evidence"
+    assert blocked["metadata"]["launch_retryable"] is True
+    assert blocked["metadata"]["launch_guardrail_reasons"] == [
+        "No budget-authoritative native Worker usage evidence was emitted by the adapter."
+    ]
+    assert "launch_blocked_reason" not in blocked["metadata"]
+
+    result = launch_task(
+        db_path,
+        task["id"],
+        adapter_id="opencode",
+        model=None,
+        proxy_url=None,
+        runner=lambda plan: {
+            "returncode": 0,
+            "stdout": json.dumps(
+                {
+                    "type": "complete",
+                    "message": "HTB_SENTINEL_OK",
+                    "model": "opencode/gpt-5.1",
+                    "session_id": "opencode-session-2099-retry",
+                    "usage": {"input_tokens": 12, "output_tokens": 3, "total_tokens": 15, "cost": 0.01},
+                }
+            ),
+            "stderr": "",
+        },
+    )
+
+    assert result.task["status"] == "Running"
+    assert "launch_error" not in result.task["metadata"]
+    assert "launch_guardrail_reasons" not in result.task["metadata"]
+    assert "last_launch_failure" not in result.task["metadata"]
 
 
 def test_token_usage_breakdown_classifies_control_worker_verification_and_reporting(tmp_path):
@@ -256,13 +373,62 @@ def test_budget_overrun_records_alarm_without_auto_killing_session(tmp_path):
     task = _verified_budget_task(db_path, tmp_path, estimate=10, budget={"daily_used_tokens": 0, "daily_cap_tokens": 100, "session_cap_tokens": 20})
 
     result = launch_task(db_path, task["id"], adapter_id="opencode", model=None, proxy_url=None, runner=_runner_recording(db_path, total_tokens=25))
+    assert result.task["status"] == "Running"
+    _wait_for_worker_run(db_path, task["id"], "completed")
     session = db.get_session(db_path, result.session["id"])
     alarms = db.list_alarms(db_path, session_id=session["id"])
 
-    assert session["status"] == "running"
-    assert result.task["status"] == "Running"
+    assert session["status"] == "completed"
     assert alarms
     assert alarms[0]["type"] == "BUDGET_OVERRUN"
+
+
+def test_stale_worker_run_recovery_marks_task_retryable(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    session = db.create_session(
+        db_path,
+        task_description="Interrupted DEMO worker 2099",
+        model="opencode/gpt-5.1",
+        session_key_hash="b" * 64,
+        guardrail_overrides={},
+        status="running",
+    )
+    task = db.create_task(
+        db_path,
+        description="Interrupted DEMO worker 2099",
+        status="Running",
+        estimate_tokens=10,
+        recommended_model="opencode/gpt-5.1",
+        session_id=session["id"],
+    )
+    run = db.create_worker_run(
+        db_path,
+        task_id=task["id"],
+        session_id=session["id"],
+        adapter_id="opencode",
+        model="opencode/gpt-5.1",
+        tracking_mode="proxy_governed",
+        command_plan={"command": ["opencode"]},
+        metadata={},
+    )
+    with db.connect(db_path) as conn:
+        conn.execute(
+            "update worker_runs set metadata_json = ? where id = ?",
+            (json.dumps({"executor_pid": -1}), run["id"]),
+        )
+
+    interrupted = db.mark_stale_worker_runs_interrupted(db_path)
+
+    recovered_task = db.get_task(db_path, task["id"])
+    recovered_run = db.get_worker_run(db_path, run["id"])
+    recovered_session = db.get_session(db_path, session["id"])
+    assert interrupted
+    assert recovered_run["status"] == "failed"
+    assert recovered_run["error_type"] == "interrupted"
+    assert recovered_task["status"] == "Estimated"
+    assert recovered_task["metadata"]["launch_retryable"] is True
+    assert recovered_session["status"] == "failed"
 
 
 def test_manual_abort_preserves_task_metadata_and_marks_session_aborted(tmp_path):

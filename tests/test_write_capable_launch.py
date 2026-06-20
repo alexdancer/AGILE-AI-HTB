@@ -2,9 +2,20 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+import time
 
 from agile_ai_htb import db
 from agile_ai_htb.task_launch import TaskLaunchBlocked, detect_pr_capability, launch_task
+
+
+def _wait_for_worker_run(db_path: Path, task_id: str, status: str | None = None):
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        runs = db.list_worker_runs(db_path, task_id=task_id)
+        if runs and (status is None or runs[-1]["status"] == status):
+            return runs[-1]
+        time.sleep(0.01)
+    raise AssertionError("worker run did not reach expected status")
 
 
 def _git_project(tmp_path: Path, *, test_command: str | None = "python -m pytest") -> Path:
@@ -101,7 +112,9 @@ def test_write_capable_launch_creates_task_branch_runs_tests_and_commits(tmp_pat
         return {"returncode": 0, "stdout": "changed", "stderr": ""}
 
     result = launch_task(db_path, task["id"], adapter_id="opencode", model=None, proxy_url=None, runner=runner)
-    launched = result.task
+    assert result.task["status"] == "Running"
+    _wait_for_worker_run(db_path, task["id"], "completed")
+    launched = db.get_task(db_path, task["id"])
     metadata = launched["metadata"]
     branch = subprocess.run(["git", "branch", "--show-current"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
     commit_message = subprocess.run(["git", "log", "-1", "--pretty=%B"], cwd=root, check=True, capture_output=True, text=True).stdout
@@ -129,10 +142,13 @@ def test_write_capable_missing_test_command_requires_manual_approval_before_comm
         return {"returncode": 0, "stdout": "changed", "stderr": ""}
 
     result = launch_task(db_path, task["id"], adapter_id="opencode", model=None, proxy_url=None, runner=runner)
-    metadata = result.task["metadata"]
+    assert result.task["status"] == "Running"
+    _wait_for_worker_run(db_path, task["id"], "completed")
+    completed = db.get_task(db_path, task["id"])
+    metadata = completed["metadata"]
     porcelain = subprocess.run(["git", "status", "--porcelain"], cwd=root, check=True, capture_output=True, text=True).stdout
 
-    assert result.task["status"] == "Review"
+    assert completed["status"] == "Review"
     assert metadata["manual_commit_approval_required"] is True
     assert metadata["post_run_verification"]["reason"] == "No test command configured."
     assert "harness_commit" not in metadata
@@ -149,12 +165,9 @@ def test_write_capable_verification_failure_preserves_uncommitted_diff(tmp_path)
         (root / "test_sample.py").write_text("def test_bad():\n    assert False\n")
         return {"returncode": 0, "stdout": "changed", "stderr": ""}
 
-    try:
-        launch_task(db_path, task["id"], adapter_id="opencode", model=None, proxy_url=None, runner=runner)
-    except TaskLaunchBlocked as exc:
-        blocked = exc.task
-    else:
-        raise AssertionError("expected verification failure to block")
+    launch_task(db_path, task["id"], adapter_id="opencode", model=None, proxy_url=None, runner=runner)
+    _wait_for_worker_run(db_path, task["id"], "failed")
+    blocked = db.get_task(db_path, task["id"])
 
     metadata = blocked["metadata"]
     porcelain = subprocess.run(["git", "status", "--porcelain"], cwd=root, check=True, capture_output=True, text=True).stdout

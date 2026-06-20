@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,16 @@ PORTAL_TOKEN = "test-portal-token"
 
 def _auth_headers():
     return {"Authorization": f"Bearer {PORTAL_TOKEN}"}
+
+
+def _wait_for_worker_run(db_path: Path, task_id: str, status: str | None = None):
+    deadline = time.time() + 2
+    while time.time() < deadline:
+        runs = db.list_worker_runs(db_path, task_id=task_id)
+        if runs and (status is None or runs[-1]["status"] == status):
+            return runs[-1]
+        time.sleep(0.01)
+    raise AssertionError("worker run did not reach expected status")
 
 
 def _client(tmp_path):
@@ -84,7 +95,7 @@ def test_create_and_update_task_lifecycle(tmp_path):
     }
     assert updated.status_code == 200
     assert updated.json()["id"] == task_id
-    assert updated.json()["status"] == "Ready"
+    assert updated.json()["status"] == "Estimated"
     assert updated.json()["estimate_tokens"] == 12_000
     assert updated.json()["recommended_model"] == "claude-haiku"
     assert updated.json()["description"] == "Add save command and tests"
@@ -315,6 +326,68 @@ def test_estimate_invalid_llm_result_creates_blocked_manual_task_without_heurist
     assert task["metadata"]["requires_manual_estimate"] is True
     assert task["metadata"]["estimator_failure_type"] == "EstimatorValidationError"
     assert task["metadata"]["estimation_source"] == "manual_required"
+
+
+def test_estimate_form_accepts_pasted_markdown_task(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM()
+    markdown = "# DEMO_TASK_2099 Markdown intake\n\n- [ ] Add parser\n- [ ] Add tests"
+
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={"description": markdown},
+            follow_redirects=False,
+        )
+        tasks = db.list_tasks(tmp_path / "harness.db")
+        board = client.get("/board", headers=_auth_headers())
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/board"
+    assert tasks[0]["description"] == markdown
+    assert tasks[0]["metadata"]["intake_source"] == "markdown_paste"
+    assert "DEMO_TASK_2099 Markdown intake" in board.text
+
+
+def test_estimate_form_markdown_file_overrides_pasted_text(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM()
+    markdown = b"# DEMO_TASK_2099 Uploaded task\n\n- [ ] Use file contents"
+
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={"description": "ignored pasted task"},
+            files={"markdown_file": ("DEMO_TASK_2099.md", markdown, "text/markdown")},
+            follow_redirects=False,
+        )
+        tasks = db.list_tasks(tmp_path / "harness.db")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/board"
+    assert tasks[0]["description"] == markdown.decode()
+    assert tasks[0]["metadata"]["intake_source"] == "markdown_upload"
+    assert tasks[0]["metadata"]["intake_filename"] == "DEMO_TASK_2099.md"
+
+
+def test_estimate_form_rejects_non_markdown_upload_without_creating_task(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM()
+
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "text/html"},
+            files={"markdown_file": ("tasks.txt", b"not markdown", "text/plain")},
+            follow_redirects=False,
+        )
+        tasks = db.list_tasks(tmp_path / "harness.db")
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/board?error=")
+    assert tasks == []
 
 
 def test_estimate_provider_exception_is_sanitized_and_creates_no_usage_session(tmp_path, monkeypatch):
@@ -667,14 +740,63 @@ def test_board_form_launch_uses_default_proxy_for_verified_default_adapter(tmp_p
             data={},
             follow_redirects=False,
         )
+        _wait_for_worker_run(tmp_path / "harness.db", task["id"], "completed")
         refreshed = db.get_task(tmp_path / "harness.db", task["id"])
 
     assert response.status_code == 303
     assert response.headers["location"] == "/board"
-    assert refreshed["status"] == "Running"
+    assert refreshed["status"] == "Review"
     assert len(runner_calls) == 1
     assert runner_calls[0].env["OPENAI_BASE_URL"] == "http://127.0.0.1:8000/v1"
     assert "sk_sess_" not in response.text
+
+
+def test_board_form_recoverable_launch_error_stays_on_task_card_with_launch_form(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+
+    def fake_runner(plan):
+        return {"returncode": 124, "stdout": "", "stderr": "Command timed out after 60 seconds."}
+
+    with _client(tmp_path) as client:
+        client.app.state.task_launch_runner = fake_runner
+        task = client.post(
+            "/tasks",
+            json={
+                "description": "Retryable DEMO launch timeout 2099",
+                "status": "Ready",
+                "estimate_tokens": 8000,
+                "recommended_model": "gpt-5.1-codex",
+            },
+        ).json()
+        db.update_worker_adapter(
+            tmp_path / "harness.db",
+            "codex",
+            workdir=str(tmp_path),
+            config={"launch_template": ["codex", "--model", "{model}"]},
+            supported_models=["gpt-5.1-codex"],
+            is_default=True,
+        )
+        db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
+
+        response = client.post(
+            f"/tasks/{task['id']}/launch",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={},
+            follow_redirects=False,
+        )
+        _wait_for_worker_run(tmp_path / "harness.db", task["id"], "failed")
+        refreshed = db.get_task(tmp_path / "harness.db", task["id"])
+        board = client.get("/board", headers=_auth_headers())
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/board"
+    assert refreshed["status"] == "Estimated"
+    assert refreshed["metadata"]["launch_retryable"] is True
+    assert "Launch error:" in board.text
+    assert "Worker adapter launch failed." in board.text
+    assert "Command timed out after 60 seconds." in board.text
+    assert f'action="/tasks/{task["id"]}/launch"' in board.text
+    assert "Only Estimated tasks can launch." not in board.text
 
 
 def test_launch_accepts_manual_estimate_payload_before_guardrails(tmp_path, monkeypatch):
@@ -703,6 +825,7 @@ def test_launch_accepts_manual_estimate_payload_before_guardrails(tmp_path, monk
             headers=_auth_headers(),
             json={"adapter_id": "codex", "model": "gpt-5.1-codex", "estimate_tokens": 9000},
         )
+        _wait_for_worker_run(tmp_path / "harness.db", task["id"], "completed")
 
     body = response.json()
     assert response.status_code == 200
@@ -748,6 +871,7 @@ def test_launch_second_call_after_running_claim_is_rejected_without_second_runne
 
     def fake_runner(plan):
         runner_calls.append(plan)
+        time.sleep(0.1)
         return {"returncode": 0, "stdout": "started", "stderr": ""}
 
     with _client(tmp_path) as client:
@@ -782,8 +906,9 @@ def test_launch_second_call_after_running_claim_is_rejected_without_second_runne
         )
 
     assert first.status_code == 200
-    assert second.status_code == 409
-    assert len(runner_calls) == 1
+    assert second.status_code == 200
+    assert len(db.list_worker_runs(tmp_path / "harness.db", task_id=task["id"])) == 1
+    assert second.json()["launch_guardrails"].get("duplicate_active_run") is True
 
 
 @pytest.mark.parametrize("estimate_tokens", [True, 0, -1])
@@ -837,7 +962,7 @@ def test_launch_is_status_gated_without_session_or_runner(tmp_path, monkeypatch,
     assert after["status"] == status
     assert len(db.list_sessions(tmp_path / "harness.db")) == before_sessions
     assert runner_calls == []
-    assert "Only Estimated or Ready tasks can launch." in after["metadata"].get("launch_blocked_reason", "")
+    assert "Only Estimated tasks can launch." in after["metadata"].get("launch_blocked_reason", "")
 
 
 def test_refresh_task_endpoint_updates_running_task_from_session(tmp_path, monkeypatch):
@@ -902,6 +1027,7 @@ def test_fake_worker_token_row_after_launch_appears_in_session_report(tmp_path, 
             headers=_auth_headers(),
             json={"adapter_id": "codex", "proxy_url": "http://127.0.0.1:8000/v1"},
         ).json()["task"]
+        _wait_for_worker_run(tmp_path / "harness.db", task["id"], "completed")
         report = client.get(f"/sessions/{launched['session_id']}", headers=_auth_headers())
         artifact = client.get(f"/session/{launched['session_id']}/artifact", headers=_auth_headers()).json()
 

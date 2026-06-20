@@ -4,7 +4,7 @@ import hashlib
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from pydantic import ValidationError
@@ -16,7 +16,7 @@ from agile_ai_htb.llm import calculate_cost, extract_usage, response_to_dict
 from agile_ai_htb.task_launch import DEFAULT_PROXY_URL, TaskLaunchBlocked, launch_task, refresh_task_from_session
 
 router = APIRouter()
-CANONICAL_TASK_STATUSES = {"Estimated", "Ready", "Running", "Review", "Done", "Blocked"}
+CANONICAL_TASK_STATUSES = {"Estimated", "Running", "Review", "Done", "Blocked"}
 PositiveStrictInt = Annotated[int, Field(strict=True, gt=0)]
 NonNegativeStrictInt = Annotated[int, Field(strict=True, ge=0)]
 
@@ -110,6 +110,8 @@ async def launch_task_endpoint(task_id: str, request: Request):
         raise HTTPException(status_code=404, detail="task not found") from exc
     except TaskLaunchBlocked as exc:
         if wants_html:
+            if exc.task.get("metadata", {}).get("launch_retryable"):
+                return RedirectResponse("/board", status_code=303)
             from urllib.parse import quote
             error_msg = "; ".join(exc.reasons) if exc.reasons else "Launch failed."
             return RedirectResponse(f"/board?error={quote(error_msg)}", status_code=303)
@@ -129,7 +131,12 @@ async def launch_task_endpoint(task_id: str, request: Request):
 @router.post("/tasks/{task_id}/refresh", dependencies=[Depends(require_portal_auth)])
 def refresh_task_endpoint(task_id: str, request: Request):
     try:
-        return refresh_task_from_session(request.app.state.settings.database_path, task_id)
+        database_path = request.app.state.settings.database_path
+        db.mark_stale_worker_runs_interrupted(database_path)
+        task = refresh_task_from_session(database_path, task_id)
+        if "text/html" in request.headers.get("accept", ""):
+            return RedirectResponse("/board", status_code=303)
+        return task
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="task not found") from exc
 
@@ -195,6 +202,7 @@ async def estimate(payload: EstimateRequest, request: Request) -> dict[str, Any]
         "spike_recommendation": result.spike_recommendation,
         "budget_note": result.budget_note,
         "estimation_session_id": estimation_session["id"],
+        **_markdown_breakdown_metadata(payload.description),
         **model_metadata,
     }
     task = db.create_task(
@@ -246,12 +254,81 @@ def _constrained_recommended_model(
 
 @router.post("/tasks/estimate-form", dependencies=[Depends(require_portal_auth)])
 async def estimate_form(
-    description: str = Form(...),
-    request: Request = None,  # type: ignore[assignment]
+    request: Request,
+    description: str = Form(""),
+    markdown_file: UploadFile | None = File(None),
 ) -> RedirectResponse:
-    """HTML form intake: POST description → estimate → redirect to board."""
-    await estimate(EstimateRequest(description=description), request)  # type: ignore[arg-type]
+    """HTML form intake: POST plain text or Markdown → estimate → redirect to board."""
+    try:
+        normalized_description, intake_metadata = await _description_from_intake_form(description, markdown_file)
+    except ValueError as exc:
+        from urllib.parse import quote
+
+        return RedirectResponse(f"/board?error={quote(str(exc))}", status_code=303)
+
+    task = await estimate(EstimateRequest(description=normalized_description), request)
+    if intake_metadata:
+        db.update_task(
+            request.app.state.settings.database_path,
+            task["id"],
+            {"metadata": {**task.get("metadata", {}), **intake_metadata}},
+        )
     return RedirectResponse("/board", status_code=303)
+
+
+async def _description_from_intake_form(
+    description: str, markdown_file: UploadFile | None
+) -> tuple[str, dict[str, Any]]:
+    if markdown_file and markdown_file.filename:
+        filename = Path(markdown_file.filename).name
+        if Path(filename).suffix.lower() != ".md":
+            raise ValueError("Upload a Markdown .md file or paste Markdown text.")
+        raw = await markdown_file.read()
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("Markdown upload must be UTF-8 text.") from exc
+        normalized = text.strip()
+        if not normalized:
+            raise ValueError("Markdown upload is empty.")
+        return normalized, {"intake_source": "markdown_upload", "intake_filename": filename}
+
+    normalized = description.strip()
+    if not normalized:
+        raise ValueError("Describe a coding task or upload a Markdown .md file.")
+    metadata = {"intake_source": "markdown_paste"} if _looks_like_markdown(normalized) else {"intake_source": "plain_text"}
+    return normalized, metadata
+
+
+def _looks_like_markdown(text: str) -> bool:
+    markdown_markers = ("# ", "## ", "- [ ]", "- [x]", "```", "\n- ", "\n* ", "\n1. ")
+    return any(marker in text for marker in markdown_markers)
+
+
+def _markdown_breakdown_metadata(description: str) -> dict[str, Any]:
+    items: list[str] = []
+    for raw_line in description.splitlines():
+        line = raw_line.strip()
+        if line.startswith("- [ ]") or line.startswith("- [x]"):
+            item = line[5:].strip()
+        elif line.startswith("- ") or line.startswith("* "):
+            item = line[2:].strip()
+        elif len(line) > 3 and line[0].isdigit() and line[1:3] == ". ":
+            item = line[3:].strip()
+        else:
+            continue
+        if item:
+            items.append(item)
+    if len(items) < 2:
+        return {}
+    return {
+        "task_breakdown": {
+            "source": "markdown_structure",
+            "items": items,
+            "count": len(items),
+            "spend_category": "task_breakdown",
+        }
+    }
 
 
 def _estimation_session_key_hash(description: str) -> str:
@@ -296,21 +373,22 @@ def _initial_task_status_and_metadata(
     metadata = dict(payload.metadata or {})
     has_estimate = payload.estimate_tokens is not None and bool(payload.recommended_model)
     if payload.status is not None:
-        if payload.status in CANONICAL_TASK_STATUSES:
+        normalized_status = "Estimated" if payload.status == "Ready" else payload.status
+        if normalized_status in CANONICAL_TASK_STATUSES:
             lifecycle_status = _constrain_direct_lifecycle_status(
                 database_path,
-                requested_status=payload.status,
+                requested_status=normalized_status,
                 session_id=payload.session_id,
                 metadata=metadata,
             )
             if lifecycle_status is not None:
                 return lifecycle_status, metadata
-            if payload.status != "Blocked" and not has_estimate:
+            if normalized_status != "Blocked" and not has_estimate:
                 metadata.setdefault("blocked_reason", "Estimate task before launch.")
                 metadata.setdefault("requires_manual_estimate", True)
                 metadata.setdefault("requested_status", payload.status)
                 return "Blocked", metadata
-            return payload.status, metadata
+            return normalized_status, metadata
         metadata.setdefault("blocked_reason", f"Unsupported task status: {payload.status}")
         metadata.setdefault("original_status", payload.status)
         return "Blocked", metadata
@@ -338,13 +416,15 @@ def _canonicalize_task_updates(
     if "status" not in updates:
         return updates
 
-    requested_status = updates["status"]
+    requested_status = "Estimated" if updates["status"] == "Ready" else updates["status"]
     if requested_status not in CANONICAL_TASK_STATUSES:
         updates["status"] = "Blocked"
         metadata.setdefault("blocked_reason", f"Unsupported task status: {requested_status}")
         metadata.setdefault("original_status", requested_status)
         updates["metadata"] = metadata
         return updates
+
+    updates["status"] = requested_status
 
     lifecycle_status = _constrain_direct_lifecycle_status(
         database_path,
@@ -357,7 +437,7 @@ def _canonicalize_task_updates(
         updates["metadata"] = metadata
         return updates
 
-    if requested_status in {"Estimated", "Ready"} and (
+    if requested_status == "Estimated" and (
         estimate_tokens is None or not recommended_model
     ):
         updates["status"] = "Blocked"

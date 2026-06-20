@@ -236,7 +236,7 @@ def test_board_renders_columns_and_task_cards(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     html = response.text
-    for column in ["Estimated", "Ready", "Running", "Review", "Done", "Blocked"]:
+    for column in ["Estimated", "Running", "Review", "Done", "Blocked"]:
         assert column in html
     assert "Backlog" not in html
     assert "Other" not in html
@@ -314,6 +314,27 @@ def test_worker_model_discovery_route_uses_native_harness_and_updates_portal(tmp
     assert "Native model discovery" in page.text
     assert "anthropic/claude-sonnet-4" in page.text
     assert "native, proxy_governed" in page.text
+
+
+def test_worker_verify_template_error_is_not_reported_as_missing_adapter(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        db.update_worker_adapter(
+            database_path,
+            "opencode",
+            config={"verification_template": ["opencode", "{missing_variable}"]},
+            supported_models=["gpt-5.1-codex"],
+        )
+        response = client.post(
+            "/settings/workers/opencode/verify",
+            headers=_portal_headers(),
+            json={"model": "gpt-5.1-codex"},
+        )
+
+    assert response.status_code == 422
+    assert "worker adapter configuration invalid" in response.json()["detail"]
+    assert response.json()["detail"] != "worker adapter not found"
 
 
 def test_control_plane_settings_page_separates_control_model_from_worker_auth(tmp_path, monkeypatch):
@@ -649,7 +670,7 @@ def test_guided_worker_setup_selects_default_adapter_and_keeps_advanced_details(
     assert "Codex setup" in html
     assert "Choose active adapter" in html
     assert "Advanced details" in html
-    assert "Proxy-governed LiteLLM usage" in html
+    assert "Proxy-governed direct provider usage" in html
     assert "PROVIDER_API_KEY" not in html
 
 

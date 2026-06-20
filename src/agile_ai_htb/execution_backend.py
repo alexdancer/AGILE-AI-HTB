@@ -74,7 +74,7 @@ class LocalExecutionBackend:
         return db.create_task(
             self.database_path,
             description=READ_ONLY_PROOF_DESCRIPTION,
-            status="Ready",
+            status="Estimated",
             estimate_tokens=1500,
             recommended_model=supported_models[0],
             metadata={

@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 
 from fastapi.testclient import TestClient
 
@@ -21,6 +22,16 @@ def _client(tmp_path, *, local_runner_enabled=True):
 
 def _headers():
     return {"Authorization": f"Bearer {PORTAL_TOKEN}"}
+
+
+def _wait_for_worker_run(db_path: Path, task_id: str, status: str | None = None):
+    deadline = time.time() + 2
+    while time.time() < deadline:
+        runs = db.list_worker_runs(db_path, task_id=task_id)
+        if runs and (status is None or runs[-1]["status"] == status):
+            return runs[-1]
+        time.sleep(0.01)
+    raise AssertionError("worker run did not reach expected status")
 
 
 def _project_root(tmp_path: Path) -> Path:
@@ -142,6 +153,9 @@ def test_project_read_only_proof_route_launches_when_launch_ready(tmp_path, monk
     body = response.json()
     assert response.status_code == 200
     assert body["task"]["status"] == "Running"
-    assert body["task"]["metadata"]["read_only_proof"] is True
-    assert body["task"]["metadata"]["session_report"]["test_command"] == "pytest"
+    _wait_for_worker_run(tmp_path / "harness.db", body["task"]["id"], "completed")
+    completed = db.get_task(tmp_path / "harness.db", body["task"]["id"])
+    assert completed["status"] == "Review"
+    assert completed["metadata"]["read_only_proof"] is True
+    assert completed["metadata"]["session_report"]["test_command"] == "pytest"
     assert runner_calls[0].cwd == root.resolve()

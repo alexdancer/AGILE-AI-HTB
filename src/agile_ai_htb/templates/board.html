@@ -3,7 +3,7 @@
 {% block banner %}{% if has_demo_tasks %}<div class="demo-banner">DEMO — synthetic task data loaded · all DEMO_TASK_2099_* values fabricated</div>{% endif %}{% endblock %}
 {% block content %}
 <h1 class="page-title">Task board</h1>
-<p class="page-sub">estimate task · ready to launch · running work · review gates · done · blocked</p>
+<p class="page-sub">estimate task · launch worker · running work · review gates · done · blocked</p>
 
 {% if error %}
 <div class="demo-banner" style="background:var(--danger);color:white;padding:10px 16px;border-radius:4px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:12px">
@@ -15,10 +15,12 @@
 </div>
 {% endif %}
 
-<form method="post" action="/tasks/estimate-form" style="margin-bottom:24px;display:flex;gap:10px;align-items:flex-end">
+<form method="post" action="/tasks/estimate-form" enctype="multipart/form-data" style="margin-bottom:24px;display:flex;gap:10px;align-items:flex-end">
   <div style="flex:1">
-    <label for="intake-description">Describe a coding task</label>
-    <input type="text" id="intake-description" name="description" placeholder="e.g. Add a save command to the CLI" required>
+    <label for="intake-description">Describe a coding task or paste Markdown</label>
+    <textarea id="intake-description" name="description" placeholder="e.g. Add a save command to the CLI\n\n- [ ] Update route\n- [ ] Add tests" rows="4" style="width:100%"></textarea>
+    <label for="markdown-file" class="mono" style="font-size:11px;margin-top:6px">Optional .md task file</label>
+    <input type="file" id="markdown-file" name="markdown_file" accept=".md,text/markdown,text/plain">
   </div>
   <button type="submit" class="primary">Estimate task</button>
 </form>
@@ -34,7 +36,7 @@
       {% if task.estimate_tokens is not none %}<p class="mono">Estimate: {{ "{:,}".format(task.estimate_tokens) }} tokens</p>{% endif %}
       {% if task.recommended_model %}<p class="mono">Model: {{ task.recommended_model }}</p>{% endif %}
       {% if task.actual_tokens is not none %}<p class="mono">Actual: {{ "{:,}".format(task.actual_tokens) }} tokens</p>{% endif %}
-      {% if column in ['Estimated', 'Ready'] and adapters %}
+      {% if column == 'Estimated' and adapters %}
       <form method="post" action="/tasks/{{ task.id }}/launch" style="margin-top:8px">
         <input type="hidden" name="proxy_url" value="{{ default_proxy_url }}">
         {% if adapters|length > 0 %}
@@ -57,17 +59,28 @@
         {% endif %}
         <button type="submit" style="width:100%">Launch task</button>
       </form>
-      {% elif column in ['Estimated', 'Ready'] and not adapters %}
+      {% elif column == 'Estimated' and not adapters %}
       <p class="muted">No worker adapters configured.</p>
       {% endif %}
       {% if column == 'Running' %}
+      <p class="muted mono">Worker Run: {{ task.metadata.active_worker_run_id or 'active' }}</p>
       <form method="post" action="/tasks/{{ task.id }}/refresh">
         <button type="submit">Refresh status</button>
       </form>
       {% endif %}
-      {% if task.metadata.launch_blocked_reason %}<p class="muted">{{ task.metadata.launch_blocked_reason }}</p>{% endif %}
+      {% if task.metadata.launch_error %}
+      <div class="launch-error" style="margin-top:8px;padding:8px;border-left:3px solid var(--danger);background:rgba(255,0,0,0.08)">
+        <p class="muted"><strong>Launch error:</strong> {{ task.metadata.launch_error }}</p>
+        {% if task.metadata.last_launch_failure %}
+        <p class="muted mono">Return code: {{ task.metadata.last_launch_failure.returncode }}</p>
+        {% if task.metadata.last_launch_failure.stderr %}<p class="muted mono">{{ task.metadata.last_launch_failure.stderr }}</p>{% endif %}
+        {% endif %}
+      </div>
+      {% endif %}
+      {% if task.metadata.launch_blocked_reason and not task.metadata.launch_retryable %}<p class="muted">{{ task.metadata.launch_blocked_reason }}</p>{% endif %}
       {% if column == 'Blocked' and task.metadata.blocked_reason %}<p class="muted">{{ task.metadata.blocked_reason }}</p>{% endif %}
       {% if column == 'Blocked' and task.metadata.requires_manual_estimate %}<p class="muted">Manual estimate required</p>{% endif %}
+      {% if column == 'Review' and task.metadata.launch_stdout %}<p class="muted mono">Output: {{ task.metadata.launch_stdout }}</p>{% endif %}
       {% if task.session_id %}<p><a href="/sessions/{{ task.session_id }}">Session report</a></p>{% endif %}
     </div>
     {% else %}

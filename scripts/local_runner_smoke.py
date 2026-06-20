@@ -110,7 +110,7 @@ def run_smoke(require_opencode: bool = True) -> int:
         write_task = db.create_task(
             database_path,
             description="Create a docs-only smoke proof file.",
-            status="Ready",
+            status="Estimated",
             estimate_tokens=20,
             recommended_model=smoke_model,
             metadata={

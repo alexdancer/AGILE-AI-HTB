@@ -5,6 +5,7 @@ import os
 import re
 import secrets
 import subprocess
+import threading
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,8 @@ def _harness_port() -> str:
 
 
 DEFAULT_PROXY_URL = f"http://127.0.0.1:{_harness_port()}/v1"
-LAUNCHABLE_TASK_STATUSES = {"Estimated", "Ready"}
+LAUNCHABLE_TASK_STATUSES = {"Estimated"}
+_LAUNCH_START_LOCK = threading.Lock()
 SESSION_KEY_PATTERN = re.compile(r"sk_sess_[A-Za-z0-9_\-.]+")
 SECRETISH_PATTERNS = (
     re.compile(r"(?i)(api[_-]?key|token|secret|password|authorization)\s*[:=]\s*[^\s,;]+"),
@@ -45,12 +47,14 @@ class TaskLaunchResult:
     task: dict[str, Any]
     session: dict[str, Any] | None
     launch_guardrails: dict[str, Any]
+    worker_run: dict[str, Any] | None = None
 
     def as_response(self) -> dict[str, Any]:
         return {
             "task": self.task,
             "session": self.session,
             "launch_guardrails": self.launch_guardrails,
+            "worker_run": self.worker_run,
         }
 
 
@@ -65,8 +69,51 @@ def launch_task(
     budget_override: bool = False,
     runner: Runner | None = None,
 ) -> TaskLaunchResult:
+    with _LAUNCH_START_LOCK:
+        return _launch_task_unlocked(
+            database_path,
+            task_id,
+            adapter_id=adapter_id,
+            model=model,
+            proxy_url=proxy_url,
+            estimate_tokens=estimate_tokens,
+            budget_override=budget_override,
+            runner=runner,
+        )
+
+
+def _launch_task_unlocked(
+    database_path: Path | str,
+    task_id: str,
+    *,
+    adapter_id: str | None,
+    model: str | None,
+    proxy_url: str | None,
+    estimate_tokens: int | None = None,
+    budget_override: bool = False,
+    runner: Runner | None = None,
+) -> TaskLaunchResult:
     task = db.get_task(database_path, task_id)
     manual_estimate_requested = estimate_tokens is not None and bool(model)
+
+    active_run = db.get_active_worker_run_for_task(database_path, task_id)
+    if active_run is not None:
+        session = db.get_session(database_path, active_run["session_id"])
+        running_task = db.update_task(
+            database_path,
+            task_id,
+            {
+                "status": "Running",
+                "session_id": active_run["session_id"],
+                "metadata": {**task.get("metadata", {}), "active_worker_run_id": active_run["id"]},
+            },
+        )
+        return TaskLaunchResult(
+            task=running_task,
+            session=session,
+            worker_run=active_run,
+            launch_guardrails={"passed": True, "reasons": [], "duplicate_active_run": True, "worker_run_id": active_run["id"]},
+        )
 
     if task.get("status") not in LAUNCHABLE_TASK_STATUSES:
         if manual_estimate_requested and _is_manual_estimate_required(task):
@@ -75,9 +122,9 @@ def launch_task(
             blocked = _mark_launch_status_blocked(
                 database_path,
                 task,
-                ["Only Estimated or Ready tasks can launch."],
+                ["Only Estimated tasks can launch."],
             )
-            raise TaskLaunchBlocked(blocked, ["Only Estimated or Ready tasks can launch."])
+            raise TaskLaunchBlocked(blocked, ["Only Estimated tasks can launch."])
     elif manual_estimate_requested:
         task = _apply_manual_estimate(database_path, task, estimate_tokens, str(model))
 
@@ -85,9 +132,9 @@ def launch_task(
         blocked = _mark_launch_status_blocked(
             database_path,
             task,
-            ["Only Estimated or Ready tasks can launch."],
+            ["Only Estimated tasks can launch."],
         )
-        raise TaskLaunchBlocked(blocked, ["Only Estimated or Ready tasks can launch."])
+        raise TaskLaunchBlocked(blocked, ["Only Estimated tasks can launch."])
 
     selected_model = model or task.get("recommended_model")
     selected_adapter_id = adapter_id or _default_adapter_id(database_path)
@@ -183,21 +230,195 @@ def launch_task(
         {
             "status": "Running",
             "session_id": session["id"],
-            "metadata": {
-                **task.get("metadata", {}),
-                "launch_adapter_id": selected_adapter_id,
-                "launch_model": selected_model,
-                "tracking_mode": tracking_mode,
-                "usage_source": usage_source,
-                "launch_command_plan": command_plan,
-                "launch_mode": "write_capable" if write_capable else "read_only" if read_only else "standard",
-                "budget_check": budget_check,
-                **({"budget_override": {"approved": True, "reason": "operator_approved_launch"}} if budget_override else {}),
-                **({"task_branch": task_branch} if task_branch else {}),
-            },
+            "metadata": _clear_recoverable_launch_failure_metadata(
+                {
+                    **task.get("metadata", {}),
+                    "launch_adapter_id": selected_adapter_id,
+                    "launch_model": selected_model,
+                    "tracking_mode": tracking_mode,
+                    "usage_source": usage_source,
+                    "launch_command_plan": command_plan,
+                    "launch_mode": "write_capable" if write_capable else "read_only" if read_only else "standard",
+                    "budget_check": budget_check,
+                    **({"budget_override": {"approved": True, "reason": "operator_approved_launch"}} if budget_override else {}),
+                    **({"task_branch": task_branch} if task_branch else {}),
+                }
+            ),
         },
     )
 
+    worker_run = db.create_worker_run(
+        database_path,
+        task_id=task_id,
+        session_id=session["id"],
+        adapter_id=selected_adapter_id,
+        model=selected_model,
+        tracking_mode=tracking_mode,
+        command_plan=command_plan,
+        metadata={
+            "usage_source": usage_source,
+            "launch_mode": "write_capable" if write_capable else "read_only" if read_only else "standard",
+            **({"task_branch": task_branch} if task_branch else {}),
+        },
+    )
+    claimed = db.update_task(
+        database_path,
+        task_id,
+        {
+            "status": "Running",
+            "session_id": session["id"],
+            "metadata": {**claimed.get("metadata", {}), "active_worker_run_id": worker_run["id"]},
+        },
+    )
+    _start_background_worker_run(
+        database_path=database_path,
+        worker_run_id=worker_run["id"],
+        task=task,
+        claimed=claimed,
+        session=session,
+        plan=plan,
+        selected_adapter_id=selected_adapter_id,
+        selected_model=selected_model,
+        tracking_mode=tracking_mode,
+        usage_source=usage_source,
+        project_root=project_root,
+        before_tree=before_tree,
+        read_only=read_only,
+        write_capable=write_capable,
+        runner=runner,
+    )
+    return TaskLaunchResult(
+        task=claimed,
+        session=session,
+        worker_run=worker_run,
+        launch_guardrails={"passed": True, "reasons": [], "adapter_id": selected_adapter_id, "worker_run_id": worker_run["id"]},
+    )
+
+
+def _start_background_worker_run(
+    *,
+    database_path: Path | str,
+    worker_run_id: str,
+    task: dict[str, Any],
+    claimed: dict[str, Any],
+    session: dict[str, Any],
+    plan: Any,
+    selected_adapter_id: str,
+    selected_model: str,
+    tracking_mode: str,
+    usage_source: str,
+    project_root: str | None,
+    before_tree: str | None,
+    read_only: bool,
+    write_capable: bool,
+    runner: Runner | None,
+) -> None:
+    thread = threading.Thread(
+        target=_execute_worker_run_safe,
+        kwargs={
+            "database_path": database_path,
+            "worker_run_id": worker_run_id,
+            "task": task,
+            "claimed": claimed,
+            "session": session,
+            "plan": plan,
+            "selected_adapter_id": selected_adapter_id,
+            "selected_model": selected_model,
+            "tracking_mode": tracking_mode,
+            "usage_source": usage_source,
+            "project_root": project_root,
+            "before_tree": before_tree,
+            "read_only": read_only,
+            "write_capable": write_capable,
+            "runner": runner,
+        },
+        daemon=True,
+        name=f"worker-run-{worker_run_id}",
+    )
+    thread.start()
+
+
+def _execute_worker_run_safe(
+    *,
+    database_path: Path | str,
+    worker_run_id: str,
+    task: dict[str, Any],
+    claimed: dict[str, Any],
+    session: dict[str, Any],
+    plan: Any,
+    selected_adapter_id: str,
+    selected_model: str,
+    tracking_mode: str,
+    usage_source: str,
+    project_root: str | None,
+    before_tree: str | None,
+    read_only: bool,
+    write_capable: bool,
+    runner: Runner | None,
+) -> None:
+    try:
+        _execute_worker_run(
+            database_path=database_path,
+            worker_run_id=worker_run_id,
+            task=task,
+            claimed=claimed,
+            session=session,
+            plan=plan,
+            selected_adapter_id=selected_adapter_id,
+            selected_model=selected_model,
+            tracking_mode=tracking_mode,
+            usage_source=usage_source,
+            project_root=project_root,
+            before_tree=before_tree,
+            read_only=read_only,
+            write_capable=write_capable,
+            runner=runner,
+        )
+    except Exception as exc:
+        reason = f"Worker Run failed unexpectedly: {type(exc).__name__}"
+        try:
+            db.update_session_status(database_path, session["id"], "failed")
+            failed = _mark_recoverable_launch_failure(
+                database_path,
+                task=task,
+                claimed=claimed,
+                session_id=session["id"],
+                reason=reason,
+                failure_type="worker_run_exception",
+                project_root=project_root,
+                write_capable=write_capable,
+                guardrail_reasons=[reason],
+            )
+            db.mark_worker_run_failed(
+                database_path,
+                worker_run_id,
+                error_type="worker_run_exception",
+                error_message=reason,
+                metadata={"task_status": failed["status"]},
+            )
+        except Exception:
+            pass
+
+
+def _execute_worker_run(
+    *,
+    database_path: Path | str,
+    worker_run_id: str,
+    task: dict[str, Any],
+    claimed: dict[str, Any],
+    session: dict[str, Any],
+    plan: Any,
+    selected_adapter_id: str,
+    selected_model: str,
+    tracking_mode: str,
+    usage_source: str,
+    project_root: str | None,
+    before_tree: str | None,
+    read_only: bool,
+    write_capable: bool,
+    runner: Runner | None,
+) -> None:
+    db.mark_worker_run_running(database_path, worker_run_id)
     try:
         completed = (runner or subprocess_runner)(plan)
     except Exception as exc:
@@ -212,46 +433,59 @@ def launch_task(
     stderr = str(_result_field(completed, "stderr", ""))
     if returncode != 0:
         db.update_session_status(database_path, session["id"], "failed")
-        failed = db.update_task(
+        failed = _mark_recoverable_launch_failure(
             database_path,
-            task_id,
-            {
-                "status": "Blocked",
-                "session_id": session["id"],
-                "metadata": {
-                    **claimed.get("metadata", {}),
-                    "launch_blocked_reason": "Worker adapter launch failed.",
-                    "launch_guardrail_reasons": [],
-                    "launch_returncode": returncode,
-                    "launch_stderr": _safe_text(stderr),
-                    **({"diff_summary": _git_diff_summary(project_root)} if write_capable else {}),
-                },
-            },
+            task=task,
+            claimed=claimed,
+            session_id=session["id"],
+            reason="Worker adapter launch failed.",
+            failure_type="worker_adapter_failure",
+            returncode=returncode,
+            stderr=stderr,
+            project_root=project_root,
+            write_capable=write_capable,
         )
-        raise TaskLaunchBlocked(failed, ["Worker adapter launch failed."])
+        db.mark_worker_run_failed(
+            database_path,
+            worker_run_id,
+            error_type="worker_adapter_failure",
+            error_message="Worker adapter launch failed.",
+            returncode=returncode,
+            stdout=stdout,
+            stderr=stderr,
+            metadata={"task_status": failed["status"]},
+        )
+        return
 
     if tracking_mode == "native_usage":
         native_evidence = _parse_native_usage_evidence(stdout, model=selected_model)
         if native_evidence is None:
             reason = "No budget-authoritative native Worker usage evidence was emitted by the adapter."
             db.update_session_status(database_path, session["id"], "failed")
-            failed = db.update_task(
+            failed = _mark_recoverable_launch_failure(
                 database_path,
-                task_id,
-                {
-                    "status": "Blocked",
-                    "session_id": session["id"],
-                    "metadata": {
-                        **claimed.get("metadata", {}),
-                        "launch_blocked_reason": reason,
-                        "launch_guardrail_reasons": [reason],
-                        "launch_returncode": returncode,
-                        "launch_stdout": _safe_text(stdout),
-                        **({"diff_summary": _git_diff_summary(project_root)} if write_capable else {}),
-                    },
-                },
+                task=task,
+                claimed=claimed,
+                session_id=session["id"],
+                reason=reason,
+                failure_type="missing_native_usage_evidence",
+                returncode=returncode,
+                stdout=stdout,
+                project_root=project_root,
+                write_capable=write_capable,
+                guardrail_reasons=[reason],
             )
-            raise TaskLaunchBlocked(failed, [reason])
+            db.mark_worker_run_failed(
+                database_path,
+                worker_run_id,
+                error_type="missing_native_usage_evidence",
+                error_message=reason,
+                returncode=returncode,
+                stdout=stdout,
+                stderr=stderr,
+                metadata={"task_status": failed["status"]},
+            )
+            return
         db.record_token_turn(
             database_path,
             session_id=session["id"],
@@ -266,47 +500,64 @@ def launch_task(
     if (read_only or write_capable) and not _session_has_worker_token_usage(database_path, session["id"]):
         reason = "No Worker model call was observed through the Harness Proxy."
         db.update_session_status(database_path, session["id"], "failed")
-        failed = db.update_task(
+        failed = _mark_recoverable_launch_failure(
             database_path,
-            task_id,
-            {
-                "status": "Blocked",
-                "session_id": session["id"],
-                "metadata": {
-                    **claimed.get("metadata", {}),
-                    "launch_blocked_reason": reason,
-                    "launch_guardrail_reasons": [reason],
-                    "launch_returncode": returncode,
-                    "launch_stdout": _safe_text(stdout),
-                    **({"diff_summary": _git_diff_summary(project_root)} if write_capable else {}),
-                },
-            },
-        )
-        raise TaskLaunchBlocked(failed, [reason])
-
-    if write_capable:
-        write_result = _finalize_write_capable_launch(
-            database_path=database_path,
-            task_id=task_id,
             task=task,
             claimed=claimed,
-            session=session,
-            project_root=project_root,
+            session_id=session["id"],
+            reason=reason,
+            failure_type="missing_proxy_worker_usage",
             returncode=returncode,
             stdout=stdout,
+            project_root=project_root,
+            write_capable=write_capable,
+            guardrail_reasons=[reason],
         )
-        return TaskLaunchResult(
-            task=write_result,
-            session=db.get_session(database_path, session["id"]),
-            launch_guardrails={"passed": True, "reasons": [], "adapter_id": selected_adapter_id},
+        db.mark_worker_run_failed(
+            database_path,
+            worker_run_id,
+            error_type="missing_proxy_worker_usage",
+            error_message=reason,
+            returncode=returncode,
+            stdout=stdout,
+            stderr=stderr,
+            metadata={"task_status": failed["status"]},
         )
+        return
+
+    if write_capable:
+        try:
+            write_result = _finalize_write_capable_launch(
+                database_path=database_path,
+                task_id=task["id"],
+                task=task,
+                claimed=claimed,
+                session=session,
+                project_root=project_root,
+                returncode=returncode,
+                stdout=stdout,
+            )
+        except TaskLaunchBlocked as exc:
+            db.mark_worker_run_failed(
+                database_path,
+                worker_run_id,
+                error_type="hard_safety_failure",
+                error_message="; ".join(exc.reasons),
+                returncode=returncode,
+                stdout=stdout,
+                stderr=stderr,
+                metadata={"task_status": exc.task["status"]},
+            )
+            return
+        db.mark_worker_run_completed(database_path, worker_run_id, returncode=returncode, stdout=stdout, stderr=stderr, metadata={"task_status": write_result["status"]})
+        return
 
     after_tree = _git_porcelain(project_root) if project_root else before_tree
     if read_only and before_tree != after_tree:
         db.update_session_status(database_path, session["id"], "failed")
         failed = db.update_task(
             database_path,
-            task_id,
+            task["id"],
             {
                 "status": "Blocked",
                 "session_id": session["id"],
@@ -320,30 +571,39 @@ def launch_task(
                 },
             },
         )
-        raise TaskLaunchBlocked(failed, ["Read-only Worker session modified the connected project."])
+        db.mark_worker_run_failed(
+            database_path,
+            worker_run_id,
+            error_type="read_only_mutation",
+            error_message="Read-only Worker session modified the connected project.",
+            returncode=returncode,
+            stdout=stdout,
+            stderr=stderr,
+            metadata={"task_status": failed["status"]},
+        )
+        return
 
+    _record_budget_overrun_if_needed(database_path, session["id"])
+    db.update_session_status(database_path, session["id"], "completed")
     launched = db.update_task(
         database_path,
-        task_id,
+        task["id"],
         {
-            "status": "Running",
+            "status": "Review",
             "session_id": session["id"],
             "metadata": {
                 **claimed.get("metadata", {}),
                 "launch_returncode": returncode,
                 "launch_stdout": _safe_text(stdout),
+                "launch_stderr": _safe_text(stderr),
+                "worker_run_status": "completed",
+                "active_worker_run_id": worker_run_id,
+                **({"diff_summary": _git_diff_summary(project_root)} if project_root else {}),
                 **(_read_only_report_metadata(task) if read_only else {}),
             },
         },
     )
-    _record_budget_overrun_if_needed(database_path, session["id"])
-    if read_only:
-        db.update_session_status(database_path, session["id"], "completed")
-    return TaskLaunchResult(
-        task=launched,
-        session=session,
-        launch_guardrails={"passed": True, "reasons": [], "adapter_id": selected_adapter_id},
-    )
+    db.mark_worker_run_completed(database_path, worker_run_id, returncode=returncode, stdout=stdout, stderr=stderr, metadata={"task_status": launched["status"]})
 
 
 def _apply_manual_estimate(
@@ -440,6 +700,66 @@ def _mark_launch_status_blocked(database_path: Path | str, task: dict[str, Any],
             }
         },
     )
+
+
+def _mark_recoverable_launch_failure(
+    database_path: Path | str,
+    *,
+    task: dict[str, Any],
+    claimed: dict[str, Any],
+    session_id: str,
+    reason: str,
+    failure_type: str,
+    returncode: int,
+    stderr: str = "",
+    stdout: str = "",
+    project_root: str | None = None,
+    write_capable: bool = False,
+    guardrail_reasons: list[str] | None = None,
+) -> dict[str, Any]:
+    failure: dict[str, Any] = {
+        "type": failure_type,
+        "retryable": True,
+        "returncode": returncode,
+    }
+    if stderr:
+        failure["stderr"] = _safe_text(stderr)
+    if stdout:
+        failure["stdout"] = _safe_text(stdout)
+    metadata = {
+        **claimed.get("metadata", {}),
+        "last_launch_failure": failure,
+        "launch_error": reason,
+        "launch_failure_type": failure_type,
+        "launch_retryable": True,
+        "launch_guardrail_reasons": list(guardrail_reasons or []),
+        "launch_returncode": returncode,
+        **({"launch_stderr": _safe_text(stderr)} if stderr else {}),
+        **({"launch_stdout": _safe_text(stdout)} if stdout else {}),
+        **({"diff_summary": _git_diff_summary(project_root)} if write_capable else {}),
+    }
+    metadata.pop("launch_blocked_reason", None)
+    metadata.pop("blocked_reason", None)
+    return db.update_task(
+        database_path,
+        task["id"],
+        {"status": task["status"], "session_id": session_id, "metadata": metadata},
+    )
+
+
+def _clear_recoverable_launch_failure_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    cleared = dict(metadata)
+    for key in (
+        "last_launch_failure",
+        "launch_error",
+        "launch_failure_type",
+        "launch_retryable",
+        "launch_guardrail_reasons",
+        "launch_stderr",
+        "launch_stdout",
+    ):
+        cleared.pop(key, None)
+    return cleared
 
 
 def _default_adapter_id(database_path: Path | str) -> str | None:
@@ -750,7 +1070,7 @@ def _slug(value: str) -> str:
 
 def _session_has_worker_token_usage(database_path: Path | str, session_id: str) -> bool:
     artifact = db.build_session_artifact(database_path, session_id)
-    return any(turn.get("usage_kind") == "task_execution" for turn in artifact["token_log"])
+    return any(turn.get("usage_kind") in {"task_execution", "worker"} for turn in artifact["token_log"])
 
 
 def _git_porcelain(root_path: str | None) -> str | None:
