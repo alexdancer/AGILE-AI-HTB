@@ -6,7 +6,7 @@
 
 **Architecture:** Keep the existing FastAPI + SQLite + Jinja2 portal. First align the current board/task/token schema with the resolved domain model. Then add Estimator LLM as a first-class harness operation. Finally add Worker Setup, Launch Guardrails, and adapter verification so the portal can launch only Workers whose token traffic is proven to pass through the harness proxy.
 
-**Tech Stack:** Python 3.11+, FastAPI, Pydantic, SQLite, LiteLLM, Jinja2/HTMX, pytest, Docker.
+**Tech Stack:** Python 3.11+, FastAPI, Pydantic, SQLite, direct OpenAI-compatible/Anthropic provider APIs, Jinja2/HTMX, pytest, Docker.
 
 ---
 
@@ -149,7 +149,7 @@ Until these three portal forms exist, the demo loop requires `curl` for every st
 
 ### Task 2.2: Replace `/estimate` heuristic behavior with Estimator LLM contract
 
-**Objective:** Estimate through LiteLLM and return structured output; failed estimation is explicit.
+**Objective:** Estimate through the direct control-plane provider client and return structured output; failed estimation is explicit.
 
 **Files:**
 - Modify: `src/agile_ai_htb/estimation.py`
@@ -160,7 +160,7 @@ Until these three portal forms exist, the demo loop requires `curl` for every st
 **Steps:**
 1. Define an `EstimateResult` shape containing token estimate, complexity, recommended model, confidence, rationale, assumptions, risk flags, spike recommendation, budget note, and source.
 2. Build a strict JSON prompt with lightweight project context and model-routing policy.
-3. Call the existing LiteLLM client path with the estimator model.
+3. Call the direct provider client path with the estimator model.
 4. Parse and validate JSON. Invalid/missing fields raise a typed estimator failure.
 5. In tests, inject/fake the LLM client instead of calling a provider.
 6. Remove or quarantine the keyword heuristic so it is not product fallback.

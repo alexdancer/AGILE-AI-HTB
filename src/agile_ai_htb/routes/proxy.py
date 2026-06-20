@@ -14,7 +14,7 @@ from agile_ai_htb import db
 from agile_ai_htb.alarms import detect_budget_alarms
 from agile_ai_htb.governance import GovernanceDecision, apply_governance
 from agile_ai_htb.guardrails import get_budget_zone
-from agile_ai_htb.llm import calculate_cost, extract_usage, response_to_dict
+from agile_ai_htb.llm import LLMClientError, calculate_cost, extract_usage, response_to_dict
 
 router = APIRouter()
 
@@ -32,13 +32,19 @@ async def chat_completions(payload: dict[str, Any], request: Request):
 
     if decision.request.get("stream") is True:
         decision.request["stream_options"] = {"include_usage": True}
-        stream = await request.app.state.llm_client.acompletion(decision.request)
+        try:
+            stream = await request.app.state.llm_client.acompletion(decision.request)
+        except LLMClientError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         return StreamingResponse(
             _stream_chunks(stream, request, session, decision),
             media_type="text/event-stream",
         )
 
-    llm_response = await request.app.state.llm_client.acompletion(decision.request)
+    try:
+        llm_response = await request.app.state.llm_client.acompletion(decision.request)
+    except LLMClientError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     response_body = response_to_dict(llm_response)
     usage = extract_usage(response_body)
     _persist_turn(request, session, decision, usage)

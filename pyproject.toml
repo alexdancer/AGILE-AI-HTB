@@ -14,7 +14,6 @@ dependencies = [
     "pyyaml",
     "jinja2",
     "python-multipart",
-    "litellm",
 ]
 
 [project.optional-dependencies]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from agile_ai_htb import db
 from agile_ai_htb.demo_seed import DEMO_TASKS, seed_demo_tasks
+from agile_ai_htb.launch_guardrails import evaluate_launch_guardrails
 
 
 def test_seed_demo_tasks_inserts_six_estimated_tasks_once(tmp_path):
@@ -34,3 +35,26 @@ def test_seeded_tasks_match_demo_plan_metadata(tmp_path):
     assert tasks["DEMO_TASK_2099_T5"]["recommended_model"] == "Claude Opus"
     assert tasks["DEMO_TASK_2099_T5"]["metadata"]["complexity"] == "Complex"
     assert all(task["id"] in tasks for task in DEMO_TASKS)
+
+
+def test_seeded_demo_worker_has_budget_authoritative_tracking_for_gpt5_demo(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+
+    seed_demo_tasks(db_path)
+
+    adapter = db.get_worker_adapter(db_path, "demo_worker")
+    assert adapter["verification_status"] == "verified"
+    assert adapter["verification_evidence"]["tracking_mode"] == "proxy_governed"
+    assert adapter["verification_evidence"]["tracking_authoritative"] is True
+    assert "gpt-5.4-mini" in adapter["supported_models"]
+
+    result = evaluate_launch_guardrails(
+        db_path,
+        adapter_id="demo_worker",
+        model="gpt-5.4-mini",
+        session_api_key="sk_sess_test",
+        proxy_url="http://127.0.0.1:8000/v1",
+    )
+
+    assert result.passed is True

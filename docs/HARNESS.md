@@ -42,7 +42,7 @@ AGILE-AI-HTB uses a deployable control-plane / execution-plane architecture. The
 
 **Control Plane design**: The deployable harness runs as one FastAPI application serving three roles:
 
-1. **LLM Proxy** — The agent points its `OPENAI_BASE_URL` (or equivalent) at the harness. All API calls arrive at the harness, which uses [LiteLLM](https://github.com/BerriAI/litellm) (`litellm.acompletion()`) to forward to the real provider. LiteLLM normalizes request/response shapes across 100+ providers (OpenAI, Anthropic, Gemini, etc.) — token counts are always `response.usage.prompt_tokens` / `completion_tokens` regardless of provider. Governance layers (system prompt rewrite, max_tokens clamping, tool restriction) are injected into the request before forwarding.
+1. **LLM Proxy** — The agent points its `OPENAI_BASE_URL` (or equivalent) at the harness. All API calls arrive at the harness, which uses explicit direct provider clients to forward to the configured upstream provider. OpenAI and OpenAI-compatible providers use `/v1/chat/completions`; Anthropic requests are translated to the Messages API and normalized back to OpenAI-shaped responses. Governance layers (system prompt rewrite, max_tokens clamping, tool restriction) are injected into the request before forwarding.
 2. **REST API** — Session management (`/session/start`, `/session/{id}/report`), guardrail CRUD, checkpoint evaluation, alarm history.
 3. **Portal UI** — HTML served via HTMX + Jinja2. Dashboard with token charts, AGILE task board, session history, alarm log.
 
@@ -121,25 +121,26 @@ The local-first implementation must keep the code boundary as an `ExecutionBacke
 
 The first verified local Worker Adapter target is **OpenCode**. Claude Code, Codex, and Hermes remain first-class adapter presets in the Portal, but Launch Guardrails keep them non-launchable until adapter verification proves they can route model traffic through the Harness Proxy and report session status. Adapter verification is not an install-only check: it must run a tiny sentinel prompt through the Worker Adapter, inject a harness session key and proxy base URL, and prove at least one model call was recorded in the token ledger under `adapter_verification` orchestration spend. Provider API keys live only in the Harness process. Workers receive only a session-scoped Harness key and Harness Proxy base URL, for example `OPENAI_BASE_URL=http://127.0.0.1:8000/v1` and `OPENAI_API_KEY=<harness-session-key>`, so Worker Adapters cannot bypass token tracking by calling the provider directly.
 
-**Multi-provider support**: Because LiteLLM normalizes all providers into a common interface, the harness supports any agent that speaks OpenAI-compatible or Anthropic-native APIs. The proxy endpoint `/v1/chat/completions` forwards via `litellm.acompletion()`, which auto-detects the target provider from the `model` field. Adding a new provider is a configuration change, not a code change.
+**Multi-provider support**: The harness keeps a stable OpenAI-compatible proxy endpoint for Workers while using explicit upstream provider clients. Configure `AGILE_AI_HTB_CONTROL_PROVIDER` as `openai`, `openai-compatible`, or `anthropic`; set `AGILE_AI_HTB_CONTROL_BASE_URL` for OpenAI-compatible providers that are not OpenAI. Adding a new upstream provider is a small explicit client change, not a hidden universal abstraction.
 
-### LiteLLM Integration
+### Direct Provider Integration
 
-LiteLLM is the transport layer — it handles provider abstraction, token counting, cost calculation, and streaming. The harness owns all governance logic and runs it *before* calling LiteLLM.
+Direct provider clients are the transport layer. The harness owns all governance logic and runs it *before* forwarding the request upstream.
 
-**What LiteLLM provides (free)**:
+**What the direct provider layer provides:**
 
-| Capability | LiteLLM API | Notes |
+| Capability | Implementation | Notes |
 |---|---|---|
-| Provider abstraction | `litellm.acompletion(model="...", messages=..., ...)` | One call for 100+ providers; auto-detects from model name |
-| Token counting | `response.usage.prompt_tokens`, `response.usage.completion_tokens` | Normalized across all providers |
-| Cost calculation | `litellm.cost_per_token(model=..., prompt_tokens=..., completion_tokens=...)` | Returns USD cost — no pricing tables to maintain |
-| Streaming | `stream=True`, `stream_options={"include_usage": True}` | Final usage chunk provides accurate total token counts |
-| Response normalization | `response.choices[0].message.content` | Always OpenAI-shaped, even for Anthropic-native models |
+| Provider selection | `AGILE_AI_HTB_CONTROL_PROVIDER` | Explicit: `openai`, `openai-compatible`, or `anthropic` |
+| OpenAI-compatible forwarding | `POST {base_url}/chat/completions` | Supports OpenAI and compatible providers with bearer auth |
+| Anthropic forwarding | `POST /v1/messages` | Translates system/user/assistant messages and normalizes the response |
+| Token counting | Provider `usage` fields | OpenAI `prompt_tokens`/`completion_tokens`; Anthropic `input_tokens`/`output_tokens` |
+| Cost calculation | Optional local pricing table | Unknown models store zero dollar cost while preserving tokens |
+| Streaming | OpenAI-compatible SSE | Final usage chunk remains authoritative; Anthropic streaming is explicitly rejected until usage-preserving support is added |
 
 **What the harness owns (our code)**:
 
-All governance happens before the LiteLLM call. On every turn:
+All governance happens before the upstream provider call. On every turn:
 
 ```
 # 1. Check zone state (green/yellow/red based on live daily budget)
@@ -154,14 +155,16 @@ max_tokens = ZONE_MAX_TOKENS[zone]
 # 4. Strip blocked tools (Layer 3)
 tools = filter_blocked_tools(original_tools, zone)
 
-# 5. Forward via LiteLLM
-response = await litellm.acompletion(
-    model=session.model,
-    messages=messages,
-    max_tokens=max_tokens,
-    tools=tools,
-    stream=True,
-    stream_options={"include_usage": True},
+# 5. Forward via the configured direct provider client
+response = await llm_client.acompletion(
+    {
+        "model": session.model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "tools": tools,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }
 )
 
 # 6. Extract token counts, store in session artifact
@@ -171,11 +174,11 @@ session.record_turn(response.usage.prompt_tokens, response.usage.completion_toke
 session.check_alarms()
 ```
 
-**Streaming token counting caveat**: LiteLLM has a [known issue](https://github.com/BerriAI/litellm/issues/12970) with inflated `prompt_tokens` when accumulating across streaming chunks. Workaround: use `stream_options={"include_usage": True}` and read token counts exclusively from the final usage chunk, which is accurate. Do not sum across intermediate chunks.
+**Streaming token counting caveat**: For streaming OpenAI-compatible calls, use `stream_options={"include_usage": True}` and read token counts exclusively from the final usage chunk. Do not sum across intermediate chunks.
 
-**Cost tracking**: LiteLLM's built-in cost calculator (`litellm.cost_per_token()`) uses the model pricing table maintained in the `model_prices_and_context_window` library (auto-updated). The harness calls this after every turn to compute the USD cost of that turn, which feeds the portal dashboard and budget tracking.
+**Cost tracking**: Token counts are authoritative. Dollar cost is optional: the local pricing table can compute known model prices, and unknown models record zero/unknown cost without blocking token tracking.
 
-**Why not LiteLLM's built-in guardrails?** LiteLLM has its own guardrails system (keyword filtering, PII detection, etc.), but it operates at the proxy level as middleware. Our three-layer governance — system prompt rewriting, `max_tokens` clamping, and tool restriction — modifies the actual LLM request parameters. This is not possible through LiteLLM's guardrail callbacks; it requires modifying the data dict before the call, which we do directly in our FastAPI endpoint.
+**Why not provider-native guardrails?** Provider guardrail systems operate outside the exact request transforms this harness needs. Our three-layer governance — system prompt rewriting, `max_tokens` clamping, and tool restriction — modifies the actual LLM request parameters before the upstream provider call.
 
 ## Pillar 1: Guardrails
 
@@ -491,7 +494,7 @@ subprocess.Popen(
         "OPENAI_BASE_URL": "http://localhost:8000/v1",
         "OPENAI_API_KEY": f"sk-harness-{session.id}",
         # Provider API key is NOT exposed to the agent —
-        # the harness injects it when forwarding via LiteLLM
+        # the harness uses AGILE_AI_HTB_CONTROL_* upstream settings internally
     },
 )
 ```
@@ -515,16 +518,16 @@ Harness (FastAPI endpoint):
   3. Layer 1: rewrite system prompt — "Be thorough: write tests..."
   4. Layer 2: max_tokens stays 4096 (green zone)
   5. Layer 3: tools unchanged (green zone — all tools available)
-  6. Call LiteLLM:
-       response = await litellm.acompletion(
-           model="claude-haiku",
-           messages=messages,           # rewritten
-           max_tokens=4096,             # clamped per zone
-           tools=tools,                 # filtered per zone
-           stream=True,
-           stream_options={"include_usage": True},
-       )
-  7. LiteLLM forwards to real Anthropic API, returns normalized response
+  6. Call the configured direct provider client:
+       response = await llm_client.acompletion({
+           "model": "gpt-4o-mini",
+           "messages": messages,           # rewritten
+           "max_tokens": 4096,             # clamped per zone
+           "tools": tools,                 # filtered per zone
+           "stream": True,
+           "stream_options": {"include_usage": True},
+       })
+  7. The harness forwards to the configured upstream API and normalizes usage
   8. Extract token counts: response.usage.prompt_tokens=2150, completion_tokens=850
   9. Update session artifact: token_log.append({turn: 3, prompt: 2150, completion: 850})
   10. Update daily counter: 350,000 → 353,000
@@ -571,7 +574,7 @@ codex --base-url http://localhost:8000/v1 --api-key sk-harness-***
 client = OpenAI(base_url="http://localhost:8000/v1", api_key="sk-harness-***")
 ```
 
-Each agent gets its own session key. The harness governs identically regardless of which agent produced the request. LiteLLM handles provider translation — the agent can request `claude-opus` (Anthropic-native) or `gpt-4o` (OpenAI) and the harness normalizes both through the same code path. The portal shows all sessions side-by-side for comparison, enabling the second-worker swap demo beat.
+Each agent gets its own session key. The harness governs identically regardless of which agent produced the request. The configured direct provider client handles upstream forwarding while the proxy response remains OpenAI-compatible to Workers. The portal shows all sessions side-by-side for comparison, enabling the second-worker swap demo beat.
 
 ## Tech Stack
 

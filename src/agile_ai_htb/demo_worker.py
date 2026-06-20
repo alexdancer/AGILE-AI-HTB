@@ -3,7 +3,7 @@
 This simulates a coding agent by making OpenAI-compatible requests to the
 harness proxy. It exercises the full governance path — zone transitions,
 token tracking, tool restrictions, alarm firing — with real LLM calls
-through LiteLLM.
+through the direct-provider harness proxy.
 
 Usage:
     htb-demo-worker \\

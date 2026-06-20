@@ -95,16 +95,19 @@ def seed_demo_tasks(db_path: Path | str) -> list[dict[str, object]]:
 def _seed_demo_worker_adapter(db_path: Path | str) -> None:
     """Ensure a verified demo worker adapter exists for the portal launch flow."""
     with db.connect(db_path) as conn:
-        existing = conn.execute(
-            "select id from worker_adapters where id = 'demo_worker'"
-        ).fetchone()
-        if existing is not None:
-            return
         conn.execute(
-            """insert or ignore into worker_adapters
+            """insert into worker_adapters
                (id, kind, name, config_json, supported_models_json, workdir,
-                verification_status, is_default, created_at, updated_at)
-               values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                verification_status, verification_evidence_json, is_default, created_at, updated_at)
+               values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               on conflict(id) do update set
+                   config_json = excluded.config_json,
+                   supported_models_json = excluded.supported_models_json,
+                   workdir = excluded.workdir,
+                   verification_status = excluded.verification_status,
+                   verification_evidence_json = excluded.verification_evidence_json,
+                   is_default = excluded.is_default,
+                   updated_at = excluded.updated_at""",
             (
                 "demo_worker",
                 "demo_worker",
@@ -114,15 +117,32 @@ def _seed_demo_worker_adapter(db_path: Path | str) -> None:
                         "command": "htb-demo-worker",
                         "verification_template": ["htb-demo-worker", "--prompt", "{prompt}", "--proxy-url", "{proxy_url}", "--session-key", "{session_api_key}", "--turns", "1", "--dry-run"],
                         "launch_template": ["htb-demo-worker", "--prompt", "{prompt}", "--proxy-url", "{proxy_url}", "--session-key", "{session_api_key}", "--model", "{model}"],
+                        "launch_timeout_seconds": 360,
                     },
                     separators=(",", ":"),
                 ),
                 json.dumps(
-                    ["gpt-4o-mini", "gpt-4o", "claude-3-haiku-20240307", "claude-3-5-sonnet-20240620"],
+                    [
+                        "gpt-5.4-mini",
+                        "gpt-4o-mini",
+                        "gpt-4o",
+                        "claude-3-haiku-20240307",
+                        "claude-3-5-sonnet-20240620",
+                    ],
                     separators=(",", ":"),
                 ),
                 "/tmp",
                 "verified",
+                json.dumps(
+                    {
+                        "tracking_mode": "proxy_governed",
+                        "tracking_authoritative": True,
+                        "token_recorded": True,
+                        "source": "synthetic_demo_seed",
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
                 1,
                 "2099-06-13T00:00:00+00:00",
                 "2099-06-13T00:00:00+00:00",

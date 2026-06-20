@@ -3,7 +3,7 @@
 **Date:** 2026-06-16  
 **Commit:** `79de338` — `feat: separate control-plane and Worker Harness models`  
 **Tests:** 244 passed, 0 failed, 2 warnings (4.40s)  
-**Language:** Python 3.11 · FastAPI · SQLite · LiteLLM · Jinja2  
+**Language:** Python 3.11 · FastAPI · SQLite · direct provider APIs · Jinja2  
 **Lines:** ~25 source files · ~9,000 LOC Python · ~500 LOC HTML templates · ~500 LOC YAML config
 
 ---
@@ -13,7 +13,7 @@
 AGILE-AI-HTB is a **portal-first token-budget governance harness** for AI coding agents. It wraps worker CLIs (OpenCode, Claude Code, Codex, Hermes) with transport-level guardrails, tracks token spend by category, and escalates budget violations to a human operator — never to the agent itself.
 
 ### Two Model Layers
-- **Control Plane** — the portal's own LLM for task estimation, reporting. Uses a single model (`gpt-4o-mini` by default) via LiteLLM.
+- **Control Plane** — the portal's own LLM for task estimation, reporting. Uses a configured direct provider (`gpt-4o-mini` by default through OpenAI).
 - **Worker Harness** — the coding agent CLI. Models are discovered from each adapter natively (`opencode models` for OpenCode; no `--json` flag). Two tracking modes:
   - **Proxy-governed**: Worker routes LLM calls through the harness proxy (`/v1/chat/completions`). The proxy records usage, applies governance transforms, and fires alarms.
   - **Native usage**: Worker uses its own auth/config. Usage evidence is parsed from stdout (JSON with `usage` objects matching the launched model).
@@ -34,7 +34,7 @@ AGILE-AI-HTB is a **portal-first token-budget governance harness** for AI coding
 **Status: Complete, working.**
 
 - FastAPI lifespan: inits DB, loads guardrails, creates LLM client, optionally boots LocalExecutionBackend.
-- `_bridge_provider_key()` copies the control-plane API key to provider-specific env vars so LiteLLM can find it. This is a **pragmatic workaround** for LiteLLM's env-var-based auth — but it copies the key to *all* providers (Anthropic, OpenAI, Cohere, Groq) regardless of which is actually used. Low risk in single-provider deployments.
+- Startup creates the direct provider `LLMClient`; control-plane provider keys are not copied into unrelated provider-specific env vars.
 
 ### `settings.py` — Configuration
 **Status: Complete, working. Awkward implementation.**
@@ -60,13 +60,13 @@ AGILE-AI-HTB is a **portal-first token-budget governance harness** for AI coding
 - Uses `secrets.compare_digest()` correctly for timing-safe comparison.
 - No session tracking — cookie is stateless (verified against env var). Simple and secure for single-operator use.
 
-### `llm.py` — LiteLLM wrapper
-**Status: Complete, working. Thin.**
+### `llm.py` — Direct provider clients
+**Status: Complete, working. Explicit.**
 
-- `LLMClient.acompletion()` is a straight passthrough to `litellm.acompletion(**request)`.
-- `extract_usage()` handles dict and object responses via `_get()` helper.
-- `calculate_cost()` silently returns `None` on LiteLLM cost-calculation failure — callers handle this, but `None` cost flows into `record_token_turn()` which stores `cost or 0.0`. Acceptable.
-- `final_stream_usage()` is defined but **never called** from the proxy route. The proxy (`routes/proxy.py:64-79`) does its own streaming logic. Dead code.
+- `LLMClient.acompletion()` routes through explicit `openai`, `openai-compatible`, or `anthropic` provider clients.
+- OpenAI-compatible calls forward to `/chat/completions` with bearer auth and configurable base URL.
+- Anthropic calls translate OpenAI-shaped messages to Messages API payloads and normalize usage back to prompt/completion tokens.
+- `calculate_cost()` uses optional local pricing and returns `None` for unknown models so token tracking remains authoritative.
 
 ### `guardrails.py` — Config loader + zone math
 **Status: Complete, working.**
@@ -158,12 +158,12 @@ AGILE-AI-HTB is a **portal-first token-budget governance harness** for AI coding
 - `_redact_command()` handles `--api-key`, `--token`, `-H "Authorization:"` patterns for secret safety.
 - `subprocess_runner()` has good error handling: TimeoutExpired → returncode 124, OSError → returncode 127.
 
-### `routes/proxy.py` — Harness proxy (LiteLLM-compatible)
+### `routes/proxy.py` — Harness proxy (OpenAI-compatible)
 **Status: Complete, working.**
 
 - Exposes `/v1/chat/completions` — OpenAI-compatible endpoint.
 - Authenticates via session bearer token (hashed).
-- Applies governance transforms before forwarding to LiteLLM.
+- Applies governance transforms before forwarding through the configured direct provider client.
 - Handles both streaming and non-streaming responses.
 - Persists token turns and budget alarms after each completion.
 - Streams use `stream_options: {include_usage: true}` to get final usage from last chunk.
@@ -267,10 +267,10 @@ AGILE-AI-HTB is a **portal-first token-budget governance harness** for AI coding
    Stale documentation. Test count and file list need updating.
 
 6. **Hardcoded model names in multiple places**  
-   `guardrails.yaml` has old Anthropic model names (`claude-3-5-sonnet-20240620`, `claude-3-opus-20240229`). `db.py:WORKER_ADAPTER_PRESETS` has model lists. `settings.py` defaults to `gpt-4o-mini`. These will go stale and cause real LLM call failures. The recent commit `5a22f0a` (fix: replace invalid LiteLLM model names) shows this is a recurring problem.
+   `guardrails.yaml` has old Anthropic model names (`claude-3-5-sonnet-20240620`, `claude-3-opus-20240229`). `db.py:WORKER_ADAPTER_PRESETS` has model lists. `settings.py` defaults to `gpt-4o-mini`. These will go stale and cause real LLM call failures unless verified against provider APIs.
 
-7. **`_bridge_provider_key()` copies key to all providers** (`app.py:33-44`)  
-   The control-plane API key is set as both `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` etc. If someone uses a provider-specific key, it could conflict. Should only set the key for the actual provider being used.
+7. **Provider key fan-out removed**  
+   Control-plane keys now stay behind `AGILE_AI_HTB_CONTROL_*` settings and are not copied into unrelated provider-specific env vars.
 
 ### 🟢 Low Priority
 
@@ -345,7 +345,7 @@ src/agile_ai_htb/
   settings.py          — env-var-based settings
   db.py                — SQLite schema, CRUD, migrations, spend categorization
   auth.py              — portal cookie/bearer auth
-  llm.py               — LiteLLM wrapper, usage extraction, cost calculation
+  llm.py               — direct provider clients, usage extraction, cost calculation
   guardrails.py        — YAML config loader, zone math
   governance.py        — 3-layer zone enforcement (prompt, tokens, tools)
   alarms.py            — 7 alarm types, detection logic

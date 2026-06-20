@@ -124,7 +124,7 @@ The presenter walks through the harness as the agent works through the tasks. Ea
 - [ ] Set up notification channel (macOS notification for simplicity)
 - [ ] Prepare the "budget clamp" demo by having a lowered daily cap ready
 - [ ] Prepare the "midnight reset" demo with a script that resets the counter instantly
-- [ ] Have LiteLLM configured with API keys for both Anthropic and OpenAI
+- [ ] Have direct provider control-plane env vars configured for the provider you will demo (`AGILE_AI_HTB_CONTROL_PROVIDER`, `AGILE_AI_HTB_CONTROL_MODEL`, `AGILE_AI_HTB_CONTROL_API_KEY`)
 - [ ] Test T1 (save) and T3 (list) end-to-end — these are the core demo beats
 - [ ] Have a second browser tab open showing the raw system prompts at each zone (for the yellow/red demo)
 

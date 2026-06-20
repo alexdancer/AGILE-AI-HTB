@@ -94,6 +94,44 @@ def test_worker_adapter_builders_create_safe_configurable_command_plans(tmp_path
     assert safe["env"]["OPENAI_API_KEY"] == "***REDACTED***"
 
 
+def test_worker_adapter_template_can_reference_session_api_key(tmp_path):
+    adapter = {
+        "id": "demo_worker",
+        "kind": "demo_worker",
+        "name": "Demo Worker",
+        "workdir": str(tmp_path),
+        "config": {
+            "verification_template": [
+                "htb-demo-worker",
+                "--prompt",
+                "{prompt}",
+                "--proxy-url",
+                "{proxy_url}",
+                "--session-key",
+                "{session_api_key}",
+            ]
+        },
+        "supported_models": ["gpt-5.4-mini"],
+    }
+
+    plan = get_adapter_builder(adapter).build_verification_command(
+        model="gpt-5.4-mini",
+        prompt="Return sentinel",
+        proxy_url="http://127.0.0.1:8000/v1",
+        session_api_key="sk_sess_test",
+    )
+
+    assert plan.command == [
+        "htb-demo-worker",
+        "--prompt",
+        "Return sentinel",
+        "--proxy-url",
+        "http://127.0.0.1:8000/v1",
+        "--session-key",
+        "sk_sess_test",
+    ]
+
+
 def test_detect_worker_adapter_reports_missing_command_without_verifying(monkeypatch):
     adapter = {
         "id": "opencode",
@@ -231,7 +269,7 @@ def test_subprocess_runner_inherits_environment_and_applies_overrides_and_timeou
             command=["worker", "verify"],
             cwd=tmp_path,
             env={"AGILE_AI_HTB_OVERRIDE": "from-plan", "AGILE_AI_HTB_INHERITED": "overridden"},
-            metadata={},
+            metadata={"timeout_seconds": 123},
         )
     )
 
@@ -239,7 +277,7 @@ def test_subprocess_runner_inherits_environment_and_applies_overrides_and_timeou
     assert calls[0][1]["env"]["AGILE_AI_HTB_OVERRIDE"] == "from-plan"
     assert calls[0][1]["env"]["AGILE_AI_HTB_INHERITED"] == "overridden"
     assert os.environ["PATH"] == calls[0][1]["env"]["PATH"]
-    assert calls[0][1]["timeout"] > 0
+    assert calls[0][1]["timeout"] == 123
 
 
 def test_subprocess_runner_returns_failed_result_on_timeout(monkeypatch):

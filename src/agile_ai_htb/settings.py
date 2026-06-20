@@ -10,9 +10,10 @@ class Settings:
     database_path: Path = Path("harness.db")
     guardrails_path: Path = Path("guardrails.yaml")
     timezone: str = "local"
-    control_plane_provider: str = "litellm"
+    control_plane_provider: str = "openai"
     control_plane_model: str = "gpt-4o-mini"
     control_plane_api_key_env: str = "AGILE_AI_HTB_CONTROL_API_KEY"
+    control_plane_base_url: str = ""
     provider_api_key_env: str = "PROVIDER_API_KEY"
     estimator_model: str = "gpt-4o-mini"
     portal_token_env: str = "TOKEN_TRACKER_PORTAL_TOKEN"
@@ -27,6 +28,7 @@ class Settings:
         control_plane_provider: str | None = None,
         control_plane_model: str | None = None,
         control_plane_api_key_env: str | None = None,
+        control_plane_base_url: str | None = None,
         provider_api_key_env: str | None = None,
         estimator_model: str | None = None,
         portal_token_env: str | None = None,
@@ -69,10 +71,17 @@ class Settings:
             "control_plane_provider",
             control_plane_provider
             or os.getenv("AGILE_AI_HTB_CONTROL_PROVIDER")
-            or os.getenv("TOKEN_TRACKER_CONTROL_PLANE_PROVIDER", "litellm"),
+            or os.getenv("TOKEN_TRACKER_CONTROL_PLANE_PROVIDER", "openai"),
         )
         object.__setattr__(self, "control_plane_model", resolved_control_model)
         object.__setattr__(self, "control_plane_api_key_env", resolved_control_api_env)
+        object.__setattr__(
+            self,
+            "control_plane_base_url",
+            control_plane_base_url
+            or os.getenv("AGILE_AI_HTB_CONTROL_BASE_URL")
+            or os.getenv("TOKEN_TRACKER_CONTROL_PLANE_BASE_URL", ""),
+        )
         object.__setattr__(
             self,
             "provider_api_key_env",

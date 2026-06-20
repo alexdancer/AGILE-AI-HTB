@@ -22,8 +22,8 @@ def test_pyproject_declares_installable_python_package():
         "pyyaml",
         "jinja2",
         "python-multipart",
-        "litellm",
     }.issubset(dependencies)
+    assert "litellm" not in dependencies
 
     test_dependencies = set(pyproject["project"]["optional-dependencies"]["test"])
     assert {"pytest", "pytest-asyncio", "httpx"}.issubset(test_dependencies)

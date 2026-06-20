@@ -56,7 +56,10 @@ Go to **agile-ai-htb → Environment** and add these secrets:
 | Key | What it is | Example |
 |---|---|---|
 | `TOKEN_TRACKER_PORTAL_TOKEN` | Password for the portal web UI | `my-secure-portal-password` |
-| `PROVIDER_API_KEY` | Your LLM provider's API key | `sk-...` or `sk-ant-...` |
+| `AGILE_AI_HTB_CONTROL_PROVIDER` | Direct provider identifier | `openai`, `anthropic`, or `openai-compatible` |
+| `AGILE_AI_HTB_CONTROL_MODEL` | Control-plane/proxy upstream model | `gpt-4o-mini` or `claude-sonnet-4-20250514` |
+| `AGILE_AI_HTB_CONTROL_API_KEY` | Your configured provider's API key | `sk-...` or `sk-ant-...` |
+| `AGILE_AI_HTB_CONTROL_BASE_URL` | Optional OpenAI-compatible upstream base URL | `https://provider.example/v1` |
 
 The `render.yaml` already declares these with `sync: false` so they won't be overwritten on re-deploy.
 
@@ -87,10 +90,15 @@ All env vars read by `Settings()`:
 | `TOKEN_TRACKER_DATABASE_PATH` | `harness.db` | SQLite path (Render: `/data/harness.db`) |
 | `TOKEN_TRACKER_GUARDRAILS_PATH` | `guardrails.yaml` | Guardrail config (Render: `/app/guardrails.yaml`) |
 | `TOKEN_TRACKER_TIMEZONE` | `local` | Timezone for midnight reset (`UTC`, `US/Pacific`, etc.) |
-| `TOKEN_TRACKER_ESTIMATOR_MODEL` | `gpt-4o-mini` | Model used by the Estimator LLM |
+| `TOKEN_TRACKER_ESTIMATOR_MODEL` | `gpt-4o-mini` | Legacy alias for the control-plane model |
+| `TOKEN_TRACKER_CONTROL_PLANE_PROVIDER` / `AGILE_AI_HTB_CONTROL_PROVIDER` | `openai` | Direct upstream provider (`openai`, `openai-compatible`, or `anthropic`) |
+| `TOKEN_TRACKER_CONTROL_PLANE_MODEL` / `AGILE_AI_HTB_CONTROL_MODEL` | `gpt-4o-mini` | Model used by control-plane and proxy upstream calls |
+| `AGILE_AI_HTB_CONTROL_API_KEY_ENV` | `AGILE_AI_HTB_CONTROL_API_KEY` | Name of the env var holding the control-plane API key |
+| `AGILE_AI_HTB_CONTROL_API_KEY` | — | Control-plane/proxy upstream provider API key |
+| `AGILE_AI_HTB_CONTROL_BASE_URL` | — | Optional OpenAI-compatible upstream base URL |
 | `TOKEN_TRACKER_PORTAL_TOKEN_ENV` | `TOKEN_TRACKER_PORTAL_TOKEN` | Name of the env var holding the portal password |
 | `TOKEN_TRACKER_PORTAL_COOKIE_SECURE` | `false` | Set `true` for HTTPS (Render behind TLS) |
-| `TOKEN_TRACKER_PROVIDER_API_KEY_ENV` | `PROVIDER_API_KEY` | Name of the env var holding the LLM API key |
+| `TOKEN_TRACKER_PROVIDER_API_KEY_ENV` | `PROVIDER_API_KEY` | Legacy control-plane API key env fallback |
 
 ## Hot tips
 
@@ -126,7 +134,7 @@ The guardrails YAML is baked into the Docker image at build time. To change guar
 
 ### Viewing logs
 
-Render dashboard → agile-ai-htb → Logs. Shows uvicorn output, LiteLLM requests, and any errors.
+Render dashboard → agile-ai-htb → Logs. Shows uvicorn output, direct provider proxy requests, and any errors.
 
 ### Shell access
 

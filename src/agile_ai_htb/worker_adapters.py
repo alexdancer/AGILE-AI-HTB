@@ -119,6 +119,7 @@ class WorkerAdapterBuilder:
                 "model": model,
                 "purpose": "native_adapter_verification",
                 "tracking_mode": "native_usage",
+                **self._timeout_metadata("verification_timeout_seconds"),
             },
         )
 
@@ -146,6 +147,7 @@ class WorkerAdapterBuilder:
                 "purpose": "task_launch",
                 "tracking_mode": "native_usage",
                 "usage_source": "native_usage",
+                **self._timeout_metadata("launch_timeout_seconds"),
             },
         )
 
@@ -183,7 +185,15 @@ class WorkerAdapterBuilder:
         purpose: str,
     ) -> CommandPlan:
         template = self.config.get(template_key) or fallback
-        command = [str(part).format(model=model, prompt=prompt, proxy_url=proxy_url) for part in template]
+        command = [
+            str(part).format(
+                model=model,
+                prompt=prompt,
+                proxy_url=proxy_url,
+                session_api_key=session_api_key,
+            )
+            for part in template
+        ]
         env = self._env(proxy_url=proxy_url, session_api_key=session_api_key)
         for key, value in (self.config.get("env") or {}).items():
             if not _is_secret_name(key):
@@ -193,7 +203,15 @@ class WorkerAdapterBuilder:
             command=command,
             cwd=Path(workdir) if workdir else None,
             env=env,
-            metadata={"adapter_id": self.adapter["id"], "kind": self.adapter["kind"], "model": model, "purpose": purpose},
+            metadata={
+                "adapter_id": self.adapter["id"],
+                "kind": self.adapter["kind"],
+                "model": model,
+                "purpose": purpose,
+                **self._timeout_metadata(
+                    "verification_timeout_seconds" if purpose == "adapter_verification" else "launch_timeout_seconds"
+                ),
+            },
         )
 
     def _env(self, *, proxy_url: str, session_api_key: str) -> dict[str, str]:
@@ -203,6 +221,16 @@ class WorkerAdapterBuilder:
             "AGILE_AI_HTB_PROXY_URL": proxy_url,
             "AGILE_AI_HTB_SESSION_API_KEY": session_api_key,
         }
+
+    def _timeout_metadata(self, purpose_key: str) -> dict[str, int]:
+        timeout = self.config.get(purpose_key, self.config.get("subprocess_timeout_seconds"))
+        if timeout is None:
+            return {}
+        try:
+            seconds = int(timeout)
+        except (TypeError, ValueError):
+            return {}
+        return {"timeout_seconds": seconds} if seconds > 0 else {}
 
 
 class ClaudeCodeAdapterBuilder(WorkerAdapterBuilder):
@@ -647,6 +675,7 @@ def _float_from_any(value: Any) -> float:
 
 
 def subprocess_runner(plan: CommandPlan) -> subprocess.CompletedProcess[str]:
+    timeout_seconds = _timeout_seconds(plan)
     try:
         return subprocess.run(
             plan.command,
@@ -655,11 +684,11 @@ def subprocess_runner(plan: CommandPlan) -> subprocess.CompletedProcess[str]:
             capture_output=True,
             text=True,
             check=False,
-            timeout=SUBPROCESS_RUNNER_TIMEOUT_SECONDS,
+            timeout=timeout_seconds,
         )
     except subprocess.TimeoutExpired as exc:
         stderr = exc.stderr or ""
-        timeout_message = f"Command timed out after {SUBPROCESS_RUNNER_TIMEOUT_SECONDS} seconds."
+        timeout_message = f"Command timed out after {timeout_seconds} seconds."
         return subprocess.CompletedProcess(
             plan.command,
             124,
@@ -675,6 +704,17 @@ def subprocess_runner(plan: CommandPlan) -> subprocess.CompletedProcess[str]:
             stdout="",
             stderr=f"Failed to launch command {command_name!r}: {type(exc).__name__}: {_redact_value(str(error_text))}",
         )
+
+
+def _timeout_seconds(plan: CommandPlan) -> int:
+    candidate = plan.metadata.get("timeout_seconds")
+    if candidate is None:
+        return SUBPROCESS_RUNNER_TIMEOUT_SECONDS
+    try:
+        seconds = int(candidate)
+    except (TypeError, ValueError):
+        return SUBPROCESS_RUNNER_TIMEOUT_SECONDS
+    return seconds if seconds > 0 else SUBPROCESS_RUNNER_TIMEOUT_SECONDS
 
 
 def _result_field(result: Any, field: str, default: Any = "") -> Any:

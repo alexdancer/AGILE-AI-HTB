@@ -8,7 +8,7 @@ AI coding agents can burn through token budgets invisibly while they explore, lo
 
 Build AGILE-AI-HTB as a portal-first token-tracker harness for coding agents. The single FastAPI application provides:
 
-- an OpenAI-compatible LLM proxy backed by LiteLLM,
+- an OpenAI-compatible LLM proxy backed by direct upstream provider clients,
 - a SQLite Session Artifact Store,
 - a portal with dashboard, AGILE Board, session reports, alarms, and Worker Setup,
 - an Estimator LLM flow that tracks estimation spend as Orchestration Tokens,
@@ -39,7 +39,7 @@ The AGILE Board is the primary product workflow. Users enter coding tasks throug
 18. As a user, I want daily budget totals to include Worker Session tokens and Orchestration Tokens, so that all spend counts toward the cap.
 19. As a user, I want task execution analytics to separate Worker tokens from Orchestration Tokens, so that implementation actuals are not distorted by estimator/setup overhead.
 20. As a user, I want session-scoped API keys, so that every Worker request maps to the correct governed session.
-21. As a user, I want provider calls forwarded through LiteLLM, so that AGILE-AI-HTB can support multiple models/providers while owning governance logic.
+21. As a user, I want provider calls forwarded through direct OpenAI-compatible or Anthropic provider APIs, so that AGILE-AI-HTB can support multiple models/providers while owning governance logic.
 22. As a user, I want green/yellow/red budget zones to rewrite prompts, clamp `max_tokens`, and filter tools, so that Workers are constrained at the transport level.
 23. As a user, I want alarms to include type, severity, context, and recommended action, so that I know what decision is being requested.
 24. As a user, I want alarm actions such as continue, abort, raise budget, and adjust guardrail, so that the human remains in control.
@@ -52,7 +52,7 @@ The AGILE Board is the primary product workflow. Users enter coding tasks throug
 
 - Keep AGILE-AI-HTB as a single FastAPI process with proxy data plane, control API, and server-rendered portal.
 - Use SQLite for sessions, tasks, token turns, tool traces, alarms, guardrail snapshots, checkpoint results, action history, and Worker Adapter configuration.
-- Use LiteLLM as the provider transport for both Worker requests and Estimator LLM calls. The harness owns governance, usage labeling, and persistence.
+- Use explicit direct provider clients as the transport for both Worker proxy requests and Control-plane LLM calls. The harness owns governance, usage labeling, and persistence.
 - Add token usage labeling with `usage_kind`: `worker`, `estimation`, `spike`, or `adapter_verification`. Existing rows default to `worker`.
 - Replace normal Backlog product behavior with canonical AGILE Board states: `Estimated`, `Ready`, `Running`, `Review`, `Done`, and `Blocked`.
 - Treat `POST /tasks` / portal intake as **Estimate task** flow. Successful LLM estimation creates an Estimated task. Failed estimation creates a Blocked task that requires manual estimate/model entry.

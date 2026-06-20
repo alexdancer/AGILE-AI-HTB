@@ -20,6 +20,11 @@ from agile_ai_htb.app import create_app
 from agile_ai_htb.settings import Settings
 
 ROOT = Path(__file__).resolve().parents[1]
+PORTAL_TOKEN = "test-portal-token"
+
+
+def _auth_headers():
+    return {"Authorization": f"Bearer {PORTAL_TOKEN}"}
 
 
 class FakeAlarmLLMClient:
@@ -242,3 +247,45 @@ def test_eval_alarm_budget_yellow_deduplicates_per_session(tmp_path):
     artifact = db.build_session_artifact(tmp_path / "harness.db", started["session_id"])
     yellow_alarms = [a for a in artifact["alarms"] if a["type"] == "BUDGET_YELLOW"]
     assert len(yellow_alarms) == 1
+
+
+def test_eval_alarm_budget_red_visible_on_dashboard_and_session_report(tmp_path, monkeypatch):
+    """Budget alarms must appear in both operator surfaces after firing."""
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    client = _client(tmp_path)
+    with client:
+        started = _start_session(client, daily_used_tokens=900_000)
+        _proxy_request(client, started["session_api_key"])
+        dashboard = client.get("/dashboard", headers=_auth_headers())
+        report = client.get(f"/sessions/{started['session_id']}", headers=_auth_headers())
+
+    assert dashboard.status_code == 200
+    assert "BUDGET_RED" in dashboard.text
+    assert f"/sessions/{started['session_id']}" in dashboard.text
+    assert report.status_code == 200
+    assert "BUDGET_RED" in report.text
+    assert "Agent is in red budget zone" in report.text
+
+
+def test_eval_alarm_budget_ignores_control_plane_spend_for_worker_caps(tmp_path):
+    """Control-plane spend is reported separately and must not trip Worker execution alarms."""
+    client = _client(tmp_path)
+    with client:
+        started = _start_session(client, daily_used_tokens=0, daily_cap_tokens=10_000, session_cap_tokens=10_000)
+        db.record_token_turn(
+            tmp_path / "harness.db",
+            session_id=started["session_id"],
+            usage_kind="control_plane",
+            model="control-plane",
+            prompt_tokens=20_000,
+            completion_tokens=5_000,
+            cost=0,
+            raw_usage={"total_tokens": 25_000},
+        )
+        _proxy_request(client, started["session_api_key"])
+
+    artifact = db.build_session_artifact(tmp_path / "harness.db", started["session_id"])
+    totals = {entry["usage_kind"]: entry["total_tokens"] for entry in artifact["token_log"]}
+    assert totals["control_plane"] == 25_000
+    assert totals["worker"] == 700
+    assert {alarm["type"] for alarm in artifact["alarms"]} == set()

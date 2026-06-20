@@ -1,20 +1,84 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import asyncio
+import json
+import os
+import re
+import urllib.error
+import urllib.request
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from typing import Any
 
-import litellm
+from agile_ai_htb.settings import Settings
+
+DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
+ANTHROPIC_VERSION = "2023-06-01"
+SECRET_VALUE_PATTERN = re.compile(r"sk-[A-Za-z0-9_\-.]+|sk_[A-Za-z0-9_\-.]+")
+
+
+class LLMClientError(RuntimeError):
+    """Raised when a direct provider client cannot complete a request."""
+
+
+@dataclass(frozen=True)
+class ProviderConfig:
+    provider: str
+    model: str
+    api_key: str
+    base_url: str
 
 
 class LLMClient:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        http_post_json: Callable[[str, dict[str, str], dict[str, Any]], dict[str, Any]] | None = None,
+        http_stream_sse: Callable[[str, dict[str, str], dict[str, Any]], AsyncIterator[dict[str, Any]]] | None = None,
+    ) -> None:
+        self.settings = settings or Settings()
+        self._http_post_json = http_post_json or _post_json
+        self._http_stream_sse = http_stream_sse or _stream_sse_json
+
     async def acompletion(self, request: dict[str, Any]) -> Any:
-        return await litellm.acompletion(**request)
+        config = _provider_config(self.settings, request)
+        if config.provider in {"openai", "openai-compatible"}:
+            return await self._openai_compatible_completion(config, request)
+        if config.provider == "anthropic":
+            return await self._anthropic_completion(config, request)
+        raise LLMClientError(f"unsupported control-plane provider: {config.provider}")
+
+    async def _openai_compatible_completion(self, config: ProviderConfig, request: dict[str, Any]) -> Any:
+        payload = _openai_compatible_payload(request, config.model)
+        headers = {
+            "Authorization": f"Bearer {config.api_key}",
+            "Content-Type": "application/json",
+        }
+        url = f"{config.base_url.rstrip('/')}/chat/completions"
+        if payload.get("stream") is True:
+            return self._http_stream_sse(url, headers, payload)
+        return await asyncio.to_thread(self._http_post_json, url, headers, payload)
+
+    async def _anthropic_completion(self, config: ProviderConfig, request: dict[str, Any]) -> Any:
+        if request.get("stream") is True:
+            raise LLMClientError("anthropic streaming is not supported by the direct provider client yet")
+        payload = _openai_to_anthropic_request(request, config.model)
+        headers = {
+            "x-api-key": config.api_key,
+            "anthropic-version": ANTHROPIC_VERSION,
+            "Content-Type": "application/json",
+        }
+        url = f"{config.base_url.rstrip('/')}/messages"
+        response = await asyncio.to_thread(self._http_post_json, url, headers, payload)
+        return _anthropic_to_openai_response(response, request.get("model", config.model))
 
 
 def extract_usage(response: Any) -> dict[str, int]:
     usage = _get(response, "usage", {}) or {}
-    prompt_tokens = int(_get(usage, "prompt_tokens", 0) or 0)
-    completion_tokens = int(_get(usage, "completion_tokens", 0) or 0)
+    prompt_tokens = int(_get(usage, "prompt_tokens", _get(usage, "input_tokens", 0)) or 0)
+    completion_tokens = int(_get(usage, "completion_tokens", _get(usage, "output_tokens", 0)) or 0)
     total_tokens = int(_get(usage, "total_tokens", prompt_tokens + completion_tokens) or 0)
     return {
         "prompt_tokens": prompt_tokens,
@@ -24,16 +88,7 @@ def extract_usage(response: Any) -> dict[str, int]:
 
 
 def calculate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:
-    try:
-        return float(
-            litellm.completion_cost(
-                model=model,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-            )
-        )
-    except Exception:
-        return None
+    return _calculate_known_cost(model, prompt_tokens, completion_tokens)
 
 
 async def final_stream_usage(chunks: AsyncIterator[Any]) -> dict[str, int]:
@@ -53,6 +108,170 @@ def response_to_dict(response: Any) -> dict[str, Any]:
     if hasattr(response, "dict"):
         return response.dict()
     raise TypeError(f"unsupported LLM response type: {type(response)!r}")
+
+
+def _provider_config(settings: Settings, request: dict[str, Any]) -> ProviderConfig:
+    provider = settings.control_plane_provider.lower().strip()
+    model = str(request.get("model") or settings.control_plane_model)
+    api_key = os.getenv(settings.control_plane_api_key_env) or os.getenv(settings.provider_api_key_env) or ""
+    if not api_key:
+        raise LLMClientError(f"missing control-plane API key env: {settings.control_plane_api_key_env}")
+    base_url = _provider_base_url(settings, provider)
+    return ProviderConfig(provider=provider, model=model, api_key=api_key, base_url=base_url)
+
+
+def _provider_base_url(settings: Settings, provider: str) -> str:
+    if settings.control_plane_base_url:
+        return settings.control_plane_base_url
+    if provider in {"openai", "openai-compatible"}:
+        return DEFAULT_OPENAI_BASE_URL
+    if provider == "anthropic":
+        return DEFAULT_ANTHROPIC_BASE_URL
+    return DEFAULT_OPENAI_BASE_URL
+
+
+def _post_json(url: str, headers: dict[str, str], payload: dict[str, Any]) -> dict[str, Any]:
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310 - configured provider URL
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:500]
+        raise LLMClientError(f"provider request failed with HTTP {exc.code}: {_sanitize_error(detail)}") from exc
+    except urllib.error.URLError as exc:
+        raise LLMClientError(f"provider request failed: {_sanitize_error(str(exc.reason))}") from exc
+    except json.JSONDecodeError as exc:
+        raise LLMClientError("provider returned invalid JSON") from exc
+
+
+async def _stream_sse_json(
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+) -> AsyncIterator[dict[str, Any]]:
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    try:
+        response = await asyncio.to_thread(urllib.request.urlopen, request, timeout=120)  # noqa: S310
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:500]
+        raise LLMClientError(f"provider stream failed with HTTP {exc.code}: {_sanitize_error(detail)}") from exc
+    except urllib.error.URLError as exc:
+        raise LLMClientError(f"provider stream failed: {_sanitize_error(str(exc.reason))}") from exc
+
+    try:
+        while True:
+            line = await asyncio.to_thread(response.readline)
+            if not line:
+                break
+            text = line.decode("utf-8", errors="replace").strip()
+            if not text or not text.startswith("data:"):
+                continue
+            data = text[len("data:") :].strip()
+            if data == "[DONE]":
+                break
+            try:
+                yield json.loads(data)
+            except json.JSONDecodeError as exc:
+                raise LLMClientError("provider stream returned invalid JSON") from exc
+    finally:
+        response.close()
+
+
+def _openai_to_anthropic_request(request: dict[str, Any], model: str) -> dict[str, Any]:
+    messages = []
+    system_parts = []
+    for message in request.get("messages", []):
+        role = message.get("role")
+        content = message.get("content", "")
+        if role == "system":
+            system_parts.append(_string_content(content))
+            continue
+        if role not in {"user", "assistant"}:
+            continue
+        messages.append({"role": role, "content": _string_content(content)})
+
+    payload: dict[str, Any] = {
+        "model": _strip_provider_prefix(model),
+        "messages": messages,
+        "max_tokens": int(request.get("max_tokens") or 1024),
+    }
+    if system_parts:
+        payload["system"] = "\n\n".join(part for part in system_parts if part)
+    if "temperature" in request:
+        payload["temperature"] = request["temperature"]
+    return payload
+
+
+def _anthropic_to_openai_response(response: dict[str, Any], requested_model: str) -> dict[str, Any]:
+    content = "".join(
+        str(block.get("text", ""))
+        for block in response.get("content", [])
+        if isinstance(block, dict) and block.get("type") == "text"
+    )
+    usage = extract_usage({"usage": response.get("usage", {})})
+    return {
+        "id": response.get("id", "anthropic-message"),
+        "object": "chat.completion",
+        "model": requested_model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": response.get("stop_reason") or "stop",
+            }
+        ],
+        "usage": usage,
+        "provider_response": {"type": response.get("type", "message")},
+    }
+
+
+def _string_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
+    return str(content)
+
+
+def _strip_provider_prefix(model: str) -> str:
+    if "/" in model:
+        provider, name = model.split("/", 1)
+        if provider in {"openai", "anthropic"}:
+            return name
+    return model
+
+
+def _openai_compatible_payload(request: dict[str, Any], model: str) -> dict[str, Any]:
+    resolved_model = _strip_provider_prefix(model)
+    payload = {**request, "model": resolved_model}
+    if _requires_max_completion_tokens(resolved_model):
+        max_tokens = payload.pop("max_tokens", None)
+        if max_tokens is not None and "max_completion_tokens" not in payload:
+            payload["max_completion_tokens"] = max_tokens
+    return payload
+
+
+def _requires_max_completion_tokens(model: str) -> bool:
+    return _strip_provider_prefix(model).startswith("gpt-5")
+
+
+def _calculate_known_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:
+    prices = {
+        "gpt-4o-mini": (0.00000015, 0.00000060),
+        "gpt-4.1-mini": (0.00000040, 0.00000160),
+        "openai/gpt-4.1-mini": (0.00000040, 0.00000160),
+    }
+    price = prices.get(model) or prices.get(_strip_provider_prefix(model))
+    if price is None:
+        return None
+    input_price, output_price = price
+    return (prompt_tokens * input_price) + (completion_tokens * output_price)
+
+
+def _sanitize_error(value: str) -> str:
+    return SECRET_VALUE_PATTERN.sub("***REDACTED***", value)
 
 
 def _get(value: Any, key: str, default: Any = None) -> Any:

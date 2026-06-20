@@ -6,11 +6,11 @@ Define how the harness launches local Worker Sessions under governance, includin
 ## Requirements
 
 ### Requirement: Read-only launch proof
-The system SHALL support a first read-only Worker Session that inspects the connected repository and produces a session report artifact without modifying repository files, using either proxy-governed or native-usage tracking mode.
+The system SHALL support a first read-only Worker Session that inspects the connected repository and produces a session report artifact without modifying repository files, using either proxy-governed or native-usage tracking mode, and proxy-governed mode SHALL forward upstream through direct provider clients rather than LiteLLM.
 
 #### Scenario: Read-only session succeeds through proxy-governed tracking
 - **WHEN** OpenCode runs the read-only repo inspection task through the Harness Proxy
-- **THEN** the system records Worker token usage, saves a session report artifact with language, test command, and top-level structure, and leaves the repository without file changes
+- **THEN** the system records Worker token usage from the direct upstream provider response, saves a session report artifact with language, test command, and top-level structure, and leaves the repository without file changes
 
 #### Scenario: Read-only session succeeds through native usage tracking
 - **WHEN** OpenCode runs the read-only repo inspection task through native harness configuration and the Local Runner imports trustworthy usage evidence
@@ -53,10 +53,17 @@ The system SHALL make pull request creation optional after a Harness-owned commi
 - **THEN** the Portal may offer an Open PR action after the Harness-owned commit
 
 ### Requirement: Blocked failure preservation
-The system SHALL preserve evidence when Worker execution cannot complete successfully.
+The system SHALL preserve evidence when Worker execution cannot complete successfully. Recoverable Worker runtime failures for tasks that were launchable before the attempt SHALL fail the Worker session and preserve sanitized launch evidence without moving the task to the Blocked lifecycle state. Hard safety failures, workflow/dependency blockers, read-only project mutation, write-capable verification failure, budget preflight denial without override, and non-launchable preconditions SHALL remain blocking states.
 
-#### Scenario: Worker session fails
-- **WHEN** OpenCode crashes, exits non-zero, times out, exceeds budget, fails verification, or produces no budget-authoritative token usage for the selected tracking mode
+#### Scenario: Worker session fails recoverably
+- **WHEN** OpenCode crashes, exits non-zero, times out, or produces no budget-authoritative token usage for the selected tracking mode after an Estimated or Ready task has been claimed for launch
+- **THEN** the system marks the Worker session failed
+- **AND** the task returns to its exact pre-launch status
+- **AND** the system preserves logs, launch return code, sanitized stderr/stdout, tracking mode, branch name when present, and token ledger entries when present
+- **AND** the task remains eligible for a later launch retry
+
+#### Scenario: Safety failure remains blocked
+- **WHEN** a Worker launch violates a hard safety guardrail such as read-only project mutation or write-capable verification failure
 - **THEN** the Task moves to Blocked and the system preserves logs, token ledger entries when present, failure reason, tracking mode, branch name, and any uncommitted diff without automatic retry
 
 ### Requirement: Worker launch model selection
@@ -69,3 +76,12 @@ The system SHALL launch Worker Sessions with a model selected from the verified 
 #### Scenario: Selected model is unavailable
 - **WHEN** the selected model is not in the selected adapter's discovered model inventory and no explicit compatible override is approved
 - **THEN** the system blocks launch and shows the model compatibility reason
+
+### Requirement: Recoverable launch errors clear on successful retry
+The system SHALL overwrite stale recoverable launch-error metadata on each launch attempt and SHALL clear the user-visible launch error after a successful retry.
+
+#### Scenario: Successful retry clears timeout message
+- **WHEN** a task has `launch_error` and `last_launch_failure` from a previous Worker timeout
+- **AND** the operator launches the task again and the Worker launch succeeds
+- **THEN** the task no longer renders the previous timeout as the current launch error
+- **AND** the successful session evidence is recorded normally
