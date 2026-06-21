@@ -14,6 +14,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, ValidationError
 
 from agile_ai_htb import db
+from agile_ai_htb.adapter_readiness import evaluate_adapter_readiness
 from agile_ai_htb.auth import (
     PORTAL_COOKIE_MAX_AGE_SECONDS,
     PORTAL_COOKIE_NAME,
@@ -22,9 +23,9 @@ from agile_ai_htb.auth import (
 )
 from agile_ai_htb.execution_backend import LocalExecutionBackend
 from agile_ai_htb.guardrails import get_budget_zone
-from agile_ai_htb.launch_guardrails import adapter_launchable_for_ui
 from agile_ai_htb.llm import extract_usage, response_to_dict
 from agile_ai_htb.task_launch import DEFAULT_PROXY_URL, TaskLaunchBlocked, launch_task
+from agile_ai_htb.tracking_modes import NATIVE_USAGE, OBSERVED_ONLY, PROXY_GOVERNED, tracking_mode_view
 from agile_ai_htb.worker_adapters import detect_worker_adapter, discover_worker_models, verify_worker_adapter
 
 
@@ -37,7 +38,7 @@ BOARD_COLUMNS = ["Estimated", "Running", "Review", "Done", "Blocked"]
 class WorkerVerifyRequest(BaseModel):
     model: str = Field(min_length=1)
     proxy_url: str = Field(default=DEFAULT_PROXY_URL, min_length=1)
-    tracking_mode: str = Field(default="proxy_governed", pattern="^(proxy_governed|native_usage)$")
+    tracking_mode: str = Field(default="proxy_governed", pattern="^(proxy_governed|native_usage|observed_only)$")
 
 
 class ProjectConnectRequest(BaseModel):
@@ -223,6 +224,9 @@ def board(request: Request):
     grouped = {column: [] for column in BOARD_COLUMNS}
     for task in tasks:
         task = dict(task)
+        metadata = dict(task.get("metadata", {}))
+        metadata["review_actions_available"] = _review_actions_available(database_path, task)
+        task["metadata"] = metadata
         status = "Estimated" if task["status"] == "Ready" else task["status"] if task["status"] in grouped else "Blocked"
         if status == "Blocked" and task["status"] not in grouped:
             task["metadata"] = {
@@ -232,7 +236,7 @@ def board(request: Request):
             task["status"] = "Blocked"
         grouped[status].append(task)
     has_demo_tasks = any(str(task["id"]).startswith("DEMO_TASK_2099_") for task in tasks)
-    adapters = db.list_worker_adapters(database_path)
+    adapters = [adapter for adapter in _worker_adapter_view_models(database_path) if adapter.get("tracking", {}).get("mode") != "observed_only"]
     error = request.query_params.get("error", "")
     return templates.TemplateResponse(
         request,
@@ -248,6 +252,19 @@ def board(request: Request):
             "error": error,
         },
     )
+
+
+def _review_actions_available(database_path: Path | str, task: dict[str, Any]) -> bool:
+    if task.get("status") != "Review":
+        return False
+    session_id = task.get("session_id")
+    if session_id:
+        try:
+            if db.get_session(database_path, session_id).get("status") == "completed":
+                return True
+        except KeyError:
+            pass
+    return any(run.get("status") == "completed" for run in db.list_worker_runs(database_path, task_id=task["id"]))
 
 
 @router.get("/settings/workers", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
@@ -326,7 +343,6 @@ async def test_control_plane_connection(request: Request):
     payload = {
         "model": settings.control_plane_model,
         "messages": [{"role": "user", "content": "Return exactly AGILE_AI_HTB_CONTROL_PLANE_OK."}],
-        "max_tokens": 12,
     }
     try:
         response = await request.app.state.llm_client.acompletion(payload)
@@ -439,9 +455,20 @@ async def launch_read_only_proof_route(project_id: str, request: Request):
 @router.post("/settings/workers/{adapter_id}/verify", dependencies=[Depends(require_portal_auth)])
 async def verify_worker_adapter_route(adapter_id: str, request: Request):
     payload, wants_html = await _worker_verify_payload_from_request(request)
+    database_path = request.app.state.settings.database_path
+    try:
+        _validate_worker_tracking_mode(database_path, adapter_id, payload.tracking_mode)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="worker adapter not found") from exc
+    except ValueError as exc:
+        if wants_html:
+            from urllib.parse import quote
+
+            return RedirectResponse(f"/settings/workers?error={quote(str(exc))}", status_code=status.HTTP_303_SEE_OTHER)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:
         result = verify_worker_adapter(
-            request.app.state.settings.database_path,
+            database_path,
             adapter_id,
             model=payload.model,
             proxy_url=payload.proxy_url or DEFAULT_PROXY_URL,
@@ -662,17 +689,97 @@ def _worker_adapter_view_models(database_path: Path | str) -> list[dict[str, Any
     for adapter in db.list_worker_adapters(database_path):
         config = adapter.get("config") or {}
         diag = config.get("_diagnostics") or {}
+        evidence = adapter.get("verification_evidence") or {}
+        readiness = evaluate_adapter_readiness(adapter)
+        tracking = readiness.tracking_view()
+        available_tracking_modes = _available_worker_tracking_modes(adapter)
         adapters.append(
             {
                 **adapter,
-                "verification_evidence": _safe_worker_evidence(adapter.get("verification_evidence", {})),
+                "verification_evidence": _safe_worker_evidence(evidence),
                 "diagnostics": diag,
-                "launchable": adapter_launchable_for_ui(adapter),
+                "launchable": readiness.ui_launchable,
                 "model_discovery": config.get("model_discovery"),
-                "tracking_modes": config.get("tracking_modes", ["native", "proxy_governed"]),
+                "tracking_modes": available_tracking_modes,
+                "tracking_mode_options": [tracking_mode_view(mode) for mode in available_tracking_modes],
+                "connection_type": _worker_connection_type(adapter),
+                "tracking": tracking,
+                "tracking_label": tracking["label"],
             }
         )
     return adapters
+
+
+def _available_worker_tracking_modes(adapter: dict[str, Any]) -> list[str]:
+    config = adapter.get("config") or {}
+    configured = config.get("tracking_modes")
+    proxy_capable = _adapter_uses_harness_proxy(adapter)
+    native_capable = _adapter_can_emit_native_usage(adapter)
+    allowed = _capability_allowed_tracking_modes(proxy_capable=proxy_capable, native_capable=native_capable)
+    if configured:
+        modes = [_normalize_configured_tracking_mode(mode) for mode in configured]
+        modes = [mode for mode in modes if mode in allowed]
+        if modes:
+            return _dedupe_tracking_modes(modes)
+
+    return _dedupe_tracking_modes([mode for mode in [PROXY_GOVERNED, NATIVE_USAGE, OBSERVED_ONLY] if mode in allowed])
+
+
+def _capability_allowed_tracking_modes(*, proxy_capable: bool, native_capable: bool) -> set[str]:
+    modes: list[str] = []
+    if proxy_capable:
+        modes.append(PROXY_GOVERNED)
+    if native_capable:
+        modes.append(NATIVE_USAGE)
+    if native_capable or not proxy_capable:
+        modes.append(OBSERVED_ONLY)
+    return set(modes)
+
+
+def _normalize_configured_tracking_mode(mode: Any) -> str:
+    mode = str(mode)
+    if mode == "native":
+        return NATIVE_USAGE
+    return mode
+
+
+def _dedupe_tracking_modes(modes: list[str]) -> list[str]:
+    deduped: list[str] = []
+    for mode in modes:
+        if mode not in deduped:
+            deduped.append(mode)
+    return deduped
+
+
+def _validate_worker_tracking_mode(database_path: Path | str, adapter_id: str, requested_mode: str) -> None:
+    adapter = db.get_worker_adapter(database_path, adapter_id)
+    available = _available_worker_tracking_modes(adapter)
+    if requested_mode not in available:
+        raise ValueError(
+            f"Tracking mode {requested_mode!r} is not available for this adapter. Available modes: {', '.join(available)}."
+        )
+
+
+def _worker_connection_type(adapter: dict[str, Any]) -> str:
+    if _adapter_uses_harness_proxy(adapter) and not _adapter_can_emit_native_usage(adapter):
+        return "API / Proxy Worker"
+    if _adapter_uses_harness_proxy(adapter):
+        return "API / Proxy-capable CLI Worker"
+    return "CLI Worker"
+
+
+def _adapter_uses_harness_proxy(adapter: dict[str, Any]) -> bool:
+    config = adapter.get("config") or {}
+    template = config.get("verification_template") or []
+    serialized = " ".join(str(part) for part in template)
+    return "{proxy_url}" in serialized and "{session_api_key}" in serialized
+
+
+def _adapter_can_emit_native_usage(adapter: dict[str, Any]) -> bool:
+    config = adapter.get("config") or {}
+    if config.get("native_verification_template"):
+        return True
+    return adapter.get("kind") in {"opencode"}
 
 
 def _active_adapter_for_request(adapters: list[dict[str, Any]], request: Request) -> dict[str, Any] | None:

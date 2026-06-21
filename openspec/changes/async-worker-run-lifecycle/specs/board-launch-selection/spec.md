@@ -35,6 +35,14 @@ When a Worker Run fails retryably, the board template SHALL render the failure o
 - **AND** operator clicks "Launch task" without budget override
 - **THEN** the board shows "Task estimate exceeds remaining launch budget" in an error banner
 
+#### Scenario: Native usage budget override requires acknowledgement
+- **WHEN** task estimate exceeds remaining worker_execution budget
+- **AND** the selected Worker Adapter uses `native_usage` tracking mode
+- **AND** operator chooses to launch with budget override
+- **THEN** the board requires acknowledgement that native usage cannot be request-throttled mid-run
+- **AND** the launched Worker Run records `budget_override=true`
+- **AND** post-run reconciliation may report a budget overrun after native usage evidence is imported
+
 #### Scenario: Adapter not launch-ready on launch
 - **WHEN** operator clicks "Launch task" with an adapter that is unconfigured or unverified
 - **THEN** the board shows the launch guardrail failure reasons in an error banner

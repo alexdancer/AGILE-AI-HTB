@@ -51,9 +51,9 @@
 **Relationships**: Created on a Task Branch. Referenced by the Session Artifact and Portal review flow.
 
 ## Blocked Worker Session
-**Definition**: A Worker Session that cannot complete successfully because the Worker crashed, timed out, exceeded budget, failed verification, or produced no observed Harness Proxy traffic.
-**Properties**: No automatic retry in the first implementation. The Harness preserves logs, token ledger entries, failure reason, branch name, and any uncommitted diff. Failure reasons include adapter crash, budget exceeded, timeout, verification failed, and no model call observed.
-**Relationships**: Moves the Task to Blocked. May leave a Task Branch with uncommitted changes for user review or later retry.
+**Definition**: A Worker Session that cannot continue because of a hard safety, workflow, dependency, or manual blocker rather than a retryable adapter runtime failure.
+**Properties**: The Harness preserves logs, token ledger entries when present, failure reason, branch name, and any uncommitted diff. Hard safety examples include read-only project mutation and write-capable verification failure requiring manual intervention. Retryable operational failures such as adapter timeout, nonzero exit, or missing authoritative usage after a launch attempt return the Task to Estimated with launch-error evidence instead of making it Blocked.
+**Relationships**: Moves or keeps the Task in Blocked only for hard blockers. Operational launch failures are recorded on the Worker Run and keep the Task relaunchable from Estimated.
 
 ## Optional Pull Request
 **Definition**: A pull request opened from a Harness-created Task Branch after a Harness-Owned Commit exists.
@@ -68,13 +68,19 @@
 ## Worker
 **Definition**: The AI coding agent being governed by the harness — the entity that consumes tokens by making API calls and invoking tools.
 **Also known as**: Agent, Coding Agent.
-**Properties**: Swappable (Hermes, Claude Code, Codex CLI). Communicates via an OpenAI-compatible API.
+**Properties**: Swappable (OpenCode, Claude Code, Codex CLI, Hermes, or another coding-agent harness). May use Harness Proxy traffic, native CLI usage reporting, or non-authoritative process/log observation depending on the selected Worker Adapter Tracking Mode.
 **Relationships**: Governed by the Harness. Consumes a Token Budget. Produces Session Artifacts.
 
 ## Worker Adapter
-**Definition**: The Harness integration that configures, validates, launches, and observes one kind of Worker such as Claude Code, Codex, OpenCode, Hermes, or a custom command.
-**Properties**: Has a launch command, working directory, model support, session key wiring, and token-tracking verification status. First-class Worker Adapter presets include OpenCode, Claude Code, Codex, and Hermes; custom command support may exist for extensibility but is not the primary demo path. OpenCode is the first verified local Worker Adapter target. Adapter verification requires a real sentinel call through the Harness Proxy that records token usage under an adapter verification session; install-only checks are not launch proof. Provider API keys live only in the Harness; Workers receive only a session-scoped Harness key and Harness Proxy base URL so they cannot bypass token tracking. The Portal may show all first-class adapters even when only one is verified in the current environment; Launch Guardrails keep unverified adapters non-launchable.
-**Relationships**: Selected by the User before launch. Must pass Launch Guardrails before the AGILE Board can dispatch a Task to a Worker.
+**Definition**: The Harness integration that configures, validates, launches, and observes an installed local coding-agent CLI such as OpenCode, Claude Code, Codex, Hermes, or a custom command.
+**Properties**: Has a CLI command, working directory, model discovery path, launch command, supported models, tracking mode, and verification status. First-class Worker Adapter presets include OpenCode, Claude Code, Codex, and Hermes; custom command support may exist for extensibility but is not the primary demo path. OpenCode is the first verified local Worker Adapter target. Adapter verification must exercise the real CLI launch path with a harmless sentinel prompt; install-only checks are not launch proof. Proxy governance is one tracking mode, not the definition of a Worker Adapter. The Portal may show all first-class adapters even when only one is verified in the current environment; Launch Guardrails keep unverified or non-authoritative adapters non-launchable for governed Tasks.
+**Relationships**: Selected by the User before launch. Has a Worker Adapter Tracking Mode. Must pass Launch Guardrails before the AGILE Board can dispatch a governed Task to a Worker.
+
+## Worker Adapter Tracking Mode
+**Definition**: The verified method by which the Harness proves token usage for a Worker Adapter launch.
+**Properties**: `proxy_governed` means Worker model traffic flows through the Harness Proxy and is budget-authoritative. `native_usage` means the coding-agent CLI emits trustworthy machine-readable token usage evidence and is budget-authoritative when verified. Trustworthy native usage includes the selected model, prompt/input tokens, completion/output tokens, total tokens, exit status, and evidence binding the usage to the launched Worker Run. Approximate, scraped, human-readable, model-less, or unbound usage evidence is not authoritative and leaves the adapter `observed_only`. `observed_only` means the Harness can observe process/log evidence but cannot prove governed token usage, so it is not launchable for governed Tasks from the normal AGILE Board. Observed-only adapters may run only from a separate Worker Setup diagnostic/test flow that records command started, stdout/stderr, exit code or timeout, detected model if available, and an explicit not-budget-authoritative warning without changing task state or showing a Launch-ready badge.
+**Portal labels**: `proxy_governed` displays as **Governed via Harness Proxy**. `native_usage` displays as **Tracked via Native Usage**. `observed_only` displays as **Observed Only**. Portal copy must not use the generic label "Governed" for all launchable adapters; it should separately show launch readiness, tracking label, runtime request guardrail availability, and accounting authority.
+**Relationships**: Belongs to a Worker Adapter. Feeds Launch Guardrails, Orchestration Tokens, Worker Session accounting, and Portal launch readiness labels.
 
 ## Worker Setup
 **Definition**: The user-facing configuration workflow for choosing and validating which Worker Adapters can be launched by the AGILE Board.
@@ -109,7 +115,7 @@
 ## Spike
 **Definition**: A bounded pre-task Worker Session used to inspect enough project context to improve a low-confidence estimate before the real implementation begins.
 **Properties**: Requires a launchable Worker Adapter because it is a Worker Session. By default it uses the same Worker Adapter and model intended for implementation, but the User may override to a cheaper or faster launchable adapter/model. It has no spike-specific token cap; normal daily and session guardrails still apply. It may inspect files, inspect configuration, and run targeted non-mutating tests or discovery commands, but must not modify production code, run destructive commands, broad test suites without approval, migrations, or commits. Its output is findings, revised estimate, risks, and launch recommendation.
-**Relationships**: Triggered by low-confidence Task Estimation or by User choice. Counts against the daily budget as orchestration tokens labeled as spike, not Task actual implementation tokens. Automatically updates the Task estimate, recommended model, confidence, rationale, and risks, then returns the Task to Estimated with an updated-by-spike badge. The User still accepts the estimate and chooses the Worker before Ready/Launch.
+**Relationships**: Triggered by low-confidence Task Estimation or by User choice. Counts against the daily budget as orchestration tokens labeled as spike, not Task actual implementation tokens. Automatically updates the Task estimate, recommended model, confidence, rationale, and risks, then returns the Task to Estimated with an updated-by-spike badge. The User still accepts the estimate and chooses the Worker before Launch.
 
 ## Orchestration Tokens
 **Definition**: Tokens spent by the Harness itself to plan, estimate, validate, or coordinate work before or around Worker execution.
@@ -119,17 +125,17 @@
 ## Token Budget
 **Definition**: A cap on token consumption, declared at two levels — daily (across all sessions) and per-session.
 **Also known as**: Budget, Cap.
-**Properties**: Expressed in tokens. Daily budget includes both Worker Session tokens and Orchestration Tokens. Per-session budget applies to Worker Session tokens. Budget state gates new launches before they start, but does not automatically halt a Worker Session mid-task. When an estimate exceeds remaining budget before launch, the User may explicitly approve a budget override; the Session is tagged as a budget override and audited. When exceeded during a running Session, the Harness records the overrun and raises alarms; user/admin manual abort remains available.
+**Properties**: Expressed in tokens. Daily budget includes both Worker Session tokens and Orchestration Tokens. Per-session budget applies to Worker Session tokens. Budget state gates new launches before they start, but does not automatically halt a Worker Session mid-task. When an estimate exceeds remaining budget before launch, the User may explicitly approve a budget override; the Session is tagged as a budget override and audited. `native_usage` overrides require explicit acknowledgement that native usage cannot be request-throttled mid-run and may reconcile as an overrun after completion. When exceeded during a running Session, the Harness records the overrun and raises alarms; user/admin manual abort remains available.
 **Relationships**: Governed by Guardrails G1 and G2. Monitored by Checkpoint C1.
 
 ## Guardrail
 **Definition**: A declared constraint that the harness enforces on the Worker. Every guardrail is explicit configuration, not implicit behavior.
-**Properties**: Has a name, a threshold, and an enforcement action (context injection, alarm, or both). Never hard-stops the agent.
-**Relationships**: Declared in the Guardrail Configuration. Enforced by the Proxy Engine. May trigger an Alarm.
+**Properties**: Has a name, a threshold, and an enforcement action (context injection, alarm, or both). Never hard-stops the agent. Runtime request governance applies only when the Worker Adapter runs in `proxy_governed` mode and Worker model calls pass through the Harness Proxy. `native_usage` is budget-authoritative for accounting but limited to launch/review governance, preflight budget checks, post-run reconciliation, and alarms after usage is known. `observed_only` is process/log evidence only and is not governed-launchable.
+**Relationships**: Declared in the Guardrail Configuration. Enforced by the Proxy Engine for `proxy_governed` sessions and by launch/review reconciliation for `native_usage` sessions. May trigger an Alarm.
 
 ## Launch Guardrail
-**Definition**: A pre-run rule that prevents a Task from becoming Ready or Running unless the Harness can govern and observe the chosen Worker.
-**Properties**: Validates that a Worker Adapter is configured, the working directory is valid, the selected model is allowed, session key wiring exists, and token tracking has been proven by launching the configured Worker Adapter through the Proxy Engine.
+**Definition**: A pre-run rule that prevents a Task from becoming Running unless the Harness can govern and observe the chosen Worker.
+**Properties**: Validates that a Worker Adapter is configured, the working directory is valid, the selected model is allowed, and the selected tracking mode has proven budget-authoritative token usage. `proxy_governed` adapters require Harness Proxy session-key wiring. `native_usage` adapters require trustworthy native CLI usage evidence. `observed_only` adapters are not launchable for governed Tasks.
 **Relationships**: Gates AGILE Board launch. Protects the token-tracker promise before a Session starts. Distinct from runtime Guardrails, which constrain Worker behavior during a Session.
 
 ## Checkpoint
@@ -149,8 +155,8 @@
 
 ## AGILE Board
 **Definition**: The user-facing Kanban-style orchestration surface where the User enters or imports coding work, reviews harness estimates, selects a Worker, launches governed work, and tracks completion.
-**Properties**: Columns represent orchestration state: Estimated (token/model recommendation produced), Ready (User accepted estimate/model and selected a launchable Worker Adapter), Running (Worker Session active), Review (Session ended and awaits human review), Done (accepted), and Blocked (estimation failed or task needs human change before launch or continuation). There is no full Scrum/Jira workflow and no normal unestimated Backlog because task intake exists to break down, estimate, and budget token spend. A task with a valid estimate but no verified Worker Adapter remains Estimated with Launch disabled rather than becoming Blocked. Each task card shows estimated vs. actual tokens, model recommendation, default Worker Adapter with per-task override, and linked Session results. Global budget state is visible while planning and dispatching work.
-**Relationships**: Part of Material Handling. Contains Tasks. Produces estimates and Model Recommendations. Dispatches ready Tasks to a Worker through a Session. Returns Session Reports to the User. Accepts work through manual single-task entry, Markdown plan import with task breakdown, or long-task decomposition into multiple smaller Tasks. Current product docs, demo data, and tests should use the canonical board states; old Backlog language belongs only in clearly historical implementation plans.
+**Properties**: Columns represent orchestration state: Estimated (token/model recommendation produced and launchable once guardrails pass), Running (Worker Session active), Review (Session ended and awaits human review), Done (accepted), and Blocked (estimation failed or task needs human change before launch or continuation). There is no full Scrum/Jira workflow and no normal unestimated Backlog because task intake exists to break down, estimate, and budget token spend. A task with a valid estimate but no verified Worker Adapter remains Estimated with Launch available but guardrail-blocked rather than becoming Blocked. Each task card shows estimated vs. actual tokens, model recommendation, default Worker Adapter with per-task override, and linked Session results. Global budget state is visible while planning and dispatching work.
+**Relationships**: Part of Material Handling. Contains Tasks. Produces estimates and Model Recommendations. Dispatches Estimated Tasks to a Worker through a Session. Returns Session Reports to the User. Accepts work through manual single-task entry, Markdown plan import with task breakdown, or long-task decomposition into multiple smaller Tasks. Current product docs, demo data, and tests should use the canonical board states; old Backlog language belongs only in clearly historical implementation plans.
 
 ## Model Recommendation
 **Definition**: The harness's suggested model tier for a given Task, based on task complexity classification with an optional budget-aware downgrade.

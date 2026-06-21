@@ -151,7 +151,7 @@ def build_project_capability(
         reasons.append(path_error)
     if not backend_online:
         reasons.append("Local Runner backend is offline.")
-    if not db.has_verified_worker_adapter(database_path):
+    if not db.has_launchable_worker_adapter(database_path):
         reasons.append("No verified launchable Worker Adapter is available.")
 
     if not path_error and backend_online and not reasons:

@@ -76,7 +76,7 @@ export TOKEN_TRACKER_PORTAL_TOKEN=demo-token
 PROJECT_ROOT=$PWD scripts/local-opencode-readonly-demo.sh
 ```
 
-Flow: tests control-plane connection → discovers OpenCode Worker models → verifies native usage tracking → connects local project → launches read-only proof. No OpenAI-style Worker credential is required for native OpenCode; configure OpenCode itself first.
+Flow: tests control-plane connection → discovers OpenCode Worker models from the installed CLI → verifies `native_usage` tracking → connects local project → launches read-only proof. No OpenAI-style Worker credential is required for native OpenCode; configure OpenCode itself first. If OpenCode cannot emit trustworthy run-bound native usage evidence, the adapter remains diagnostic/`observed_only` and is not launchable from the AGILE Board.
 
 ## Deploy to Render
 
@@ -109,7 +109,7 @@ Full runbook: [`docs/DEPLOY.md`](docs/DEPLOY.md)
 ## Tests
 
 ```bash
-# Full suite (276 tests, 0 failures)
+# Full suite (286 tests, 0 failures)
 uv run python -m pytest -q
 
 # Behavioral evals only (31 tests)

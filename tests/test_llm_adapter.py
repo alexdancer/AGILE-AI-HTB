@@ -163,6 +163,34 @@ async def test_llm_client_translates_gpt5_max_tokens_to_max_completion_tokens(mo
 
 
 @pytest.mark.asyncio
+async def test_llm_client_drops_unsupported_gpt5_temperature(monkeypatch):
+    captured = {}
+
+    def fake_post_json(url, headers, payload):
+        captured.update({"payload": payload})
+        return {"id": "chatcmpl_fake", "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}}
+
+    monkeypatch.setenv("CONTROL_TEST_KEY", "test-key")
+    settings = Settings(
+        control_plane_provider="openai",
+        control_plane_model="gpt-5.4-mini",
+        control_plane_api_key_env="CONTROL_TEST_KEY",
+    )
+
+    await LLMClient(settings, http_post_json=fake_post_json).acompletion(
+        {
+            "model": "gpt-5.4-mini",
+            "messages": [{"role": "user", "content": "hi"}],
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+        }
+    )
+
+    assert "temperature" not in captured["payload"]
+    assert captured["payload"]["response_format"] == {"type": "json_object"}
+
+
+@pytest.mark.asyncio
 async def test_final_stream_usage_uses_only_last_usage_chunk():
     async def chunks():
         yield {"choices": [{"delta": {"content": "a"}}], "usage": {"prompt_tokens": 100, "completion_tokens": 100, "total_tokens": 200}}

@@ -45,7 +45,8 @@
       {% endif %}
     </div>
     <div class="card">
-      <h3>3. Verify token tracking</h3>
+      <h3>3. Verify Worker tracking</h3>
+      <p><span class="pill purple">{{ active_adapter.connection_type }}</span></p>
       <form method="post" action="/settings/workers/{{ active_adapter.id }}/verify">
         <label>Model</label>
         <select name="model">
@@ -54,14 +55,20 @@
         </select>
         <label>Tracking mode</label>
         <select name="tracking_mode">
-          <option value="proxy_governed">Proxy-governed direct provider usage</option>
-          <option value="native_usage">Native Worker usage evidence</option>
+          {% for mode in active_adapter.tracking_mode_options %}<option value="{{ mode.mode }}">{{ mode.label }}</option>{% endfor %}
         </select>
-        <details style="margin:10px 0">
-          <summary>Advanced details</summary>
+        <p class="muted"><strong>CLI Worker</strong> means the harness launches a local command and can only trust token usage after the CLI emits native usage evidence. <strong>API / Proxy Worker</strong> means the Worker sends OpenAI-compatible API traffic to the Harness Proxy URL before the provider, enabling live runtime guardrails.</p>
+        {% if 'proxy_governed' in active_adapter.tracking_modes %}
+        <details style="margin:10px 0" open>
+          <summary>API / Proxy settings</summary>
           <label>Proxy URL</label>
           <input name="proxy_url" value="{{ default_proxy_url }}">
+          <p class="muted">Only used by API / Proxy mode. CLI native usage mode does not use this URL unless that CLI is explicitly configured to call it.</p>
         </details>
+        {% else %}
+        <input type="hidden" name="proxy_url" value="{{ default_proxy_url }}">
+        <p class="muted">Proxy URL hidden: this adapter is currently treated as a CLI Worker, not an API / Proxy Worker.</p>
+        {% endif %}
         <button type="submit">Verify tracking</button>
       </form>
     </div>
@@ -69,6 +76,8 @@
       <h3>4. Launch readiness</h3>
       <p><span class="pill {% if active_adapter.configured %}green{% else %}yellow{% endif %}">{% if active_adapter.configured %}configured{% else %}unconfigured{% endif %}</span></p>
       <p><span class="pill {% if active_adapter.verification_status == 'verified' %}green{% elif active_adapter.verification_status == 'failed' %}red{% else %}yellow{% endif %}">{{ active_adapter.verification_status }}</span></p>
+      <p><span class="pill blue">{{ active_adapter.tracking_label }}</span></p>
+      <p class="muted">Runtime request guardrails: {{ active_adapter.tracking.runtime_request_guardrails }} · Accounting: {{ active_adapter.tracking.accounting }}</p>
       <p><span class="pill {% if active_adapter.launchable %}green{% else %}yellow{% endif %}">{% if active_adapter.launchable %}launchable{% else %}not launchable{% endif %}</span></p>
       {% if active_adapter.is_default %}<p><span class="pill blue">default</span></p>{% endif %}
       {% if active_adapter.launchable %}<p><a class="btn primary" href="/board">Open board</a></p>{% endif %}
@@ -89,6 +98,7 @@
         <td>
           <span class="pill {% if adapter.configured %}green{% else %}yellow{% endif %}">{% if adapter.configured %}configured{% else %}unconfigured{% endif %}</span>
           <span class="pill {% if adapter.verification_status == 'verified' %}green{% elif adapter.verification_status == 'failed' %}red{% else %}yellow{% endif %}">{{ adapter.verification_status }}</span>
+          <span class="pill blue">{{ adapter.tracking_label }}</span>
           {% if adapter.launchable %}<span class="pill green">launchable</span>{% endif %}
         </td>
         <td>{{ adapter.supported_models|join(', ') if adapter.supported_models else 'No discovered models' }}</td>
@@ -107,7 +117,10 @@
             <div class="kv" style="margin-top:8px">
               <div class="k">kind</div><div class="v">{{ adapter.kind }}</div>
               <div class="k">workdir</div><div class="v">{{ adapter.workdir or 'not configured' }}</div>
+              <div class="k">connection type</div><div class="v">{{ adapter.connection_type }}</div>
               <div class="k">tracking modes</div><div class="v">{{ adapter.tracking_modes|join(', ') }}</div>
+              <div class="k">runtime guardrails</div><div class="v">{{ adapter.tracking.runtime_request_guardrails }}</div>
+              <div class="k">accounting</div><div class="v">{{ adapter.tracking.accounting }}</div>
               <div class="k">model discovery</div><div class="v">{% if adapter.model_discovery %}Native model discovery: {{ adapter.model_discovery }}{% else %}not run{% endif %}</div>
               <div class="k">verification evidence</div><div class="v"><pre>{{ adapter.verification_evidence }}</pre></div>
             </div>

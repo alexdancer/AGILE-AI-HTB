@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from agile_ai_htb.adapter_readiness import evaluate_adapter_readiness
+
 SCHEMA = """
 create table if not exists sessions (
     id text primary key,
@@ -904,6 +906,12 @@ def has_verified_worker_adapter(path: Path | str) -> bool:
             "select 1 from worker_adapters where verification_status = 'verified' limit 1"
         ).fetchone()
     return row is not None
+
+
+def has_launchable_worker_adapter(path: Path | str) -> bool:
+    return any(
+        evaluate_adapter_readiness(adapter).launchable_tracking for adapter in list_worker_adapters(path)
+    )
 
 
 def has_adapter_verification_token(path: Path | str, *, session_id: str, model: str) -> bool:

@@ -32,7 +32,14 @@ def _post(url: str, payload: dict, *, headers: dict | None = None) -> dict:
 
 
 def _tool(name: str) -> dict:
-    return {"type": "function", "function": {"name": name}}
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": f"Synthetic DEMO tool named {name}.",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    }
 
 
 def demo_worker(

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from agile_ai_htb import db
+from agile_ai_htb.tracking_modes import NATIVE_USAGE, OBSERVED_ONLY, PROXY_GOVERNED
 
 SENTINEL_RESPONSE = "AGILE_AI_HTB_ADAPTER_OK"
 SENTINEL_PROMPT = (
@@ -449,11 +450,11 @@ def verify_worker_adapter(
     )
     builder = get_adapter_builder(adapter)
     reasons: list[str] = []
-    if tracking_mode not in {"proxy_governed", "native_usage"}:
+    if tracking_mode not in {PROXY_GOVERNED, NATIVE_USAGE, OBSERVED_ONLY}:
         reasons.append("Unsupported adapter verification tracking mode.")
     if not builder.supports_model(model):
         reasons.append("Selected model is not supported by this adapter.")
-    if tracking_mode == "native_usage":
+    if tracking_mode in {NATIVE_USAGE, OBSERVED_ONLY}:
         plan = builder.build_native_verification_command(model=model, prompt=SENTINEL_PROMPT)
     else:
         plan = builder.build_verification_command(
@@ -462,11 +463,12 @@ def verify_worker_adapter(
             proxy_url=proxy_url,
             session_api_key=session_api_key,
         )
+    plan = CommandPlan(plan.command, plan.cwd, plan.env, {**plan.metadata, "session_id": session["id"]})
     if reasons:
         evidence = {
             "session_id": session["id"],
             "model": model,
-            "tracking_mode": "observed_only",
+            "tracking_mode": OBSERVED_ONLY,
             "tracking_authoritative": False,
             "preflight_failed": True,
             "reasons": list(reasons),
@@ -487,14 +489,14 @@ def verify_worker_adapter(
         )
     stdout = str(_result_field(completed, "stdout") or "")
     returncode = int(_result_field(completed, "returncode", 0) or 0)
-    sentinel_matched = _native_sentinel_matched(stdout) if tracking_mode == "native_usage" else stdout.strip() == SENTINEL_RESPONSE
+    sentinel_matched = _native_sentinel_matched(stdout) if tracking_mode in {NATIVE_USAGE, OBSERVED_ONLY} else stdout.strip() == SENTINEL_RESPONSE
     if returncode != 0:
         reasons.append("Adapter verification command failed.")
     if not sentinel_matched:
         reasons.append("Adapter did not return exact verification sentinel.")
 
-    native_usage = _parse_native_usage_evidence(stdout, model=model) if tracking_mode == "native_usage" else None
-    if tracking_mode == "native_usage":
+    native_usage = _parse_native_usage_evidence(stdout, model=model, returncode=returncode) if tracking_mode == NATIVE_USAGE else None
+    if tracking_mode == NATIVE_USAGE:
         if native_usage is None:
             reasons.append("No trustworthy native usage evidence was emitted for selected model.")
         else:
@@ -509,24 +511,24 @@ def verify_worker_adapter(
                 raw_usage={
                     **native_usage.raw_usage,
                     "total_tokens": native_usage.total_tokens,
-                    "usage_source": "native_usage",
-                    "tracking_mode": "native_usage",
+                    "usage_source": NATIVE_USAGE,
+                    "tracking_mode": NATIVE_USAGE,
                     "worker_harness": adapter.get("kind"),
                 },
             )
-    elif token_recorder is not None:
+    elif tracking_mode == PROXY_GOVERNED and token_recorder is not None:
         token_recorder(session["id"])
 
     token_recorded = db.has_adapter_verification_token(database_path, session_id=session["id"], model=model)
-    if not token_recorded:
+    if tracking_mode != OBSERVED_ONLY and not token_recorded:
         reasons.append("No adapter_verification token row was recorded for selected model.")
-    resolved_tracking_mode = tracking_mode if token_recorded else "observed_only"
+    resolved_tracking_mode = OBSERVED_ONLY if tracking_mode == OBSERVED_ONLY or not token_recorded else tracking_mode
 
     evidence = {
         "session_id": session["id"],
         "model": model,
         "tracking_mode": resolved_tracking_mode,
-        "tracking_authoritative": resolved_tracking_mode in {"proxy_governed", "native_usage"},
+        "tracking_authoritative": resolved_tracking_mode in {PROXY_GOVERNED, NATIVE_USAGE},
         "returncode": returncode,
         "stdout": _redact_value(stdout.strip()),
         "stderr": _redact_value(str(_result_field(completed, "stderr", ""))),
@@ -548,13 +550,18 @@ def _native_sentinel_matched(stdout: str) -> bool:
     return any(SENTINEL_RESPONSE in str(value) for value in _walk_json_values(_parse_json_stream(stdout)))
 
 
-def _parse_native_usage_evidence(stdout: str, *, model: str) -> NativeUsageEvidence | None:
+def _parse_native_usage_evidence(stdout: str, *, model: str, returncode: int = 0) -> NativeUsageEvidence | None:
+    if returncode != 0:
+        return None
     for item in _walk_json_dicts(_parse_json_stream(stdout)):
         usage = _usage_payload(item)
         if not usage:
             continue
-        usage_model = _usage_model(item, usage)
+        usage_model = _usage_model(item, usage) or model
         if usage_model != model:
+            continue
+        run_binding = _usage_run_binding(item, usage)
+        if run_binding is None:
             continue
         prompt_tokens = _int_from_any(
             usage.get("prompt_tokens")
@@ -577,8 +584,8 @@ def _parse_native_usage_evidence(stdout: str, *, model: str) -> NativeUsageEvide
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
-            cost=_float_from_any(usage.get("cost") or usage.get("cost_usd") or usage.get("usd")),
-            raw_usage={"model": usage_model, "usage": usage},
+            cost=_float_from_any(usage.get("cost") or usage.get("cost_usd") or usage.get("usd") or item.get("cost")),
+            raw_usage={"model": usage_model, "usage": usage, "run_binding": run_binding},
         )
     return None
 
@@ -636,6 +643,14 @@ def _usage_model(item: dict[str, Any], usage: dict[str, Any]) -> str | None:
     return None
 
 
+def _usage_run_binding(item: dict[str, Any], usage: dict[str, Any]) -> dict[str, str] | None:
+    for container in (item, usage):
+        for key in ("session_id", "sessionID", "run_id", "command_id", "conversation_id", "messageID"):
+            if container.get(key):
+                return {key: str(container[key])}
+    return None
+
+
 def _looks_like_usage_key(key: str) -> bool:
     normalized = key.lower()
     return normalized in {
@@ -647,6 +662,10 @@ def _looks_like_usage_key(key: str) -> bool:
         "tokens_in",
         "tokens_out",
         "cost_usd",
+        "input",
+        "output",
+        "total",
+        "reasoning",
     }
 
 

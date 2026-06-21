@@ -43,7 +43,7 @@
         <label class="mono" style="font-size:11px">Adapter</label>
         <select name="adapter_id" onchange="updateModels(this, 'models-{{ task.id }}')" style="width:100%;margin-bottom:4px">
           {% for a in adapters %}
-          <option value="{{ a.id }}" {% if a.is_default %}selected{% endif %} data-models="{{ a.supported_models|join(',') }}">{{ a.name }}</option>
+          <option value="{{ a.id }}" {% if a.is_default %}selected{% endif %} data-models="{{ a.supported_models|join(',') }}">{{ a.name }}{% if a.tracking_label %} — {{ a.tracking_label }}{% endif %}</option>
           {% endfor %}
         </select>
         <label class="mono" style="font-size:11px">Model</label>
@@ -56,6 +56,12 @@
           <option value="{{ task.recommended_model }}">{{ task.recommended_model }} (no discovered models)</option>
           {% endif %}
         </select>
+        {% endif %}
+        {% if task.metadata.budget_override_available %}
+        <label class="mono" style="font-size:11px"><input type="checkbox" name="budget_override" value="1"> Override launch budget</label>
+        {% if task.metadata.native_usage_override_ack_required %}
+        <label class="mono" style="font-size:11px"><input type="checkbox" name="native_budget_acknowledged" value="1"> {{ task.metadata.native_usage_override_ack_text }}</label>
+        {% endif %}
         {% endif %}
         <button type="submit" style="width:100%">Launch task</button>
       </form>
@@ -80,7 +86,56 @@
       {% if task.metadata.launch_blocked_reason and not task.metadata.launch_retryable %}<p class="muted">{{ task.metadata.launch_blocked_reason }}</p>{% endif %}
       {% if column == 'Blocked' and task.metadata.blocked_reason %}<p class="muted">{{ task.metadata.blocked_reason }}</p>{% endif %}
       {% if column == 'Blocked' and task.metadata.requires_manual_estimate %}<p class="muted">Manual estimate required</p>{% endif %}
-      {% if column == 'Review' and task.metadata.launch_stdout %}<p class="muted mono">Output: {{ task.metadata.launch_stdout }}</p>{% endif %}
+      {% if column == 'Review' %}
+      {% if task.metadata.launch_stdout %}<p class="muted mono">Output: {{ task.metadata.launch_stdout }}</p>{% endif %}
+      <div class="review-actions" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:grid;gap:8px">
+        {% if task.metadata.review_actions_available %}
+        {% if task.metadata.review_prompt %}
+        <div style="padding:8px;background:rgba(255,255,255,0.04);border-radius:4px">
+          <p class="muted" style="margin:0 0 4px"><strong>User review note</strong></p>
+          <p class="muted" style="margin:0">{{ task.metadata.review_prompt }}</p>
+        </div>
+        {% endif %}
+        {% if task.metadata.agent_review %}
+        <div style="padding:8px;background:rgba(255,255,255,0.04);border-radius:4px">
+          <p class="muted" style="margin:0 0 4px"><strong>Agent Review</strong> · {{ task.metadata.agent_review.status }} · {{ task.metadata.agent_review.recommendation }}</p>
+          <p class="muted" style="margin:0">{{ task.metadata.agent_review.summary }}</p>
+          {% if task.metadata.agent_review.findings %}
+          <ul class="muted" style="margin:6px 0 0;padding-left:18px">
+            {% for finding in task.metadata.agent_review.findings %}
+            <li>{{ finding.severity }}: {{ finding.message }}{% if finding.path %} <span class="mono">{{ finding.path }}{% if finding.line %}:{{ finding.line }}{% endif %}</span>{% endif %}</li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </div>
+        {% endif %}
+        <form method="post" action="/tasks/{{ task.id }}/review" style="display:grid;gap:6px">
+          <input type="hidden" name="action" value="save_prompt">
+          <label class="mono" style="font-size:11px">Review prompt / focus</label>
+          <textarea name="review_prompt" rows="2" placeholder="Tell the reviewer what to focus on..." style="width:100%">{{ task.metadata.review_prompt or '' }}</textarea>
+          <button type="submit">Save note</button>
+        </form>
+        <div class="btn-row" style="display:flex;gap:6px;flex-wrap:wrap">
+          <form method="post" action="/tasks/{{ task.id }}/review">
+            <input type="hidden" name="action" value="agent_review">
+            <input type="hidden" name="review_prompt" value="{{ task.metadata.review_prompt or '' }}">
+            <button type="submit">Agent Review</button>
+          </form>
+          <form method="post" action="/tasks/{{ task.id }}/review">
+            <input type="hidden" name="action" value="mark_done">
+            <button type="submit" class="primary">Mark Done</button>
+          </form>
+        </div>
+        <form method="post" action="/tasks/{{ task.id }}/review" style="display:grid;gap:6px">
+          <input type="hidden" name="action" value="block">
+          <input name="blocked_reason" placeholder="Block reason" required>
+          <button type="submit">Block</button>
+        </form>
+        {% else %}
+        <p class="muted">Review actions require completed Worker Run evidence.</p>
+        {% endif %}
+      </div>
+      {% endif %}
       {% if task.session_id %}<p><a href="/sessions/{{ task.session_id }}">Session report</a></p>{% endif %}
     </div>
     {% else %}

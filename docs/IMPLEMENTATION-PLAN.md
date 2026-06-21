@@ -28,7 +28,7 @@
 | Layer | Status | Notes |
 |---|---|---|
 | DB schema (`db.py`) | ✓ | `token_turns.usage_kind`, `worker_adapters` table, `tasks.metadata_json`, migrations |
-| Board columns (`portal.py`) | ✓ | Canonical: Estimated → Ready → Running → Review → Done, plus Blocked |
+| Board columns (`portal.py`) | ✓ | Canonical: Estimated → Running → Review → Done, plus Blocked |
 | Task CRUD (`tasks.py`) | ✓ | Canonical statuses enforced; non-canonical status → Blocked |
 | Estimator LLM (`estimation.py`) | ✓ | `EstimateResult` shape, fake-LLM test path, `usage_kind='estimation'` persistence |
 | `POST /estimate` route | ✓ | Calls estimator, creates Estimated or Blocked task |
@@ -93,11 +93,11 @@ Until these three portal forms exist, the demo loop requires `curl` for every st
 - Modify: `tests/test_portal.py`
 
 **Steps:**
-1. Change board columns to `Estimated`, `Ready`, `Running`, `Review`, `Done`, `Blocked`.
+1. Change board columns to `Estimated`, `Running`, `Review`, `Done`, `Blocked`.
 2. Remove `Other` as normal display state; decide whether unexpected statuses map to `Blocked` or a visually hidden/debug fallback in tests.
 3. Update board subtitle and task card copy away from backlog language.
-4. Add Launch-disabled messaging on Estimated cards when no verified Worker Adapter exists: “Configure Worker Adapter to launch.”
-5. Update portal tests for six canonical columns and no Backlog.
+4. Add guardrail-blocked launch messaging on Estimated cards when no verified Worker Adapter exists: “Configure Worker Adapter to launch.”
+5. Update portal tests for five canonical columns and no Backlog.
 
 **Verification:**
 - Run: `python -m pytest tests/test_portal.py::test_board_renders_columns_and_task_cards -q`
@@ -364,7 +364,7 @@ Until these three portal forms exist, the demo loop requires `curl` for every st
 
 ### Task 6.1: Add task launch endpoint and board wiring
 
-**Objective:** Move accepted tasks from Ready to Running only when Launch Guardrails pass.
+**Objective:** Move accepted Estimated tasks to Running only when Launch Guardrails pass.
 
 **Files:**
 - Modify: `src/agile_ai_htb/routes/tasks.py` or add launch route

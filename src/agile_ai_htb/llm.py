@@ -250,6 +250,8 @@ def _openai_compatible_payload(request: dict[str, Any], model: str) -> dict[str,
         max_tokens = payload.pop("max_tokens", None)
         if max_tokens is not None and "max_completion_tokens" not in payload:
             payload["max_completion_tokens"] = max_tokens
+        if payload.get("temperature") not in {None, 1, 1.0}:
+            payload.pop("temperature", None)
     return payload
 
 

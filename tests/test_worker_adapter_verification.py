@@ -304,6 +304,35 @@ def test_verify_worker_adapter_returns_sanitized_evidence(tmp_path):
     assert "***REDACTED***" in serialized
 
 
+def test_verify_worker_adapter_observed_only_records_diagnostic_not_authority(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(
+        db_path,
+        "opencode",
+        workdir=str(tmp_path),
+        config={"native_verification_template": ["opencode", "run", "--format", "json", "{prompt}"]},
+        supported_models=["opencode/gpt-5.1"],
+    )
+    runner = FakeRunner(stdout=json.dumps({"type": "message", "content": SENTINEL_RESPONSE}))
+
+    result = verify_worker_adapter(
+        db_path,
+        "opencode",
+        model="opencode/gpt-5.1",
+        proxy_url="http://127.0.0.1:8000/v1",
+        tracking_mode="observed_only",
+        runner=runner,
+    )
+
+    adapter = db.get_worker_adapter(db_path, "opencode")
+    assert result.passed is True
+    assert adapter["verification_status"] == "verified"
+    assert adapter["verification_evidence"]["tracking_mode"] == "observed_only"
+    assert adapter["verification_evidence"]["tracking_authoritative"] is False
+    assert db.has_adapter_verification_token(db_path, session_id=result.session_id, model="opencode/gpt-5.1") is False
+
+
 def test_verify_worker_adapter_native_usage_records_authoritative_token_row(tmp_path):
     db_path = tmp_path / "harness.db"
     db.init_db(db_path)
@@ -321,6 +350,7 @@ def test_verify_worker_adapter_native_usage_records_authoritative_token_row(tmp_
                 {
                     "type": "usage",
                     "model": "opencode/gpt-5.1",
+                    "run_id": "run_2099_demo_native_verification",
                     "usage": {
                         "input_tokens": 7,
                         "output_tokens": 2,
@@ -363,6 +393,61 @@ def test_verify_worker_adapter_native_usage_records_authoritative_token_row(tmp_
         "json",
         "Verification only. Do not read files, write files, run tools, or inspect the repository. Reply exactly AGILE_AI_HTB_ADAPTER_OK",
     ]
+
+
+def test_verify_worker_adapter_native_usage_accepts_opencode_step_finish_tokens(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(
+        db_path,
+        "opencode",
+        workdir=str(tmp_path),
+        config={"native_verification_template": ["opencode", "run", "--model", "{model}", "--format", "json", "{prompt}"]},
+        supported_models=["opencode/big-pickle"],
+    )
+    stdout = "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "text",
+                    "sessionID": "ses_demo_2099",
+                    "part": {"type": "text", "text": SENTINEL_RESPONSE, "sessionID": "ses_demo_2099"},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "step_finish",
+                    "sessionID": "ses_demo_2099",
+                    "part": {
+                        "type": "step-finish",
+                        "sessionID": "ses_demo_2099",
+                        "messageID": "msg_demo_2099",
+                        "tokens": {"total": 22245, "input": 22181, "output": 11, "reasoning": 53},
+                        "cost": 0,
+                    },
+                }
+            ),
+        ]
+    )
+
+    result = verify_worker_adapter(
+        db_path,
+        "opencode",
+        model="opencode/big-pickle",
+        proxy_url="http://127.0.0.1:8000/v1",
+        tracking_mode="native_usage",
+        runner=FakeRunner(stdout=stdout),
+    )
+
+    adapter = db.get_worker_adapter(db_path, "opencode")
+    artifact = db.build_session_artifact(db_path, result.session_id)
+    assert result.passed is True
+    assert adapter["verification_evidence"]["tracking_mode"] == "native_usage"
+    assert adapter["verification_evidence"]["tracking_authoritative"] is True
+    assert adapter["verification_evidence"]["native_usage"]["run_binding"] == {"sessionID": "ses_demo_2099"}
+    assert artifact["token_log"][0]["prompt_tokens"] == 22181
+    assert artifact["token_log"][0]["completion_tokens"] == 11
+    assert artifact["token_log"][0]["total_tokens"] == 22245
 
 
 def test_verify_worker_adapter_native_usage_fails_without_usage_evidence(tmp_path):
@@ -455,7 +540,17 @@ def test_worker_adapter_verify_route_requires_auth_uses_injected_runner_and_toke
             tmp_path / "harness.db",
             "codex",
             workdir=str(tmp_path),
-            config={"verification_template": ["codex", "--prompt", "{prompt}"]},
+            config={
+                "verification_template": [
+                    "codex",
+                    "--prompt",
+                    "{prompt}",
+                    "--proxy-url",
+                    "{proxy_url}",
+                    "--session-key",
+                    "{session_api_key}",
+                ]
+            },
             supported_models=["gpt-5.1-codex"],
         )
 
@@ -499,5 +594,102 @@ def test_workers_page_renders_verify_form_without_secrets(tmp_path, monkeypatch)
     assert 'name="model"' in response.text
     assert 'name="proxy_url"' in response.text
     assert "http://127.0.0.1:8000/v1" in response.text
+    assert "CLI Worker" in response.text
+    assert "CLI: Track native usage after run" in response.text
+    assert "Proxy URL hidden: this adapter is currently treated as a CLI Worker" in response.text
+    assert "API / Proxy: Governed through Harness Proxy" not in response.text
     assert "super-secret-key" not in response.text
     assert "sk_sess_" not in response.text
+
+
+def test_workers_page_separates_api_proxy_worker_from_cli_modes(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        db.update_worker_adapter(
+            tmp_path / "harness.db",
+            "opencode",
+            workdir=str(tmp_path),
+            config={
+                "verification_template": [
+                    "proxy-worker",
+                    "--prompt",
+                    "{prompt}",
+                    "--proxy-url",
+                    "{proxy_url}",
+                    "--session-key",
+                    "{session_api_key}",
+                ]
+            },
+            supported_models=["openai/gpt-5.4-mini"],
+        )
+
+        response = client.get("/settings/workers?adapter_id=opencode", headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert "API / Proxy-capable CLI Worker" in response.text
+    assert "API / Proxy: Governed through Harness Proxy" in response.text
+    assert "API / Proxy settings" in response.text
+    assert "Only used by API / Proxy mode" in response.text
+
+
+def test_workers_page_does_not_trust_proxy_mode_config_without_proxy_template(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        db.update_worker_adapter(
+            tmp_path / "harness.db",
+            "opencode",
+            workdir=str(tmp_path),
+            config={"tracking_modes": ["proxy_governed"], "verification_template": ["opencode", "run", "{prompt}"]},
+            supported_models=["opencode/gpt-5.1"],
+        )
+
+        response = client.get("/settings/workers?adapter_id=opencode", headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert "CLI Worker" in response.text
+    assert "API / Proxy: Governed through Harness Proxy" not in response.text
+    assert "native_usage, observed_only" in response.text
+
+
+def test_worker_verify_route_rejects_proxy_mode_for_cli_only_adapter(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        db.update_worker_adapter(
+            tmp_path / "harness.db",
+            "opencode",
+            workdir=str(tmp_path),
+            config={"verification_template": ["opencode", "run", "{prompt}"]},
+            supported_models=["opencode/gpt-5.1"],
+        )
+
+        response = client.post(
+            "/settings/workers/opencode/verify",
+            headers=_auth_headers(),
+            json={
+                "model": "opencode/gpt-5.1",
+                "tracking_mode": "proxy_governed",
+                "proxy_url": "http://127.0.0.1:8000/v1",
+            },
+        )
+
+    assert response.status_code == 422
+    assert "not available for this adapter" in response.json()["detail"]
+
+
+def test_workers_page_normalizes_legacy_native_tracking_mode(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        db.update_worker_adapter(
+            tmp_path / "harness.db",
+            "opencode",
+            workdir=str(tmp_path),
+            config={"tracking_modes": ["native"], "verification_template": ["opencode", "run", "{prompt}"]},
+            supported_models=["opencode/gpt-5.1"],
+        )
+
+        response = client.get("/settings/workers?adapter_id=opencode", headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert "native_usage" in response.text
+    assert "CLI: Track native usage after run" in response.text
+    assert "API / Proxy: Governed through Harness Proxy" not in response.text

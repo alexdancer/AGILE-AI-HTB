@@ -25,6 +25,55 @@ The system SHALL overwrite stale recoverable launch-error metadata on each launc
 
 ## ADDED Requirements
 
+### Requirement: Worker Adapter tracking modes
+The system SHALL treat Worker Adapters as local coding-agent CLI integrations and SHALL separately verify how token usage is proven for each adapter launch.
+
+#### Scenario: Adapter launchability depends on tracking mode
+- **WHEN** a Worker Adapter for OpenCode, Claude Code, Codex, Hermes, or a custom command is configured
+- **THEN** the system records its tracking mode as `proxy_governed`, `native_usage`, or `observed_only`
+- **AND** `proxy_governed` adapters are launchable for governed Tasks only after Harness Proxy token rows are verified
+- **AND** `native_usage` adapters are launchable for governed Tasks only after trustworthy CLI usage evidence is verified and recorded
+- **AND** `observed_only` adapters are not launchable for governed Tasks
+
+#### Scenario: Native usage evidence is trustworthy
+- **WHEN** a Worker Adapter is verified in `native_usage` mode
+- **THEN** the emitted usage evidence includes the selected model, prompt or input tokens, completion or output tokens, total tokens, exit status, and command/session identity or equivalent evidence binding the usage to the launched Worker Run
+- **AND** the evidence is machine-readable rather than scraped only from human-readable logs
+
+#### Scenario: Weak native usage remains observed only
+- **WHEN** a Worker Adapter emits approximate usage, human-readable-only logs, missing model identity, or usage that cannot be bound to the launched Worker Run
+- **THEN** the adapter is treated as `observed_only`
+- **AND** the adapter is not launchable for governed Tasks
+
+#### Scenario: Tracking mode determines runtime governance
+- **WHEN** a Worker Run uses `proxy_governed` tracking mode
+- **THEN** runtime request guardrails may apply while Worker model calls pass through the Harness Proxy
+- **WHEN** a Worker Run uses `native_usage` tracking mode
+- **THEN** the run is budget-authoritative only through launch/review governance, preflight budget checks, post-run reconciliation, evidence review, and alarms after usage is known
+- **AND** the system SHALL NOT label `native_usage` as runtime request-governed
+
+#### Scenario: Native usage budget override is explicit
+- **WHEN** a Task estimate exceeds the remaining daily Worker budget
+- **AND** the selected Worker Adapter uses `native_usage` tracking mode
+- **THEN** the Portal MAY allow Launch with budget override
+- **AND** the operator must acknowledge that native usage cannot be request-throttled mid-run
+- **AND** the Worker Run records the budget override approval for audit
+- **AND** post-run reconciliation may report an overrun after native usage evidence is imported
+
+#### Scenario: Portal labels tracking strength explicitly
+- **WHEN** the Portal renders Worker Adapter tracking mode
+- **THEN** `proxy_governed` is labeled `Governed via Harness Proxy`
+- **AND** `native_usage` is labeled `Tracked via Native Usage`
+- **AND** `observed_only` is labeled `Observed Only`
+- **AND** the Portal shows launch readiness separately from runtime request guardrail availability and accounting authority
+- **AND** the Portal SHALL NOT use a generic `Governed` label for all launchable adapters
+
+#### Scenario: Observed-only runs are diagnostic only
+- **WHEN** a Worker Adapter has `observed_only` tracking mode
+- **THEN** the normal AGILE Board SHALL NOT launch it for a Task
+- **AND** Worker Setup MAY provide a separate diagnostic action that records command start evidence, stdout/stderr, exit code or timeout, detected model when available, and a not-budget-authoritative warning
+- **AND** the diagnostic action SHALL NOT change task state, show a Launch-ready badge, or present the run as a governed Worker Session
+
 ### Requirement: Launch starts asynchronous Worker Run
 The system SHALL treat Launch as the start of a governed asynchronous Worker Run rather than completion of the entire Worker Adapter command.
 

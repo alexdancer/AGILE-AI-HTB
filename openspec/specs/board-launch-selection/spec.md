@@ -2,20 +2,22 @@
 
 ## Purpose
 
-Enable operators to select which worker adapter and model to use when launching tasks from the board, with the launch button always visible for Estimated and Ready tasks and failure reasons surfaced as inline error banners.
+Enable operators to select which worker adapter and model to use when launching tasks from the board, with the launch button always visible for Estimated tasks, no redundant Ready launch column, asynchronous Worker Run state visible on the board, and failure reasons surfaced inline.
 
 ## Requirements
 
 ### Requirement: Board launch form includes adapter selector
-The board task card for Estimated and Ready tasks SHALL include a dropdown selector listing all worker adapters. The initially selected adapter SHALL be the default adapter if one is set, otherwise the first adapter in the list.
+The board task card for Estimated tasks SHALL include a dropdown selector listing all worker adapters. The initially selected adapter SHALL be the default adapter if one is set, otherwise the first adapter in the list. The board SHALL NOT require or render a Ready column for launchable tasks.
 
 #### Scenario: Multiple adapters available
 - **WHEN** two or more adapters exist in the database
+- **AND** a task is in the Estimated column
 - **THEN** the launch form shows a `<select>` with all adapter names
 - **AND** the default adapter is pre-selected
 
 #### Scenario: No default adapter set
 - **WHEN** no adapter has `is_default` set
+- **AND** a task is in the Estimated column
 - **THEN** the first adapter in the list is pre-selected
 
 ### Requirement: Model selector filters by selected adapter
@@ -34,7 +36,7 @@ The board launch form SHALL include a model selector populated from the selected
 - **THEN** the model dropdown updates to show Claude Code's supported models
 
 ### Requirement: Launch button always visible for launchable tasks
-The "Launch task" button SHALL render for all tasks in Estimated or Ready columns regardless of adapter verification state. The `has_verified_worker_adapter` gate SHALL be removed from the board template.
+The "Launch task" button SHALL render for all tasks in the Estimated column regardless of adapter verification state. The `has_verified_worker_adapter` gate SHALL be removed from the board template. Ready SHALL NOT be a canonical launch column.
 
 #### Scenario: No verified adapter exists
 - **WHEN** no adapter is verified
@@ -47,7 +49,7 @@ The "Launch task" button SHALL render for all tasks in Estimated or Ready column
 - **AND** the board displays an error banner with the launch guardrail failure reasons
 
 ### Requirement: Launch errors surface inline on board
-When `launch_task()` raises `TaskLaunchBlocked`, the route SHALL redirect to `/board` with the failure reasons in a query parameter. The board template SHALL render the error message as a dismissible banner and, when the failure is caused by adapter setup or verification, SHALL link the operator to `/settings/workers` for the simplified Worker Setup flow. Recoverable Worker runtime failures for launchable tasks SHALL also render on the affected task card while preserving the task's launchable column and launch form.
+When a Worker Run fails retryably, the board template SHALL render the failure on the affected task card while preserving the task's Estimated column and launch form. When `launch_task()` rejects a pre-launch guardrail, the route SHALL return the failure reasons in the response or redirect. When the failure is caused by adapter setup or verification, the UI SHALL link the operator to `/settings/workers` for the simplified Worker Setup flow.
 
 #### Scenario: Budget exceeded on launch
 - **WHEN** task estimate exceeds remaining worker_execution budget
@@ -65,15 +67,45 @@ When `launch_task()` raises `TaskLaunchBlocked`, the route SHALL redirect to `/b
 - **THEN** no error banner is displayed
 
 #### Scenario: Recoverable worker failure stays relaunchable
-- **WHEN** an Estimated or Ready task launch fails because the Worker command exits nonzero, times out, or emits no required usage evidence
-- **THEN** the task remains in its pre-launch Estimated or Ready column
+- **WHEN** a Running task's Worker Run fails because the Worker command exits nonzero, times out, or emits no required usage evidence
+- **THEN** the task returns to the Estimated column
 - **AND** the task card shows the recoverable launch failure message and sanitized evidence
 - **AND** the task card still shows the launch form for retry
 
 ### Requirement: Blocked column is reserved for workflow blockers
-The board SHALL use the Blocked column for workflow or dependency blockers, manual-estimate-required tasks, and hard safety guardrail states, not for recoverable Worker runtime failures on otherwise launchable tasks.
+The board SHALL use the Blocked column for workflow or dependency blockers, manual-estimate-required tasks, and hard safety guardrail states, not for retryable Worker Run failures on otherwise launchable tasks.
 
 #### Scenario: Operator sees dependency block separately from launch failure
-- **WHEN** one task has workflow dependency metadata and another Estimated task has a recent Worker timeout
+- **WHEN** one task has workflow dependency metadata and another task has a recent Worker timeout
 - **THEN** only the dependency-blocked task appears in the Blocked column
-- **AND** the timed-out task remains launchable with inline launch-error copy
+- **AND** the timed-out task appears in Estimated with inline launch-error copy
+
+### Requirement: Board remains navigable during Worker Run
+The board SHALL return control to the operator immediately after a Worker Run starts and SHALL remain navigable while the Worker Run continues in the background.
+
+#### Scenario: Launch does not block page navigation
+- **WHEN** an operator clicks Launch for an Estimated task
+- **AND** the Worker Adapter command is still running
+- **THEN** the board shows the task in Running or otherwise returns a non-blocking launch response
+- **AND** the operator can navigate to other portal pages without waiting for Worker completion
+
+### Requirement: Running and Review reflect Worker Run state
+The board SHALL use Running for active Worker Runs and Review for completed Worker Runs awaiting operator inspection. Review task cards SHALL show completed run evidence, expose review actions, and display the latest operator review prompt and Agent Review response when present.
+
+#### Scenario: Active run appears Running
+- **WHEN** a Worker Run is active for a task
+- **THEN** the task appears in the Running column with active run metadata
+
+#### Scenario: Completed run appears Review
+- **WHEN** a Worker Run completes successfully with required evidence
+- **THEN** the task appears in the Review column with a link or inline summary for run evidence
+- **AND** the card shows Review actions for Agent Review, Mark Done, and Block
+- **AND** the card provides an input for an optional operator review prompt or focus
+
+#### Scenario: Review card displays saved prompt
+- **WHEN** a Review task has a saved operator review prompt
+- **THEN** the Review task card displays that prompt on the task card
+
+#### Scenario: Review card displays Agent Review response
+- **WHEN** a Review task has a completed Agent Review result
+- **THEN** the Review task card displays the latest Agent Review summary or response

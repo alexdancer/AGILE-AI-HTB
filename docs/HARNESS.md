@@ -77,11 +77,11 @@ The minimum scale proof is one Control Plane coordinating multiple project/backe
 
 This proves the Control Plane can govern heterogeneous execution readiness at scale while keeping launch claims truthful.
 
-The first implementation slice is the **local execution slice**. It must prove real governance before expanding the dashboard: `htb serve --local-runner`, connect a local repo path, detect OpenCode, run adapter verification through the Harness Proxy, record `adapter_verification` tokens, mark the project **Launch-ready via Local Runner**, launch one tiny task through OpenCode, and prove Worker tokens hit the Harness ledger. The first launch proof should be read-only: OpenCode inspects the connected repo and writes a short session report artifact summarizing language, test command, and top-level structure. After that passes, a second proof may perform a tiny docs-only codebase change.
+The first implementation slice is the **local execution slice**. It must prove real governance before expanding the dashboard: `htb serve --local-runner`, connect a local repo path, detect OpenCode, verify the real OpenCode CLI launch path, record `adapter_verification` tokens through a budget-authoritative tracking mode, mark the project **Launch-ready via Local Runner**, launch one tiny task through OpenCode, and prove Worker tokens hit the Harness ledger. The first launch proof should be read-only: OpenCode inspects the connected repo and writes a short session report artifact summarizing language, test command, and top-level structure. After that passes, a second proof may perform a tiny docs-only codebase change.
 
 Launch Guardrails distinguish read-only from write-capable sessions. Read-only repo inspection may run even when the connected repository has uncommitted changes. Write-capable sessions require a detected git repository, visible current branch, and clean working tree before launch so Worker changes do not mix with pre-existing user edits. After the clean-tree check passes, the runner creates a task branch such as `htb/task-123-short-title`, launches the Worker on that branch, and records the branch name in the Session Artifact and Portal review flow. The Worker may edit files on the task branch, but the Harness owns final git history: after configured verification passes, the Harness creates the commit with task/session metadata. Commit gating uses the Project Profile test command plus a Harness-generated git diff review summary. If no test command is configured, verification is marked "missing test command" and manual approval is required before commit. If verification fails, changes remain uncommitted for review or retry. Pull request creation is optional, not required for the first local execution slice: when a GitHub remote and authenticated `gh` CLI are available, the Portal may show an Open PR action after the Harness-Owned Commit exists.
 
-Worker failure handling is conservative in the first implementation: no automatic retry. If OpenCode crashes, exits non-zero, times out, exceeds budget, fails verification, or produces no observed Harness Proxy traffic, the Task moves to **Blocked**. The Harness preserves logs, token ledger entries, failure reason, branch name, and any uncommitted diff for user review or later retry.
+Worker failure handling separates operational launch failures from hard blockers. If OpenCode crashes, exits non-zero, times out, or produces no budget-authoritative usage after a launchable Task has started, the Worker Run fails, the Task returns to **Estimated**, and the Harness preserves sanitized launch-error evidence for retry. Hard safety/workflow failures, such as read-only project mutation or write-capable verification failure requiring manual intervention, move or keep the Task **Blocked** with preserved logs, token ledger entries when present, failure reason, branch name, and any uncommitted diff.
 
 ### Local run modes
 
@@ -91,7 +91,7 @@ The first local implementation should be **all-in-one local mode**:
 htb serve --local-runner
 ```
 
-In this mode, the Control Plane and Local Runner run on the same machine and may share one process. The Portal connects a local repo path, validates the Project Profile, detects Worker Adapters, verifies launch capability, and launches Workers in that repo. Worker model traffic still goes through the Harness Proxy, not directly to the provider.
+In this mode, the Control Plane and Local Runner run on the same machine and may share one process. The Portal connects a local repo path, validates the Project Profile, detects Worker Adapters, verifies launch capability, and launches Workers in that repo. A Worker Adapter is a local coding-agent CLI integration; Harness Proxy routing is one tracking mode, not the definition of the adapter.
 
 Local execution smoke path:
 
@@ -119,7 +119,13 @@ Later modes preserve the same Execution Backend contract:
 
 The local-first implementation must keep the code boundary as an `ExecutionBackend` so split runner, tunnel runner, and hosted sandbox can be added without rewriting the AGILE Board.
 
-The first verified local Worker Adapter target is **OpenCode**. Claude Code, Codex, and Hermes remain first-class adapter presets in the Portal, but Launch Guardrails keep them non-launchable until adapter verification proves they can route model traffic through the Harness Proxy and report session status. Adapter verification is not an install-only check: it must run a tiny sentinel prompt through the Worker Adapter, inject a harness session key and proxy base URL, and prove at least one model call was recorded in the token ledger under `adapter_verification` orchestration spend. Provider API keys live only in the Harness process. Workers receive only a session-scoped Harness key and Harness Proxy base URL, for example `OPENAI_BASE_URL=http://127.0.0.1:8000/v1` and `OPENAI_API_KEY=<harness-session-key>`, so Worker Adapters cannot bypass token tracking by calling the provider directly.
+The first verified local Worker Adapter target is **OpenCode**. Claude Code, Codex, and Hermes remain first-class adapter presets in the Portal, but Launch Guardrails keep them non-launchable until adapter verification proves budget-authoritative token tracking. Adapter verification is not an install-only check: it must run a tiny sentinel prompt through the real Worker Adapter CLI and prove token usage through one verified tracking mode:
+
+- `proxy_governed` — Worker model traffic routes through the Harness Proxy with a session-scoped Harness key and records token rows under `adapter_verification` orchestration spend.
+- `native_usage` — the Worker CLI emits trustworthy machine-readable native token usage evidence that the Harness records under `adapter_verification` orchestration spend. The evidence must include the selected model, prompt/input tokens, completion/output tokens, total tokens, exit status, and a command/session identifier or equivalent evidence binding usage to the launched Worker Run. Human-readable logs, approximate usage, missing model identity, or usage that cannot be bound to the run is not authoritative and leaves the adapter `observed_only`.
+- `observed_only` — the Harness observes process/log evidence only; this is useful for diagnostics but is not launchable for governed Tasks.
+
+Provider API keys live only in the Harness process for `proxy_governed` launches. Workers receive only a session-scoped Harness key and Harness Proxy base URL, for example `OPENAI_BASE_URL=http://127.0.0.1:8000/v1` and `OPENAI_API_KEY=<harness-session-key>`, so Worker Adapters cannot bypass token tracking by calling the provider directly. For `native_usage` launches, the Worker may use its existing local CLI authentication, but Launch Guardrails require trustworthy usage evidence before the adapter is governed-launchable.
 
 **Multi-provider support**: The harness keeps a stable OpenAI-compatible proxy endpoint for Workers while using explicit upstream provider clients. Configure `AGILE_AI_HTB_CONTROL_PROVIDER` as `openai`, `openai-compatible`, or `anthropic`; set `AGILE_AI_HTB_CONTROL_BASE_URL` for OpenAI-compatible providers that are not OpenAI. Adding a new upstream provider is a small explicit client change, not a hidden universal abstraction.
 
@@ -201,21 +207,43 @@ Guardrails are **declared** in `guardrails.yaml`, not buried in code. Each sessi
 
 The harness uses a **three-layer graduated enforcement** model. No layer hard-stops the agent, but each layer constrains behavior more tightly as the budget depletes — the agent *cannot* ignore the constraints.
 
-These are **runtime guardrails**: they apply after a Session has started and the Worker is already making model calls through the Proxy Engine. Budget guardrails are not automatic mid-task kill switches: if a running Worker Session exceeds estimate or budget, the Harness records the overrun, raises alarms, and lets the task finish unless the user/admin manually aborts. Exhausted budget blocks new launches through Launch Guardrails unless the User explicitly approves a budget override. If a Task estimate exceeds remaining budget before launch, the Portal changes the action to **Launch with budget override**, records `budget_override=true`, and audits the approval.
+These are **runtime request guardrails**: they apply after a Session has started only when the Worker is making model calls through the Proxy Engine in `proxy_governed` mode. Budget guardrails are not automatic mid-task kill switches: if a running Worker Session exceeds estimate or budget, the Harness records the overrun, raises alarms, and lets the task finish unless the user/admin manually aborts. Exhausted budget blocks new launches through Launch Guardrails unless the User explicitly approves a budget override. If a Task estimate exceeds remaining budget before launch, the Portal changes the action to **Launch with budget override**, records `budget_override=true`, and audits the approval. For `native_usage`, that approval must include explicit acknowledgement that native usage cannot be request-throttled mid-run and may reconcile as an overrun after completion.
+
+Tracking modes have different governance strength:
+
+| Tracking mode | Accounting authority | Runtime request governance |
+|---|---|---|
+| `proxy_governed` | Budget-authoritative token rows from the Harness Proxy | Yes: system prompt rewrite, max-token clamping, and request-time restrictions can apply while calls pass through the Proxy Engine |
+| `native_usage` | Budget-authoritative only after trustworthy native usage evidence is parsed and bound to the Worker Run | No: governance is launch/review-time only — budget preflight, post-run reconciliation, evidence review, and alarms after usage is known |
+| `observed_only` | Not budget-authoritative | No: process/log evidence only and not launchable for governed Tasks |
+
+Budget override behavior follows the same distinction. `proxy_governed` sessions may launch with override approval while runtime request guardrails remain available. `native_usage` sessions may also launch with override approval, but the Portal must warn that the Harness cannot throttle native CLI model requests mid-run; actual usage is reconciled after the run and may exceed the approved estimate. `observed_only` never receives an AGILE Board budget override because it is not launchable from the normal board.
+
+Portal labels should make that distinction explicit:
+
+| Tracking mode | Portal label | Runtime request guardrails | Accounting copy |
+|---|---|---|---|
+| `proxy_governed` | Governed via Harness Proxy | Available | Budget-authoritative during run |
+| `native_usage` | Tracked via Native Usage | Not available | Budget-authoritative after run |
+| `observed_only` | Observed Only | Not available | Not budget-authoritative |
+
+The Portal should not collapse these into a generic "Governed" badge. Adapter cards should show launch readiness separately from tracking strength, for example `Status: Launch-ready`, `Tracking: Tracked via Native Usage`, `Runtime request guardrails: Not available`, and `Accounting: Budget-authoritative after run`.
+
+`observed_only` is never launchable from the normal AGILE Board because that board is the product promise surface for governed token tracking. Worker Setup may expose a separate **Test adapter** or **Run diagnostic prompt** action for observed-only adapters. That diagnostic action records command start evidence, stdout/stderr, exit code or timeout, detected model when available, and a clear **not budget-authoritative** warning. It must not change task state, show a Launch-ready badge, or present the run as a governed Worker Session.
 
 ### Launch guardrails
 
-Launch guardrails run before a Task can move from **Estimated** to **Ready** or **Running** on the AGILE Board. They protect the product promise: if the harness cannot govern and observe the Worker, the portal must not present that work as tracked or governed.
+Launch guardrails run before a Task can move from **Estimated** to **Running** on the AGILE Board. They protect the product promise: if the harness cannot govern and observe the Worker, the portal must not present that work as tracked or governed.
 
 | Launch guardrail | Requirement | Failure behavior |
 |---|---|---|
-| Worker Adapter configured | User selected and configured Claude Code, Codex, OpenCode, Hermes, or another supported adapter | Task cannot become Ready |
-| Token tracking verified | A setup test proves the adapter sends model traffic through `/v1/chat/completions` and a token row is persisted | Launch button disabled |
-| Session key wiring present | Adapter can receive the harness URL and session-scoped API key | Launch button disabled |
+| Worker Adapter configured | User selected and configured Claude Code, Codex, OpenCode, Hermes, or another supported adapter | Launch is guardrail-blocked |
+| Token tracking verified | A setup test proves the adapter has a budget-authoritative tracking mode: `proxy_governed` token rows through `/v1/chat/completions` or trustworthy `native_usage` evidence from the CLI | Launch is guardrail-blocked |
+| Session key wiring present | Required only for `proxy_governed` adapters so the adapter can receive the harness URL and session-scoped API key | Launch is guardrail-blocked for proxy-governed launches |
 | Working directory valid | Adapter can start in the selected project directory | Task remains Estimated or Blocked |
 | Model allowed | Selected/recommended model is allowed by config and compatible with the adapter | User must pick another model or adjust config |
 
-The setup test is intentionally synthetic but must exercise the real adapter launch path: the harness creates a small disposable Session, launches the configured Worker Adapter with one harmless prompt, then checks that `prompt_tokens`, `completion_tokens`, and `total_tokens` were recorded in the Session Artifact Store. A direct proxy call is not enough; the point is to prove Claude Code, Codex, OpenCode, Hermes, or the custom command is actually wired through the harness. If no token row appears, the adapter is **not launchable** from the AGILE Board.
+The setup test is intentionally synthetic but must exercise the real adapter launch path: the harness creates a small disposable Session, launches the configured Worker Adapter with one harmless prompt, then checks that `prompt_tokens`, `completion_tokens`, and `total_tokens` were recorded from the verified tracking mode. A direct proxy call is not enough; the point is to prove Claude Code, Codex, OpenCode, Hermes, or the custom command is actually launchable under Harness observation. If no budget-authoritative usage appears, the adapter is **not launchable** from the AGILE Board for governed Tasks.
 
 Adapter verification prompt:
 
@@ -231,8 +259,8 @@ Worker Adapter setup lives in Settings as the source of truth. The AGILE Board o
 
 - `/settings/workers` configures adapters, runs verification, shows launchable status, and chooses the default Worker Adapter.
 - Task cards show the default Worker Adapter, allow a per-task override to another launchable adapter, and show whether token tracking is verified.
-- If an adapter is not launchable, the AGILE Board disables Launch and links to Worker Setup.
-- If an adapter loses verification after a Task is Ready, the Task returns to Estimated or Blocked until the User picks a launchable adapter.
+- If an adapter is not launchable, the AGILE Board keeps Launch visible but returns explicit guardrail failure copy and links to Worker Setup.
+- If an adapter loses verification before Launch, the Task remains Estimated or Blocked until the User picks a launchable adapter.
 
 #### Layer 1: Progressive system prompt rewrites
 
@@ -338,7 +366,7 @@ Clean interfaces for passing material between the **user**, the **harness**, and
 
 ### AGILE Board
 
-The AGILE Board is the user-facing Kanban-style orchestration surface for coding work, not a full Scrum/Jira replacement. Canonical columns are **Estimated → Ready → Running → Review → Done**, with **Blocked** for failed estimation or tasks that need human changes before launch or continuation. There is no normal unestimated Backlog because task intake exists to break down, estimate, and budget token spend. Each task card shows:
+The AGILE Board is the user-facing Kanban-style orchestration surface for coding work, not a full Scrum/Jira replacement. Canonical columns are **Estimated → Running → Review → Done**, with **Blocked** for failed estimation or tasks that need human changes before launch or continuation. There is no normal unestimated Backlog because task intake exists to break down, estimate, and budget token spend. Each task card shows:
 - Task description
 - Estimated token budget (user-overridable)
 - Recommended model (task-complexity driven, user-overridable)
@@ -352,7 +380,7 @@ The AGILE Board is the user-facing Kanban-style orchestration surface for coding
 
 **Token estimation (LLM-assisted)**: User types a task description. The harness calls a harness-owned **Estimator LLM** with the task, lightweight project context (language/framework summary, test command, relevant file/path hints if supplied), current budget context, and model-routing policy. It does not use the User's Worker Adapter and does not full-scan the repository for every estimate. The Estimator LLM returns structured output: token estimate, complexity, recommended model, confidence, rationale, assumptions, risk flags, and whether a spike is needed because the estimate is low-confidence. The result is displayed on the task card; user can override estimate or model before launch. Estimator LLM spend counts against the daily budget as **orchestration tokens**, but is labeled separately from Worker Session tokens.
 
-**Spike workflow**: If estimation confidence is low, or if the User chooses it, the board can launch a Spike before implementation. A Spike is a Worker Session, so it requires a launchable Worker Adapter with token tracking already verified. It is bounded by purpose: allowed to inspect files, inspect configuration, and run targeted non-mutating tests or discovery commands, but not allowed to edit production code, run destructive commands, run broad test suites without approval, run migrations, or commit. It has no spike-specific token cap; normal daily and session guardrails still apply. By default it uses the same Worker Adapter and model intended for implementation; the User may override to a cheaper or faster launchable adapter/model. Its prompt explicitly forbids edits and commits. Its output is findings, revised estimate, risks, and launch recommendation. Spike tokens count against the daily budget as orchestration tokens labeled `spike`, but do not count as Task actual implementation tokens. After the Spike, the harness automatically updates the Task estimate, recommended model, confidence, rationale, and risks; the Task returns to Estimated with an `updated by spike` badge. The User still accepts the estimate and chooses the Worker before Ready/Launch.
+**Spike workflow**: If estimation confidence is low, or if the User chooses it, the board can launch a Spike before implementation. A Spike is a Worker Session, so it requires a launchable Worker Adapter with token tracking already verified. It is bounded by purpose: allowed to inspect files, inspect configuration, and run targeted non-mutating tests or discovery commands, but not allowed to edit production code, run destructive commands, run broad test suites without approval, run migrations, or commit. It has no spike-specific token cap; normal daily and session guardrails still apply. By default it uses the same Worker Adapter and model intended for implementation; the User may override to a cheaper or faster launchable adapter/model. Its prompt explicitly forbids edits and commits. Its output is findings, revised estimate, risks, and launch recommendation. Spike tokens count against the daily budget as orchestration tokens labeled `spike`, but do not count as Task actual implementation tokens. After the Spike, the harness automatically updates the Task estimate, recommended model, confidence, rationale, and risks; the Task returns to Estimated with an `updated by spike` badge. The User still accepts the estimate and chooses the Worker before Launch.
 
 If the Estimator LLM is unavailable or returns invalid output, the board offers manual estimate + model entry and clearly marks the task as **manual estimate, not LLM-estimated**. The harness must not silently fall back to a fake heuristic estimate. Manual estimates are launchable once the User enters the required token estimate and model and all launch guardrails pass.
 
@@ -363,7 +391,7 @@ If the Estimator LLM is unavailable or returns invalid output, the board offers 
 
 The recommendation is pre-selected in a model dropdown; user can override. The selected Worker Adapter is checked for compatibility with that model before launch. The harness also applies a **budget-aware clamp**: if remaining daily budget is below a threshold, it downgrades the recommendation one tier (complex → modest, modest → simple) and shows a note: "Budget is tight — downgraded from Sonnet to Haiku."
 
-**Direct dispatch**: One task → one session → one budget. "Launch" starts a session only after the Task is Ready: the User accepted the estimate, selected a Worker Adapter, selected or accepted a model, and all launch guardrails passed. No queuing, no batching — cleanest mental model for analytics.
+**Direct dispatch**: One task → one session → one budget. "Launch" starts a session from the Estimated column after the User accepted or entered the estimate, selected a Worker Adapter, selected or accepted a model, and all launch guardrails passed. No queuing, no batching — cleanest mental model for analytics.
 
 **Pre-dispatch budget check**: Before dispatch, the board checks whether the task's estimated tokens exceed the remaining daily budget. If they do, a warning banner appears ("⚠️ This task's estimate (200K) exceeds remaining daily budget (100K). The DAILY_CAP_EXCEEDED alarm will fire during this session.") but the user can still dispatch — consistent with soft-enforcement across all guardrails.
 

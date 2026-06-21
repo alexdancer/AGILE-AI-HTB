@@ -20,7 +20,7 @@ The AGILE Board is the primary product workflow. Users enter coding tasks throug
 ## User Stories
 
 1. As a user, I want the AGILE Board to estimate a task before launch, so that token budget is considered before agent work begins.
-2. As a user, I want board columns `Estimated`, `Ready`, `Running`, `Review`, `Done`, and `Blocked`, so that the board reflects orchestration state rather than generic backlog state.
+2. As a user, I want board columns `Estimated`, `Running`, `Review`, `Done`, and `Blocked`, so that the board reflects orchestration state rather than generic backlog state.
 3. As a user, I want no normal unestimated Backlog, so that task intake remains tied to token planning.
 4. As a user, I want Estimator LLM output to include token estimate, complexity, recommended model, confidence, rationale, assumptions, risk flags, and spike recommendation, so that I can judge the plan before launch.
 5. As a user, I want Estimator LLM tokens labeled as Orchestration Tokens, so that planning overhead is visible and counted against the daily budget.
@@ -54,7 +54,7 @@ The AGILE Board is the primary product workflow. Users enter coding tasks throug
 - Use SQLite for sessions, tasks, token turns, tool traces, alarms, guardrail snapshots, checkpoint results, action history, and Worker Adapter configuration.
 - Use explicit direct provider clients as the transport for both Worker proxy requests and Control-plane LLM calls. The harness owns governance, usage labeling, and persistence.
 - Add token usage labeling with `usage_kind`: `worker`, `estimation`, `spike`, or `adapter_verification`. Existing rows default to `worker`.
-- Replace normal Backlog product behavior with canonical AGILE Board states: `Estimated`, `Ready`, `Running`, `Review`, `Done`, and `Blocked`.
+- Replace normal Backlog product behavior with canonical AGILE Board states: `Estimated`, `Running`, `Review`, `Done`, and `Blocked`.
 - Treat `POST /tasks` / portal intake as **Estimate task** flow. Successful LLM estimation creates an Estimated task. Failed estimation creates a Blocked task that requires manual estimate/model entry.
 - Do not silently use a heuristic as product fallback when Estimator LLM fails. Test fakes may exist for deterministic tests, but production behavior must be explicit.
 - Store estimation metadata on tasks: source, confidence, rationale, assumptions, risk flags, budget note, and spike recommendation.

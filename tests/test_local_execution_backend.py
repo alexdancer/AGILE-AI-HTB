@@ -68,6 +68,24 @@ def test_local_execution_backend_persists_project_profile_and_analysis_capabilit
     assert backend_status["online"] is True
 
 
+def test_project_capability_stays_analysis_ready_with_observed_only_adapter(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    root = _project_root(tmp_path)
+    db.mark_worker_adapter_verification(
+        db_path,
+        "opencode",
+        verified=True,
+        evidence={"tracking_mode": "observed_only", "tracking_authoritative": False},
+    )
+
+    result = LocalExecutionBackend(db_path).connect_project(root)
+
+    assert result.project is not None
+    assert result.project["capability"]["state"] == "analysis_ready"
+    assert "No verified launchable Worker Adapter is available." in result.project["capability"]["reasons"]
+
+
 def test_project_capability_is_launch_ready_with_online_backend_and_verified_adapter(tmp_path):
     db_path = tmp_path / "harness.db"
     db.init_db(db_path)

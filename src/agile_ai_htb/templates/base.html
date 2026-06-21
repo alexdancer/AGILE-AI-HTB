@@ -48,7 +48,7 @@
     .sidebar .group { padding: 16px 20px 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--fg-3); }
     .logout { margin: 16px 20px 0; }
     .logout button { width: 100%; }
-    .main { padding: 24px 28px; max-width: 1280px; width: 100%; }
+    .main { padding: 24px 28px; max-width: none; width: 100%; min-width: 0; }
     .page-title { font-size: 20px; font-weight: 600; margin: 0 0 4px; letter-spacing: -0.01em; }
     .page-sub { font-family: var(--mono); font-size: 12px; color: var(--fg-2); margin: 0 0 24px; }
     .panel, .card, .column { background: var(--bg-1); border: 1px solid var(--line); border-radius: 6px; margin-bottom: 20px; overflow: hidden; }
@@ -62,7 +62,7 @@
     .grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
     .grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
     .grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
-    .columns { display: grid; grid-template-columns: repeat(6, minmax(180px, 1fr)); gap: 1rem; overflow-x: auto; }
+    .columns { display: grid; grid-template-columns: repeat(6, minmax(260px, 1fr)); gap: 1rem; overflow-x: auto; }
     @media (max-width: 900px) {
       .shell { grid-template-columns: 1fr; }
       .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }

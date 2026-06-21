@@ -67,6 +67,114 @@ def test_estimate_within_budget_launches(tmp_path):
     assert result.task["metadata"]["budget_check"]["passed"] is True
 
 
+def test_default_adapter_selection_skips_observed_only_adapter(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(
+        db_path,
+        "opencode",
+        workdir=str(tmp_path),
+        config={"command": "opencode"},
+        supported_models=["opencode/gpt-5.1"],
+        is_default=True,
+    )
+    db.mark_worker_adapter_verification(
+        db_path,
+        "opencode",
+        verified=True,
+        evidence={"tracking_mode": "observed_only", "tracking_authoritative": False},
+    )
+    db.update_worker_adapter(
+        db_path,
+        "codex",
+        workdir=str(tmp_path),
+        config={"launch_template": ["codex", "--model", "{model}"]},
+        supported_models=["gpt-5.1-codex"],
+    )
+    db.mark_worker_adapter_verification(db_path, "codex", verified=True, evidence={"ok": True})
+    task = db.create_task(
+        db_path,
+        description="Use launchable default fallback",
+        status="Estimated",
+        estimate_tokens=50,
+        recommended_model="gpt-5.1-codex",
+        metadata={"budget": {"daily_used_tokens": 0, "daily_cap_tokens": 100}},
+    )
+
+    result = launch_task(db_path, task["id"], adapter_id=None, model=None, proxy_url=None, runner=_runner_recording(db_path))
+    _wait_for_worker_run(db_path, task["id"], "completed")
+
+    assert result.task["metadata"]["launch_adapter_id"] == "codex"
+
+
+def test_standard_proxy_launch_fails_without_worker_usage_evidence(tmp_path):
+    db_path = tmp_path / "harness.db"
+    task = _verified_budget_task(db_path, tmp_path, estimate=50, budget={"daily_used_tokens": 0, "daily_cap_tokens": 100})
+
+    result = launch_task(
+        db_path,
+        task["id"],
+        adapter_id="opencode",
+        model=None,
+        proxy_url=None,
+        runner=lambda plan: {"returncode": 0, "stdout": "done without model call", "stderr": ""},
+    )
+    failed_run = _wait_for_worker_run(db_path, task["id"], "failed")
+    failed = db.get_task(db_path, task["id"])
+    assert result.session is not None
+    session = db.get_session(db_path, result.session["id"])
+
+    assert failed_run["error_type"] == "missing_proxy_worker_usage"
+    assert session["status"] == "failed"
+    assert failed["status"] == "Estimated"
+    assert failed["metadata"]["launch_error"] == "No Worker model call was observed through the Harness Proxy."
+    assert failed["metadata"]["launch_failure_type"] == "missing_proxy_worker_usage"
+    assert failed["metadata"]["launch_retryable"] is True
+
+
+def test_direct_launch_recovers_stale_worker_run_before_duplicate_check(tmp_path):
+    db_path = tmp_path / "harness.db"
+    task = _verified_budget_task(db_path, tmp_path, estimate=50, budget={"daily_used_tokens": 0, "daily_cap_tokens": 100})
+    stale_session = db.create_session(
+        db_path,
+        task_description=task["description"],
+        model=task["recommended_model"],
+        session_key_hash="d" * 64,
+        guardrail_overrides={},
+        status="running",
+    )
+    stale_run = db.create_worker_run(
+        db_path,
+        task_id=task["id"],
+        session_id=stale_session["id"],
+        adapter_id="opencode",
+        model=task["recommended_model"],
+        tracking_mode="proxy_governed",
+        command_plan={"command": ["opencode"], "env": {}, "metadata": {}},
+    )
+    with db.connect(db_path) as conn:
+        conn.execute(
+            "update worker_runs set metadata_json = ? where id = ?",
+            (json.dumps({"executor_pid": -1}), stale_run["id"]),
+        )
+    db.update_task(
+        db_path,
+        task["id"],
+        {"status": "Running", "session_id": stale_session["id"], "metadata": {"active_worker_run_id": stale_run["id"]}},
+    )
+
+    result = launch_task(db_path, task["id"], adapter_id="opencode", model=None, proxy_url=None, runner=_runner_recording(db_path))
+    completed_run = _wait_for_worker_run(db_path, task["id"], "completed")
+    runs = db.list_worker_runs(db_path, task_id=task["id"])
+
+    assert result.task["status"] == "Running"
+    assert runs[0]["id"] == stale_run["id"]
+    assert runs[0]["status"] == "failed"
+    assert runs[0]["error_type"] == "interrupted"
+    assert completed_run["id"] != stale_run["id"]
+    assert db.get_task(db_path, task["id"])["status"] == "Review"
+
+
 def test_launch_returns_before_long_running_worker_adapter_completes(tmp_path):
     db_path = tmp_path / "harness.db"
     task = _verified_budget_task(db_path, tmp_path, estimate=50, budget={"daily_used_tokens": 25, "daily_cap_tokens": 100})
@@ -140,6 +248,39 @@ def test_worker_adapter_launch_failure_preserves_launchable_status_and_records_r
     assert relaunched.task["status"] == "Running"
     assert "launch_error" not in relaunched.task["metadata"]
     assert "last_launch_failure" not in relaunched.task["metadata"]
+
+
+def test_native_usage_budget_override_requires_explicit_acknowledgement(tmp_path):
+    db_path = tmp_path / "harness.db"
+    task = _verified_budget_task(db_path, tmp_path, estimate=75, budget={"daily_used_tokens": 50, "daily_cap_tokens": 100})
+    db.update_worker_adapter(db_path, "opencode", config={"command": "opencode"}, supported_models=["opencode/gpt-5.1"])
+    db.mark_worker_adapter_verification(
+        db_path,
+        "opencode",
+        verified=True,
+        evidence={"tracking_mode": "native_usage", "tracking_authoritative": True},
+    )
+
+    try:
+        launch_task(
+            db_path,
+            task["id"],
+            adapter_id="opencode",
+            model=None,
+            proxy_url=None,
+            budget_override=True,
+            runner=lambda plan: {"returncode": 0, "stdout": "should not run", "stderr": ""},
+        )
+    except TaskLaunchBlocked as exc:
+        blocked = exc.task
+    else:
+        raise AssertionError("native usage budget override launched without acknowledgement")
+
+    assert blocked["status"] == "Estimated"
+    assert blocked["metadata"]["budget_override_available"] is True
+    assert blocked["metadata"]["budget_override_tracking_mode"] == "native_usage"
+    assert blocked["metadata"]["native_usage_override_ack_required"] is True
+    assert "cannot be request-throttled" in blocked["metadata"]["native_usage_override_ack_text"]
 
 
 def test_native_usage_launch_passes_selected_model_and_records_usage_metadata(tmp_path):

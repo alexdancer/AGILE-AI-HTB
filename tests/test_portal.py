@@ -31,11 +31,11 @@ def _client(tmp_path):
     return TestClient(create_app(settings))
 
 
-def _client_with_control_plane_llm(tmp_path, llm):
+def _client_with_control_plane_llm(tmp_path, llm, *, control_plane_model="anthropic/claude-sonnet-4-20250514"):
     settings = Settings(
         database_path=tmp_path / "harness.db",
         guardrails_path=ROOT / "guardrails.yaml",
-        control_plane_model="anthropic/claude-sonnet-4-20250514",
+        control_plane_model=control_plane_model,
         control_plane_api_key_env="TEST_CONTROL_PLANE_KEY",
     )
     app = create_app(settings)
@@ -240,7 +240,8 @@ def test_board_renders_columns_and_task_cards(tmp_path, monkeypatch):
         assert column in html
     assert "Backlog" not in html
     assert "Other" not in html
-    assert "repeat(6," in html
+    assert "max-width: none" in html
+    assert "repeat(6, minmax(260px, 1fr))" in html
     assert "Add streaming proxy tests" in html
     assert "25,000" in html
     assert "claude-sonnet" in html
@@ -313,7 +314,8 @@ def test_worker_model_discovery_route_uses_native_harness_and_updates_portal(tmp
     assert calls[0].env == {}
     assert "Native model discovery" in page.text
     assert "anthropic/claude-sonnet-4" in page.text
-    assert "native, proxy_governed" in page.text
+    assert "CLI Worker" in page.text
+    assert "native_usage, observed_only" in page.text
 
 
 def test_worker_verify_template_error_is_not_reported_as_missing_adapter(tmp_path, monkeypatch):
@@ -323,7 +325,7 @@ def test_worker_verify_template_error_is_not_reported_as_missing_adapter(tmp_pat
         db.update_worker_adapter(
             database_path,
             "opencode",
-            config={"verification_template": ["opencode", "{missing_variable}"]},
+            config={"verification_template": ["opencode", "{missing_variable}", "{proxy_url}", "{session_api_key}"]},
             supported_models=["gpt-5.1-codex"],
         )
         response = client.post(
@@ -367,6 +369,18 @@ def test_control_plane_connection_test_records_sanitized_status(tmp_path, monkey
     assert body["status"]["details"]["usage"]["total_tokens"] == 10
     assert "sk_should_not_render" not in str(body)
     assert llm.requests[0]["model"] == "anthropic/claude-sonnet-4-20250514"
+
+
+def test_control_plane_connection_test_does_not_cap_gpt5_smoke_response(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeControlPlaneLLM()
+    with _client_with_control_plane_llm(tmp_path, llm, control_plane_model="gpt-5.4-mini") as client:
+        response = client.post("/settings/control-plane/test", headers=_portal_headers())
+
+    assert response.status_code == 200
+    assert llm.requests[0]["model"] == "gpt-5.4-mini"
+    assert "max_tokens" not in llm.requests[0]
+    assert "max_completion_tokens" not in llm.requests[0]
 
 
 def test_control_plane_connection_failure_records_no_secret_values(tmp_path, monkeypatch):
@@ -632,6 +646,79 @@ def test_board_launch_button_visible_without_verified_adapter(tmp_path, monkeypa
     assert "Launch task" in response.text
 
 
+def test_board_review_card_shows_disposition_actions_prompt_and_agent_review(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        session = db.create_session(
+            database_path,
+            task_description="Review UI task",
+            model="gpt-5.1-codex",
+            session_key_hash="u" * 64,
+            guardrail_overrides={},
+            status="completed",
+        )
+        task = db.create_task(
+            database_path,
+            description="Review UI task",
+            status="Review",
+            estimate_tokens=8000,
+            recommended_model="gpt-5.1-codex",
+            session_id=session["id"],
+            metadata={
+                "review_prompt": "DEMO focus note 2099",
+                "launch_stdout": "DEMO worker stdout 2099",
+                "agent_review": {
+                    "status": "completed",
+                    "summary": "DEMO agent review summary 2099",
+                    "recommendation": "approve",
+                    "findings": [{"severity": "low", "message": "DEMO finding 2099"}],
+                },
+            },
+        )
+        response = client.get("/board", headers=_portal_headers())
+        validation = client.post(
+            f"/tasks/{task['id']}/review",
+            headers={**_portal_headers(), "Accept": "text/html"},
+            data={"action": "block", "blocked_reason": ""},
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 200
+    assert validation.status_code == 303
+    assert validation.headers["location"].startswith("/board?error=")
+    html = response.text
+    assert f'action="/tasks/{task["id"]}/review"' in html
+    assert "Agent Review" in html
+    assert "Mark Done" in html
+    assert "Block" in html
+    assert "Review prompt / focus" in html
+    assert "DEMO focus note 2099" in html
+    assert "DEMO agent review summary 2099" in html
+    assert "DEMO finding 2099" in html
+    assert f"/sessions/{session['id']}" in html
+
+
+def test_board_review_card_hides_actions_without_completed_evidence(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        task = db.create_task(
+            database_path,
+            description="Review task without completed evidence",
+            status="Review",
+            estimate_tokens=8000,
+            recommended_model="gpt-5.1-codex",
+        )
+        response = client.get("/board", headers=_portal_headers())
+
+    assert response.status_code == 200
+    card = response.text.split(f'id="{task["id"]}"', 1)[1].split('</div>', 1)[0]
+    assert "Review actions require completed Worker Run evidence." in card
+    assert f'action="/tasks/{task["id"]}/review"' not in card
+    assert "Mark Done" not in card
+
+
 def test_launch_unverified_adapter_shows_error_banner(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
@@ -670,7 +757,10 @@ def test_guided_worker_setup_selects_default_adapter_and_keeps_advanced_details(
     assert "Codex setup" in html
     assert "Choose active adapter" in html
     assert "Advanced details" in html
-    assert "Proxy-governed direct provider usage" in html
+    assert "CLI Worker" in html
+    assert "API / Proxy Worker" in html
+    assert "CLI: Observe command only" in html
+    assert "Governed via Harness Proxy" not in html
     assert "PROVIDER_API_KEY" not in html
 
 

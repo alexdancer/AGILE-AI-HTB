@@ -14,6 +14,7 @@ gpt-5.4-mini
 - Estimation can call `gpt-5.4-mini` and record control-plane token usage.
 - The OpenAI-compatible `/v1/chat/completions` proxy path is exercised.
 - The synthetic `demo_worker` is launchable with budget-authoritative proxy-governed tracking evidence.
+- Worker Adapter modes are explicit: `demo_worker` proves `proxy_governed`, and the optional OpenCode proof verifies `native_usage` only when the installed OpenCode CLI emits trustworthy run-bound usage evidence.
 - Token usage is written to the SQLite ledger.
 - Provider keys are not copied/fanned out into generic provider env vars.
 
@@ -25,6 +26,8 @@ This runbook assumes the local branch includes the fixes verified by the test su
 - The seeded `demo_worker` includes `gpt-5.4-mini` and budget-authoritative proxy-governed tracking evidence.
 - Demo worker templates can use the generated `{session_api_key}`.
 - Worker verification template errors are reported as configuration errors instead of `worker adapter not found`.
+- Launch Guardrails now require Harness Proxy wiring only for `proxy_governed`; verified `native_usage` adapters launch without proxy/session-key wiring but require explicit budget-override acknowledgement when over budget.
+- `observed_only` adapter diagnostics are never launchable from the normal AGILE Board.
 
 If you still see `Unsupported parameter: 'max_tokens'`, stop all stale local servers and restart from this checkout.
 
@@ -46,15 +49,15 @@ mkdir -p .demo
 ```bash
 uv run pytest tests/test_budgeted_launch.py tests/test_local_execution_backend.py tests/test_tasks_api.py
 uv run pytest
-openspec validate fix-local-demo-launch-and-task-intake-evals --strict
+openspec validate align-worker-adapter-tracking-modes --strict
 ```
 
 Expected result:
 
 ```text
-69 passed
-274 passed
-Change 'fix-local-demo-launch-and-task-intake-evals' is valid
+76 passed
+286 passed
+Change 'align-worker-adapter-tracking-modes' is valid
 ```
 
 The exact warning count/timing may vary.
@@ -582,6 +585,8 @@ Anthropic streaming is intentionally unsupported by the current direct provider 
 
 Only do this if OpenCode is installed and logged in.
 
+This is a Worker Adapter proof, not a generic provider-key proof. The Harness calls the local `opencode` CLI, discovers models from that installed CLI, verifies `tracking_mode=native_usage`, and accepts it as launchable only if OpenCode returns machine-readable usage evidence with selected model, prompt tokens, completion tokens, total tokens, successful exit status, and a run/session binding. If the CLI only produces logs or approximate/model-less usage, the adapter remains diagnostic/`observed_only` and will not launch from the AGILE Board.
+
 Terminal A must be running the portal.
 
 Terminal B:
@@ -621,7 +626,7 @@ If this fails at discovery or verification, the portal may still be fine; local 
 ```bash
 uv run pytest tests/test_budgeted_launch.py tests/test_local_execution_backend.py tests/test_tasks_api.py
 uv run pytest
-openspec validate fix-local-demo-launch-and-task-intake-evals --strict
+openspec validate align-worker-adapter-tracking-modes --strict
 ```
 
 pass.
@@ -654,6 +659,8 @@ Token ledger includes Worker execution spend after launch:
 worker_execution|harness_proxy
 ```
 
+For the optional OpenCode proof, `usage_source` should be `native_usage` instead of `harness_proxy`.
+
 Pages load:
 
 ```text
@@ -663,3 +670,4 @@ Pages load:
 /settings/workers
 /sessions
 ```
+

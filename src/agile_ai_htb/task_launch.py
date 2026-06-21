@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from agile_ai_htb import db
+from agile_ai_htb.adapter_readiness import evaluate_adapter_readiness
 from agile_ai_htb.launch_guardrails import evaluate_launch_guardrails
+from agile_ai_htb.tracking_modes import NATIVE_USAGE, PROXY_GOVERNED
 from agile_ai_htb.worker_adapters import (
     Runner,
     _parse_native_usage_evidence,
@@ -67,6 +69,7 @@ def launch_task(
     proxy_url: str | None,
     estimate_tokens: int | None = None,
     budget_override: bool = False,
+    native_budget_acknowledged: bool = False,
     runner: Runner | None = None,
 ) -> TaskLaunchResult:
     with _LAUNCH_START_LOCK:
@@ -78,6 +81,7 @@ def launch_task(
             proxy_url=proxy_url,
             estimate_tokens=estimate_tokens,
             budget_override=budget_override,
+            native_budget_acknowledged=native_budget_acknowledged,
             runner=runner,
         )
 
@@ -91,8 +95,10 @@ def _launch_task_unlocked(
     proxy_url: str | None,
     estimate_tokens: int | None = None,
     budget_override: bool = False,
+    native_budget_acknowledged: bool = False,
     runner: Runner | None = None,
 ) -> TaskLaunchResult:
+    db.mark_stale_worker_runs_interrupted(database_path)
     task = db.get_task(database_path, task_id)
     manual_estimate_requested = estimate_tokens is not None and bool(model)
 
@@ -151,11 +157,6 @@ def _launch_task_unlocked(
         blocked = _mark_launch_blocked(database_path, task, ["No worker adapter is configured for launch."])
         raise TaskLaunchBlocked(blocked, ["No worker adapter is configured for launch."])
 
-    budget_check = _evaluate_launch_budget(database_path, task)
-    if not budget_check["passed"] and not budget_override:
-        blocked = _mark_budget_launch_blocked(database_path, task, budget_check)
-        raise TaskLaunchBlocked(blocked, [budget_check["reason"]])
-
     guardrails = evaluate_launch_guardrails(
         database_path,
         adapter_id=selected_adapter_id,
@@ -170,8 +171,23 @@ def _launch_task_unlocked(
     metadata = task.get("metadata") or {}
     read_only = bool(metadata.get("read_only")) or metadata.get("launch_mode") == "read_only"
     write_capable = bool(metadata.get("write_capable")) or metadata.get("launch_mode") == "write_capable"
-    tracking_mode = (guardrails.adapter.get("verification_evidence") or {}).get("tracking_mode") or "proxy_governed"
-    usage_source = "native_usage" if tracking_mode == "native_usage" else "harness_proxy"
+    tracking_mode = (guardrails.adapter.get("verification_evidence") or {}).get("tracking_mode") or PROXY_GOVERNED
+    usage_source = NATIVE_USAGE if tracking_mode == NATIVE_USAGE else "harness_proxy"
+
+    budget_check = _evaluate_launch_budget(database_path, task)
+    if not budget_check["passed"] and not budget_override:
+        blocked = _mark_budget_launch_blocked(database_path, task, budget_check, tracking_mode=tracking_mode)
+        raise TaskLaunchBlocked(blocked, [budget_check["reason"]])
+    if not budget_check["passed"] and budget_override and tracking_mode == NATIVE_USAGE and not native_budget_acknowledged:
+        blocked = _mark_budget_launch_blocked(
+            database_path,
+            task,
+            budget_check,
+            tracking_mode=tracking_mode,
+            reason="Native usage budget override requires acknowledgement that runtime request throttling is not available.",
+        )
+        raise TaskLaunchBlocked(blocked, ["Native usage budget override requires acknowledgement that runtime request throttling is not available."])
+
     project_root = metadata.get("project_root_path") if (read_only or write_capable) else None
     before_tree = _git_porcelain(project_root) if project_root else None
     task_branch = None
@@ -201,7 +217,7 @@ def _launch_task_unlocked(
         task_branch = _create_task_branch(project_root, task)
 
     builder = get_adapter_builder(guardrails.adapter)
-    if tracking_mode == "native_usage":
+    if tracking_mode == NATIVE_USAGE:
         plan = builder.build_native_launch_command(
             model=selected_model,
             task_prompt=task["description"],
@@ -457,8 +473,8 @@ def _execute_worker_run(
         )
         return
 
-    if tracking_mode == "native_usage":
-        native_evidence = _parse_native_usage_evidence(stdout, model=selected_model)
+    if tracking_mode == NATIVE_USAGE:
+        native_evidence = _parse_native_usage_evidence(stdout, model=selected_model, returncode=returncode)
         if native_evidence is None:
             reason = "No budget-authoritative native Worker usage evidence was emitted by the adapter."
             db.update_session_status(database_path, session["id"], "failed")
@@ -497,7 +513,7 @@ def _execute_worker_run(
             raw_usage={**native_evidence.raw_usage, "usage_source": usage_source, "tracking_mode": tracking_mode},
         )
 
-    if (read_only or write_capable) and not _session_has_worker_token_usage(database_path, session["id"]):
+    if tracking_mode == "proxy_governed" and not _session_has_worker_token_usage(database_path, session["id"]):
         reason = "No Worker model call was observed through the Harness Proxy."
         db.update_session_status(database_path, session["id"], "failed")
         failed = _mark_recoverable_launch_failure(
@@ -765,10 +781,10 @@ def _clear_recoverable_launch_failure_metadata(metadata: dict[str, Any]) -> dict
 def _default_adapter_id(database_path: Path | str) -> str | None:
     adapters = db.list_worker_adapters(database_path)
     for adapter in adapters:
-        if adapter.get("is_default"):
+        if adapter.get("is_default") and evaluate_adapter_readiness(adapter).launchable_tracking:
             return str(adapter["id"])
     for adapter in adapters:
-        if adapter.get("verification_status") == "verified":
+        if evaluate_adapter_readiness(adapter).launchable_tracking:
             return str(adapter["id"])
     return adapters[0]["id"] if adapters else None
 
@@ -820,21 +836,33 @@ def _evaluate_launch_budget(database_path: Path | str, task: dict[str, Any]) -> 
     }
 
 
-def _mark_budget_launch_blocked(database_path: Path | str, task: dict[str, Any], budget_check: dict[str, Any]) -> dict[str, Any]:
-    reason = budget_check.get("reason") or "Launch budget guardrail failed."
+def _mark_budget_launch_blocked(
+    database_path: Path | str,
+    task: dict[str, Any],
+    budget_check: dict[str, Any],
+    *,
+    tracking_mode: str,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    blocked_reason = reason or budget_check.get("reason") or "Launch budget guardrail failed."
     status = "Estimated" if task.get("estimate_tokens") and task.get("recommended_model") else "Blocked"
+    metadata = {
+        **task.get("metadata", {}),
+        "launch_blocked_reason": blocked_reason,
+        "launch_guardrail_reasons": [blocked_reason],
+        "budget_check": budget_check,
+        "budget_override_available": True,
+        "budget_override_tracking_mode": tracking_mode,
+    }
+    if tracking_mode == NATIVE_USAGE:
+        metadata["native_usage_override_ack_required"] = True
+        metadata["native_usage_override_ack_text"] = "I understand native usage cannot be request-throttled during the run."
     return db.update_task(
         database_path,
         task["id"],
         {
             "status": status,
-            "metadata": {
-                **task.get("metadata", {}),
-                "launch_blocked_reason": reason,
-                "launch_guardrail_reasons": [reason],
-                "budget_check": budget_check,
-                "budget_override_available": True,
-            }
+            "metadata": metadata,
         },
     )
 

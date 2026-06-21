@@ -58,6 +58,24 @@ Alternatives considered:
 - Hermes process tracking as the product execution engine. Rejected because product behavior should not depend on the agent running this coding session.
 - Hosted queue/workspace now. Rejected because Control Plane vs Execution Plane scale-out can come after the lifecycle contract is truthful.
 
+### Decision: Worker Adapter means local coding-agent CLI integration
+
+A Worker Adapter adapts an installed coding-agent CLI such as OpenCode, Claude Code, Codex, Hermes, or a custom command. It is responsible for detecting the CLI, discovering supported models through CLI-native commands where possible, building a launch command, running it in the configured workdir, and recording sanitized runtime evidence. Proxy governance is a tracking mode, not the definition of the adapter.
+
+Launchability depends on the verified tracking mode:
+
+- `proxy_governed` launches route Worker model traffic through the Harness Proxy and are budget-authoritative when token rows are recorded.
+- `native_usage` launches use trustworthy machine-readable CLI-emitted usage evidence and are budget-authoritative when that evidence is parsed, bound to the launched Worker Run, and recorded. Trustworthy evidence includes selected model, prompt/input tokens, completion/output tokens, total tokens, exit status, and command/session identity or equivalent run-binding evidence. Human-readable logs, approximate usage, missing model identity, or unbound usage evidence is not authoritative.
+- `observed_only` launches may be useful for diagnostics but are not launchable for governed Tasks.
+
+Only `proxy_governed` provides runtime request governance because Worker model calls pass through the Harness Proxy. `native_usage` provides budget-authoritative accounting without request-time enforcement; the Harness can preflight budget, reconcile after the run, review evidence, and raise alarms after usage is known. `observed_only` provides process/log observation only and is never launchable from the normal AGILE Board.
+
+Budget override approval is allowed for both `proxy_governed` and `native_usage` launchable modes when the task estimate exceeds remaining daily Worker budget. `proxy_governed` keeps runtime request guardrails available after the override. `native_usage` requires explicit acknowledgement that the Harness cannot request-throttle native CLI model calls mid-run and that post-run reconciliation may show an overrun. `observed_only` has no AGILE Board budget override path because it is not task-launchable.
+
+Observed-only runs belong in a separate Worker Setup diagnostic/test flow, not task dispatch. A diagnostic run can prove command start, stdout/stderr capture, exit code or timeout handling, detected model when available, and a not-budget-authoritative warning. It must not change task state, show Launch-ready, or claim governed execution.
+
+Portal labels should be explicit about governance strength: `proxy_governed` displays as **Governed via Harness Proxy**, `native_usage` displays as **Tracked via Native Usage**, and `observed_only` displays as **Observed Only**. UI copy should show launch readiness separately from tracking strength and should not use a generic "Governed" badge for all launchable adapters.
+
 ### Decision: Estimated replaces Ready
 
 `Estimated` should represent a task that has enough estimation/model information to be launchable when Worker guardrails pass. The `Ready` column adds ambiguity without a distinct lifecycle responsibility and should be removed from canonical board columns and status validation.

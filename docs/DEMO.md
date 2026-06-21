@@ -12,28 +12,28 @@ A synthetic project that a coding agent builds live under harness governance. Th
 
 ## Demo Tasks
 
-The AGILE board is pre-populated with 6 tasks spanning all three complexity tiers. The demo walks through dispatching them, showing governance at each level.
+The AGILE board is pre-populated with 6 fully synthetic `DEMO_TASK_2099_*` tasks spanning all three complexity tiers. The local demo defaults to the `demo_worker` adapter with `gpt-5.4-mini`; real OpenCode/Codex/Claude Code proof is optional and depends on the user's installed CLI/auth.
 
 ### Easy tasks
 
 | # | Task | Est. tokens | Complexity | Recommended model |
 |---|---|---|---|---|
-| T1 | **Implement `snip save`** — accept title, language, and body via CLI args; write snippet to the store | 8K | Simple | Claude Haiku |
-| T2 | **Add a `--color` flag** — support `--color/--no-color` for terminal output; pass through to `rich.print` | 5K | Simple | Claude Haiku |
+| T1 | **Implement `snip save`** — accept title, language, and body via CLI args; write snippet to the store | 8K | Simple | gpt-5.4-mini |
+| T2 | **Add a `--color` flag** — support `--color/--no-color` for terminal output; pass through to `rich.print` | 5K | Simple | gpt-5.4-mini |
 
 ### Medium tasks
 
 | # | Task | Est. tokens | Complexity | Recommended model |
 |---|---|---|---|---|
-| T3 | **Implement `snip list` with filters** — list all snippets; support `--language` and `--tag` filters; format as a table with `rich` | 25K | Modest | Claude Sonnet |
-| T4 | **Add fuzzy search via `snip search`** — accept a query string; use `thefuzz` for fuzzy matching on title and body; rank and display results | 35K | Modest | Claude Sonnet |
+| T3 | **Implement `snip list` with filters** — list all snippets; support `--language` and `--tag` filters; format as a table with `rich` | 25K | Modest | gpt-5.4-mini |
+| T4 | **Add fuzzy search via `snip search`** — accept a query string; use `thefuzz` for fuzzy matching on title and body; rank and display results | 35K | Modest | gpt-5.4-mini |
 
 ### Complex tasks
 
 | # | Task | Est. tokens | Complexity | Recommended model |
 |---|---|---|---|---|
-| T5 | **Add SQLite backend with migration** — replace JSON file store with SQLite via `sqlite3`; write a migration that imports existing JSON snippets; add `--db-path` flag | 90K | Complex | Claude Opus |
-| T6 | **Add `snip share` with gist integration** — accept a snippet ID; push to GitHub Gist via the GitHub API; require a `GITHUB_TOKEN` env var; return the gist URL | 80K | Complex | Claude Opus |
+| T5 | **Add SQLite backend with migration** — replace JSON file store with SQLite via `sqlite3`; write a migration that imports existing JSON snippets; add `--db-path` flag | 90K | Complex | gpt-5.4-mini |
+| T6 | **Add `snip share` with gist integration** — accept a snippet ID; push to GitHub Gist via the GitHub API; require a `GITHUB_TOKEN` env var; return the gist URL | 80K | Complex | gpt-5.4-mini |
 
 ---
 
@@ -43,7 +43,7 @@ The presenter walks through the harness as the agent works through the tasks. Ea
 
 ### Beat 0: Setup (30 seconds)
 
-- Show the harness startup: `docker compose up`
+- Show the harness startup: `uv run htb serve --local-runner --host 127.0.0.1 --port 8000` for the local proof. If using Docker on this Mac, use `docker-compose`, not `docker compose`.
 - Portal at `http://localhost:8000` — dashboard empty, 0 sessions
 - Show `guardrails.yaml`: daily cap 200K, session cap 50K, zones configured
 - AGILE board with all 6 tasks seeded in Estimated column, awaiting Worker Adapter verification
@@ -51,10 +51,10 @@ The presenter walks through the harness as the agent works through the tasks. Ea
 ### Beat 1: Estimation & Model Routing (60 seconds)
 
 - Click **Estimate task** for T1 ("Implement `snip save`")
-- Portal calls the Estimator LLM via `/estimate` — harness returns structured output: **simple** complexity, **Claude Haiku** recommended, **8K token** estimate, confidence 0.95
+- Portal calls the Estimator LLM via `/estimate` — harness returns structured output: **simple** complexity, **gpt-5.4-mini** recommended, **8K token** estimate, confidence value, and rationale.
 - Task moves to **Estimated** column with estimate/model metadata
-- Click **Estimate task** for T5 ("SQLite backend") — Estimator LLM classifies as **complex**, recommends **Claude Opus**, estimates **90K tokens**
-- **Budget clamp demo**: artificially lower daily budget to 50K, then estimate T5 again. Harness warns: "Estimated 90K exceeds remaining 50K daily budget." Model recommendation auto-downgrades: "Budget is tight — downgraded from Opus to Sonnet."
+- Click **Estimate task** for T5 ("SQLite backend") — Estimator LLM classifies it as **complex**, recommends a Worker model from the selected adapter's supported models, and estimates about **90K tokens**.
+- **Budget clamp demo**: artificially lower daily budget to 50K, then estimate or launch T5 again. Harness warns that the estimate exceeds remaining budget. For `native_usage`, a budget override also requires explicit acknowledgement that native CLI requests cannot be throttled mid-run.
 - Show the budget bar: "0 / 200,000 daily tokens (resets in 7h 15m)"
 - Show Orchestration Tokens row: estimator spend tracked as `usage_kind=estimation`, separate from Worker Tokens
 
@@ -132,14 +132,14 @@ The presenter walks through the harness as the agent works through the tasks. Ea
 
 ## Bundle C operator proof: guarded Worker launch
 
-Bundle C adds a guarded task-launch path. A task can move from **Estimated/Ready** to
-**Running** only after Launch Guardrails pass for the selected Worker Adapter:
+Current guarded launch path: a task can move from **Estimated** to **Running** only after Launch Guardrails pass for the selected Worker Adapter:
 
 - adapter exists and is configured
-- adapter token-tracking verification status is `verified`
+- adapter verification proves a budget-authoritative tracking mode: `proxy_governed` or trustworthy `native_usage`
 - adapter workdir exists
 - selected model is supported by the adapter
-- harness proxy URL and per-session bearer key are available
+- harness proxy URL and per-session bearer key are available when the verified mode is `proxy_governed`
+- `observed_only` diagnostics are not launchable from the normal AGILE Board
 
 The launch endpoint is operator-protected:
 
@@ -148,7 +148,7 @@ export TOKEN_TRACKER_PORTAL_TOKEN=***
 # Start the app with your usual local command, then open http://127.0.0.1:8000
 ```
 
-1. Configure the locally available adapter. Example for Codex:
+1. Configure the locally available adapter. Prefer the Portal **Settings → Worker adapters** flow. Direct SQLite editing is only for local operator recovery. Example for Codex:
 
    ```bash
    sqlite3 data/harness.db <<'SQL'
@@ -162,8 +162,8 @@ export TOKEN_TRACKER_PORTAL_TOKEN=***
    SQL
    ```
 
-2. Run adapter verification through the harness (the verification must produce the
-   `AGILE_AI_HTB_ADAPTER_OK` sentinel and an `adapter_verification` token row). Use
+2. Run adapter verification through the harness. For `proxy_governed`, verification must produce the
+   `AGILE_AI_HTB_ADAPTER_OK` sentinel and an `adapter_verification` token row through the Harness Proxy. For `native_usage`, verification must parse trustworthy machine-readable usage evidence from the local CLI with selected model, prompt tokens, completion tokens, total tokens, successful exit status, and run/session binding. Use
    **Settings → Worker adapters → Verify** in the portal, or call the protected API
    directly with the same values:
 
@@ -187,7 +187,7 @@ export TOKEN_TRACKER_PORTAL_TOKEN=***
    default harness proxy URL is `http://127.0.0.1:8000/v1` when omitted. If launching
    a manually sized task, include both `estimate_tokens` and `model`; the endpoint
    persists that manual estimate before evaluating guardrails. Launch is server-gated
-   to tasks in **Estimated** or **Ready** state after any manual estimate is applied.
+   to tasks in **Estimated** state after any manual estimate is applied.
 
    ```bash
    curl -sS -X POST "http://127.0.0.1:8000/tasks/$TASK_ID/launch" \
@@ -217,12 +217,8 @@ export TOKEN_TRACKER_PORTAL_TOKEN=***
    `POST /tasks/$TASK_ID/refresh` with the portal bearer token to map completed
    sessions to **Done**/**Review** and failed/aborted sessions to **Blocked**.
 
-Expected proof row for a real Worker launch: `usage_kind = worker` for the launched
-session/model. The launch response, board, task metadata, and session report must not
+Expected proof row for a real Worker launch: `usage_kind = task_execution` for the launched
+session/model, with `raw_usage_json.spend_category = worker_execution` and `raw_usage_json.usage_source` set to `harness_proxy` or `native_usage`. The launch response, board, task metadata, and session report must not
 contain raw `sk_sess_...` keys; only the session key hash is stored.
 
-Live-proof status for this implementation pass: no real Claude/Codex/OpenCode CLI
-authentication was exercised by the automated tests. The TDD suite uses an injected fake
-runner to prove the guarded launch path and Worker-token session report without making
-provider calls. A local operator with authenticated adapter CLI access should run the
-commands above to complete live verification.
+Live-proof status for this implementation pass: automated tests do not require real Claude/Codex/OpenCode CLI authentication. The TDD suite uses injected fake runners and the synthetic `demo_worker` path to prove guarded launch, Worker-token session reports, native-usage reconciliation, and observed-only blocking without making provider calls. A local operator with authenticated adapter CLI access should run the optional OpenCode native proof in `docs/GPT-5.4-MINI-LOCAL-DEMO.md` to complete live CLI verification.
