@@ -100,6 +100,39 @@ Direct OpenCode baseline already recorded from `openai/gpt-5.5` with `--variant 
 | Reasoning tokens | 5,955 |
 | Generated target tests | 16 passed |
 
+AGILE-AI-HTB portal run recorded in `.demo/opencode-comparison/harness.db`:
+
+| Metric | Result |
+|---|---:|
+| Task breakdown reviews accepted | 1 |
+| Board tasks created | 7 |
+| Completed Worker runs | 6 |
+| Final board state | 6 Review, 1 Blocked |
+| Worker budget configured | 2,500,000 daily / 400,000 session |
+| Control-plane/task-breakdown tokens | 15,776 |
+| Worker execution tokens | 76,740 |
+| Total ledger tokens | 92,516 |
+| Alarms generated | 0 |
+| Harness target tests | 5 passed |
+
+Competency comparison is measured by an external smoke check, not by either project's self-written tests:
+
+```bash
+python3 scripts/compare-opencode-demo-projects.py
+```
+
+| Criterion | Direct OpenCode | AGILE-AI-HTB OpenCode |
+|---|---:|---:|
+| External acceptance checks | 15/15 passed | 15/15 passed |
+| Project self-tests | 16 passed | 5 passed |
+| Python files | 14 | 6 |
+| Test files | 7 | 1 |
+| Recorded token usage | 1,601,736 cumulative OpenCode units | 92,516 ledger tokens |
+
+Result: both projects satisfy the external smoke acceptance path, but deeper review found Direct OpenCode materially stronger on implementation quality. Direct produced the broader, more spec-complete project and test suite; AGILE-AI-HTB produced a smaller happy-path implementation while adding estimate, budget, launch, ledger, and review evidence around the run.
+
+Review caveat: the external smoke check is intentionally broad. It does not catch every contract detail; the harness-launched project missed stricter report/schema details such as the expected JSON report keys, `DEMO-DUPE-2099-*` duplicate IDs, richer Markdown report sections, and severity/date list ordering. The fair demo claim is governance and auditability around Worker execution, not that the harness made the Worker produce better code in this run.
+
 The cumulative token total is OpenCode event-stream accounting from `step_finish -> part.tokens`, including cache-read usage. The comparison claim is governance, not magic compression: direct OpenCode shows uncontrolled baseline usage; AGILE-AI-HTB adds estimate, budget gate, launch evidence, token ledger, alarms, and review workflow around the same Worker task.
 
 ## Deploy to Render
