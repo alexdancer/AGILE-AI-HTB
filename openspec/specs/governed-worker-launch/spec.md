@@ -77,6 +77,47 @@ The system SHALL launch Worker Sessions with a model selected from the verified 
 - **WHEN** the selected model is not in the selected adapter's discovered model inventory and no explicit compatible override is approved
 - **THEN** the system blocks launch and shows the model compatibility reason
 
+### Requirement: Worker Adapter tracking modes govern launchability
+The system SHALL treat Worker Adapters as local coding-agent CLI integrations and SHALL separately verify how token usage is proven for each adapter launch.
+
+#### Scenario: Proxy-governed adapter is launchable with proxy evidence
+- **WHEN** a Worker Adapter has `proxy_governed` tracking mode
+- **AND** Harness Proxy token rows have been verified for the selected model
+- **AND** Harness Proxy URL and session API key wiring are present
+- **THEN** the adapter is eligible for governed AGILE Board launch if all other Launch Guardrails pass
+
+#### Scenario: Native usage adapter is launchable without proxy wiring
+- **WHEN** a Worker Adapter has `native_usage` tracking mode
+- **AND** trustworthy native usage evidence has been verified for the selected model
+- **THEN** the adapter is eligible for governed AGILE Board launch without requiring Harness Proxy URL or session API key wiring
+
+#### Scenario: Observed-only adapter is not board-launchable
+- **WHEN** a Worker Adapter has `observed_only` tracking mode
+- **THEN** the normal AGILE Board SHALL NOT launch it for a Task
+
+### Requirement: Native usage is accounting-governed but not runtime request-governed
+The system SHALL distinguish native usage accounting authority from proxy runtime request governance.
+
+#### Scenario: Native usage launch does not claim request governance
+- **WHEN** a Worker Run uses `native_usage` tracking mode
+- **THEN** the system records it as budget-authoritative only through launch/review governance, preflight budget checks, post-run reconciliation, evidence review, and alarms after usage is known
+- **AND** the system SHALL NOT label the run as runtime request-governed
+
+#### Scenario: Proxy-governed launch supports runtime request guardrails
+- **WHEN** a Worker Run uses `proxy_governed` tracking mode
+- **THEN** runtime request guardrails may apply while Worker model calls pass through the Harness Proxy
+
+### Requirement: Native usage budget override acknowledgement
+The system SHALL require explicit native-usage acknowledgement when a budget override is used for a native usage launch.
+
+#### Scenario: Native usage override records acknowledgement
+- **WHEN** a Task estimate exceeds the remaining daily Worker budget
+- **AND** the selected Worker Adapter uses `native_usage` tracking mode
+- **AND** the operator chooses Launch with budget override
+- **THEN** the operator must acknowledge that native usage cannot be request-throttled mid-run
+- **AND** the Worker Run records `budget_override=true` and the acknowledgement for audit
+- **AND** post-run reconciliation may report an overrun after native usage evidence is imported
+
 ### Requirement: Recoverable launch errors clear on successful retry
 The system SHALL overwrite stale recoverable launch-error metadata on each launch attempt and SHALL clear the user-visible launch error after a successful retry or successful Worker Run completion.
 
@@ -104,3 +145,27 @@ The system SHALL transition successful governed Worker execution into Review ins
 - **AND** required tracking evidence is present
 - **THEN** the task moves from Running to Review
 - **AND** the task retains its session association and run evidence
+
+### Requirement: OpenCode launch uses non-interactive run command
+The system SHALL launch OpenCode Worker Sessions through a non-interactive command that includes the `run` subcommand, the configured OpenCode project directory when present, the selected Worker model, JSON output mode, and the scoped task prompt.
+
+#### Scenario: OpenCode launch command includes workdir, model, and prompt
+- **WHEN** an Estimated task passes Launch Guardrails for the OpenCode Worker Adapter
+- **AND** the selected adapter has a configured workdir
+- **THEN** the Local Runner command plan invokes `opencode run`
+- **AND** the command plan includes `--dir` with the configured adapter workdir
+- **AND** the command plan cwd is the configured adapter workdir
+- **AND** the command plan includes `--model` with the selected discovered Worker model
+- **AND** the command plan includes the scoped task prompt
+- **AND** the command plan is recorded with secrets redacted
+
+#### Scenario: Bare OpenCode template is normalized or rejected
+- **WHEN** an existing OpenCode adapter configuration contains a bare launch template equivalent to `opencode`
+- **THEN** the system does not launch that bare command for a task run
+- **AND** the system either normalizes it to the supported non-interactive run command with the configured workdir or blocks launch with a clear compatibility reason
+
+#### Scenario: Nonzero OpenCode exit preserves useful evidence
+- **WHEN** OpenCode exits nonzero after the command plan is launched
+- **THEN** the Worker Run is marked failed
+- **AND** the task returns to Estimated with retryable launch evidence
+- **AND** the task metadata preserves sanitized return code, stdout, stderr, selected adapter, selected model, configured workdir, and command plan

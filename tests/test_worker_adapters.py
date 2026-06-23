@@ -36,6 +36,7 @@ def test_init_db_seeds_worker_adapter_presets_idempotently_and_preserves_updates
     assert by_id["codex"]["is_default"] is True
     assert sum(1 for adapter in adapters if adapter["is_default"]) == 1
     assert by_id["codex"]["config"]["env"]["OPENAI_API_KEY"] == "secret-value"
+    assert by_id["opencode"]["config"]["launch_timeout_seconds"] == 600
 
 
 def test_worker_adapter_status_helpers_store_sanitized_evidence(tmp_path):
@@ -130,6 +131,126 @@ def test_worker_adapter_template_can_reference_session_api_key(tmp_path):
         "--session-key",
         "sk_sess_test",
     ]
+
+
+def test_opencode_native_launch_defaults_to_agent_sized_timeout(tmp_path):
+    adapter = {
+        "id": "opencode",
+        "kind": "opencode",
+        "name": "OpenCode",
+        "workdir": str(tmp_path),
+        "config": {"launch_template": ["opencode"]},
+        "supported_models": ["openai/gpt-5.5"],
+    }
+
+    plan = get_adapter_builder(adapter).build_native_launch_command(
+        model="openai/gpt-5.5",
+        task_prompt="Implement the DEMO_2099 task and run tests.",
+    )
+
+    assert plan.command == [
+        "opencode",
+        "run",
+        "--dir",
+        str(tmp_path),
+        "--model",
+        "openai/gpt-5.5",
+        "--format",
+        "json",
+        "Implement the DEMO_2099 task and run tests.",
+    ]
+    assert plan.cwd == Path(tmp_path)
+    assert plan.metadata["timeout_seconds"] == 600
+
+
+def test_opencode_native_verification_includes_configured_workdir(tmp_path):
+    adapter = {
+        "id": "opencode",
+        "kind": "opencode",
+        "name": "OpenCode",
+        "workdir": str(tmp_path),
+        "config": {},
+        "supported_models": ["openai/gpt-5.5"],
+    }
+
+    plan = get_adapter_builder(adapter).build_native_verification_command(
+        model="openai/gpt-5.5",
+        prompt="Return AGILE_AI_HTB_ADAPTER_OK",
+    )
+
+    assert plan.command == [
+        "opencode",
+        "run",
+        "--dir",
+        str(tmp_path),
+        "--model",
+        "openai/gpt-5.5",
+        "--format",
+        "json",
+        "Return AGILE_AI_HTB_ADAPTER_OK",
+    ]
+    assert plan.cwd == Path(tmp_path)
+
+
+def test_opencode_native_launch_template_with_dir_is_not_duplicated(tmp_path):
+    adapter = {
+        "id": "opencode",
+        "kind": "opencode",
+        "name": "OpenCode",
+        "workdir": str(tmp_path),
+        "config": {
+            "native_launch_template": [
+                "opencode",
+                "run",
+                "--dir",
+                "{workdir}",
+                "--model",
+                "{model}",
+                "--format",
+                "json",
+                "{prompt}",
+            ]
+        },
+        "supported_models": ["openai/gpt-5.5"],
+    }
+
+    plan = get_adapter_builder(adapter).build_native_launch_command(
+        model="openai/gpt-5.5",
+        task_prompt="Implement the task.",
+    )
+
+    assert plan.command.count("--dir") == 1
+    assert plan.command == [
+        "opencode",
+        "run",
+        "--dir",
+        str(tmp_path),
+        "--model",
+        "openai/gpt-5.5",
+        "--format",
+        "json",
+        "Implement the task.",
+    ]
+
+
+def test_opencode_native_launch_template_without_dir_is_injected(tmp_path):
+    adapter = {
+        "id": "opencode",
+        "kind": "opencode",
+        "name": "OpenCode",
+        "workdir": str(tmp_path),
+        "config": {
+            "native_launch_template": ["opencode", "run", "--model", "{model}", "--format", "json", "{prompt}"]
+        },
+        "supported_models": ["openai/gpt-5.5"],
+    }
+
+    plan = get_adapter_builder(adapter).build_native_launch_command(
+        model="openai/gpt-5.5",
+        task_prompt="Implement the task.",
+    )
+
+    assert plan.command[:4] == ["opencode", "run", "--dir", str(tmp_path)]
 
 
 def test_detect_worker_adapter_reports_missing_command_without_verifying(monkeypatch):

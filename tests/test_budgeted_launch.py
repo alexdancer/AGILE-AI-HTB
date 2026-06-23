@@ -250,6 +250,34 @@ def test_worker_adapter_launch_failure_preserves_launchable_status_and_records_r
     assert "last_launch_failure" not in relaunched.task["metadata"]
 
 
+def test_opencode_bare_launch_template_is_normalized_to_noninteractive_run_command(tmp_path):
+    db_path = tmp_path / "harness.db"
+    task = _verified_budget_task(db_path, tmp_path, estimate=50, budget={"daily_used_tokens": 0, "daily_cap_tokens": 100})
+    db.update_worker_adapter(
+        db_path,
+        "opencode",
+        workdir=str(tmp_path),
+        config={"launch_template": ["opencode"]},
+        supported_models=["opencode/gpt-5.1"],
+        is_default=True,
+    )
+    calls = []
+
+    def failing_runner(plan):
+        calls.append(plan)
+        return {"returncode": 1, "stdout": "", "stderr": "opencode requires a run command"}
+
+    launch_task(db_path, task["id"], adapter_id="opencode", model=None, proxy_url=None, runner=failing_runner)
+    _wait_for_worker_run(db_path, task["id"], "failed")
+    failed = db.get_task(db_path, task["id"])
+
+    assert calls[0].command == ["opencode", "run", "--model", "opencode/gpt-5.1", "--format", "json", "Budgeted launch"]
+    assert failed["status"] == "Estimated"
+    assert failed["metadata"]["last_launch_failure"]["returncode"] == 1
+    assert failed["metadata"]["launch_command_plan"]["command"] == calls[0].command
+    assert failed["metadata"]["launch_command_plan"]["metadata"]["model"] == "opencode/gpt-5.1"
+
+
 def test_native_usage_budget_override_requires_explicit_acknowledgement(tmp_path):
     db_path = tmp_path / "harness.db"
     task = _verified_budget_task(db_path, tmp_path, estimate=75, budget={"daily_used_tokens": 50, "daily_cap_tokens": 100})
@@ -322,7 +350,17 @@ def test_native_usage_launch_passes_selected_model_and_records_usage_metadata(tm
     with db.connect(db_path) as conn:
         token_turn = conn.execute("select * from token_turns where session_id = ?", (session["id"],)).fetchone()
 
-    assert calls[0].command == ["opencode", "run", "--model", "opencode/gpt-5.1", "--format", "json", "Budgeted launch"]
+    assert calls[0].command == [
+        "opencode",
+        "run",
+        "--dir",
+        str(tmp_path),
+        "--model",
+        "opencode/gpt-5.1",
+        "--format",
+        "json",
+        "Budgeted launch",
+    ]
     assert token_turn is not None
     assert calls[0].env == {}
     assert result.task["metadata"]["tracking_mode"] == "native_usage"
@@ -404,6 +442,7 @@ def test_token_usage_breakdown_classifies_control_worker_verification_and_report
     )
     rows = [
         ("estimation", "control", 10),
+        ("task_breakdown", "control", 7),
         ("task_execution", "worker", 20),
         ("adapter_verification", "worker", 5),
         ("reporting", "control", 3),
@@ -423,16 +462,17 @@ def test_token_usage_breakdown_classifies_control_worker_verification_and_report
     breakdown = db.token_usage_breakdown(db_path)
     session_breakdown = db.session_token_breakdown(db_path, session["id"])
 
-    assert breakdown["total_tokens"] == 38
+    assert breakdown["total_tokens"] == 45
     assert breakdown["by_category"] == {
         "control_plane": 10,
+        "task_breakdown": 7,
         "worker_execution": 20,
         "adapter_verification": 5,
         "reporting_summary": 3,
         "other": 0,
     }
     assert breakdown == session_breakdown
-    assert breakdown["by_source"]["control_plane"] == 10
+    assert breakdown["by_source"]["control_plane"] == 17
     assert breakdown["by_source"]["harness_proxy"] == 25
 
 

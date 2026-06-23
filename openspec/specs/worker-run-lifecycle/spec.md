@@ -32,16 +32,25 @@ The system SHALL move the task from Running to Review when the Worker Run finish
 - **AND** the associated task moves to Review
 
 ### Requirement: Worker Run records review evidence
-The system SHALL preserve sanitized Worker Run evidence for operator review after completion.
+The system SHALL preserve sanitized Worker Run evidence for operator review after completion, including the configured Worker workdir and evidence of where files were changed when such evidence is available.
 
 #### Scenario: Review evidence is captured
 - **WHEN** a Worker Run completes successfully
 - **THEN** the system stores sanitized stdout and stderr evidence
 - **AND** records session/token evidence
-- **AND** records git diff or porcelain evidence when the run is associated with a connected project root
+- **AND** records configured workdir and command cwd evidence
+- **AND** records git diff, porcelain, or filesystem evidence when the run is associated with a connected project root or configured workdir
+
+#### Scenario: Workdir mismatch prevents completed-work review
+- **WHEN** a Worker Run exits successfully
+- **AND** the Worker command evidence indicates files were read or edited outside the configured workdir
+- **AND** the configured workdir has no expected output or file-change evidence
+- **THEN** the system marks the Worker Run failed with workdir mismatch evidence
+- **AND** the task returns to Estimated for retry
+- **AND** the task card or metadata shows the configured workdir and suspicious outside paths
 
 ### Requirement: Retryable Worker Run failure returns task to Estimated
-The system SHALL return a task to Estimated when a background Worker Run fails due to a retryable operational failure.
+The system SHALL return a task to Estimated when a background Worker Run fails due to a retryable operational failure, while preserving enough sanitized command evidence for the operator to diagnose launch command, model, tracking mode, stdout, stderr, and return code.
 
 #### Scenario: Timeout returns to Estimated
 - **WHEN** a Running task's Worker Run times out after the adapter command started
@@ -55,6 +64,12 @@ The system SHALL return a task to Estimated when a background Worker Run fails d
 - **THEN** the system marks the Worker Run `failed`
 - **AND** the task returns to Estimated with sanitized failure evidence
 - **AND** the task remains eligible for another launch
+
+#### Scenario: OpenCode return-code-one failure shows command evidence
+- **WHEN** an OpenCode Worker Run exits with return code 1
+- **THEN** the task returns to Estimated instead of staying Running
+- **AND** the task card or metadata preserves sanitized stderr/stdout and the redacted command plan used for that attempt
+- **AND** the preserved evidence includes the selected adapter and selected model
 
 ### Requirement: Active Worker Run prevents duplicate launch
 The system SHALL prevent a second launch for a task that already has an active Worker Run.

@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from pydantic import ValidationError
 
@@ -17,8 +18,14 @@ from agile_ai_htb.auth import require_portal_auth
 from agile_ai_htb.estimation import EstimatorError, estimate_task
 from agile_ai_htb.llm import LLMClientError, calculate_cost, extract_usage, response_to_dict
 from agile_ai_htb.task_launch import DEFAULT_PROXY_URL, TaskLaunchBlocked, launch_task, refresh_task_from_session
+from agile_ai_htb.task_breakdown import (
+    TaskBreakdownError,
+    breakdown_task_source,
+    validate_breakdown_result,
+)
 
 router = APIRouter()
+templates = Jinja2Templates(directory=Path(__file__).resolve().parents[1] / "templates")
 CANONICAL_TASK_STATUSES = {"Estimated", "Running", "Review", "Done", "Blocked"}
 PositiveStrictInt = Annotated[int, Field(strict=True, gt=0)]
 NonNegativeStrictInt = Annotated[int, Field(strict=True, ge=0)]
@@ -190,35 +197,55 @@ async def review_task_endpoint(task_id: str, request: Request):
 
 @router.post("/estimate", dependencies=[Depends(require_portal_auth)])
 async def estimate(payload: EstimateRequest, request: Request) -> dict[str, Any]:
+    return await _estimate_and_create_task(
+        request,
+        payload.description,
+        adapter_id=payload.adapter_id,
+        remaining_daily_tokens=payload.remaining_daily_tokens,
+        daily_cap_tokens=payload.daily_cap_tokens,
+    )
+
+
+async def _estimate_and_create_task(
+    request: Request,
+    description: str,
+    *,
+    adapter_id: str | None = None,
+    remaining_daily_tokens: int | None = None,
+    daily_cap_tokens: int | None = None,
+    extra_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     database_path = request.app.state.settings.database_path
     settings = request.app.state.settings
+    estimator_model = settings.estimator_model
     try:
         result, llm_response = await estimate_task(
-            payload.description,
+            description,
             request.app.state.guardrails,
             llm_client=request.app.state.llm_client,
-            estimator_model=settings.control_plane_model,
-            remaining_daily_tokens=payload.remaining_daily_tokens,
-            daily_cap_tokens=payload.daily_cap_tokens,
+            estimator_model=estimator_model,
+            remaining_daily_tokens=remaining_daily_tokens,
+            daily_cap_tokens=daily_cap_tokens,
         )
     except EstimatorError as exc:
         return db.create_task(
             database_path,
-            description=payload.description,
+            description=description,
             status="Blocked",
             metadata={
                 "blocked_reason": "Estimator unavailable or invalid; manual estimate required.",
                 "requires_manual_estimate": True,
                 "estimation_source": "manual_required",
                 "estimator_failure_type": type(exc).__name__,
+                **(extra_metadata or {}),
             },
         )
 
     estimation_session = db.create_session(
         database_path,
-        task_description=payload.description,
-        model=settings.control_plane_model,
-        session_key_hash=_estimation_session_key_hash(payload.description),
+        task_description=description,
+        model=estimator_model,
+        session_key_hash=_estimation_session_key_hash(description),
         guardrail_overrides={},
         status="completed",
     )
@@ -227,17 +254,19 @@ async def estimate(payload: EstimateRequest, request: Request) -> dict[str, Any]
         database_path,
         session_id=estimation_session["id"],
         usage_kind="estimation",
-        model=settings.control_plane_model,
+        model=estimator_model,
         prompt_tokens=usage["prompt_tokens"],
         completion_tokens=usage["completion_tokens"],
-        cost=calculate_cost(settings.control_plane_model, usage["prompt_tokens"], usage["completion_tokens"])
+        cost=calculate_cost(estimator_model, usage["prompt_tokens"], usage["completion_tokens"])
         or 0.0,
         raw_usage={**usage, "response": response_to_dict(llm_response)},
     )
     recommended_model, model_metadata = _constrained_recommended_model(
         database_path,
         result.recommended_model,
-        adapter_id=payload.adapter_id,
+        adapter_id=adapter_id,
+        estimate_tokens=result.token_estimate,
+        complexity=result.complexity,
     )
     metadata = {
         "estimation_source": result.source,
@@ -249,12 +278,12 @@ async def estimate(payload: EstimateRequest, request: Request) -> dict[str, Any]
         "spike_recommendation": result.spike_recommendation,
         "budget_note": result.budget_note,
         "estimation_session_id": estimation_session["id"],
-        **_markdown_breakdown_metadata(payload.description),
+        **(extra_metadata or {}),
         **model_metadata,
     }
     task = db.create_task(
         database_path,
-        description=payload.description,
+        description=description,
         status="Estimated",
         estimate_tokens=result.token_estimate,
         recommended_model=recommended_model,
@@ -268,6 +297,8 @@ def _constrained_recommended_model(
     recommended_model: str,
     *,
     adapter_id: str | None,
+    estimate_tokens: int | None = None,
+    complexity: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     adapter = None
     if adapter_id:
@@ -295,8 +326,38 @@ def _constrained_recommended_model(
     if recommended_model in models:
         metadata["worker_model_constraint"]["selected_model"] = recommended_model
         return recommended_model, metadata
-    metadata["worker_model_constraint"].update({"selected_model": models[0], "reason": "estimator_model_not_discovered"})
-    return str(models[0]), metadata
+    selected_model = _rank_discovered_worker_model(models, estimate_tokens=estimate_tokens, complexity=complexity)
+    reason = "estimator_model_not_discovered"
+    if selected_model != models[0]:
+        reason = "estimator_model_not_discovered_ranked"
+    metadata["worker_model_constraint"].update({"selected_model": selected_model, "reason": reason})
+    return str(selected_model), metadata
+
+
+def _rank_discovered_worker_model(
+    models: list[str], *, estimate_tokens: int | None, complexity: str | None
+) -> str:
+    if not models:
+        raise ValueError("models must not be empty")
+    normalized_complexity = (complexity or "").strip().lower()
+    simple_task = (estimate_tokens is not None and estimate_tokens <= 10_000) or normalized_complexity in {
+        "simple",
+        "modest",
+        "small",
+        "low",
+    }
+    if not simple_task:
+        return str(models[0])
+
+    def score(model: str, index: int) -> tuple[int, int]:
+        lowered = model.lower()
+        if any(term in lowered for term in ("haiku", "mini", "nano", "flash")):
+            return (0, index)
+        if any(term in lowered for term in ("big-pickle", "opus", "pro", "max")):
+            return (20, index)
+        return (10, index)
+
+    return min(((str(model), index) for index, model in enumerate(models)), key=lambda item: score(item[0], item[1]))[0]
 
 
 @router.post("/tasks/estimate-form", dependencies=[Depends(require_portal_auth)])
@@ -313,14 +374,301 @@ async def estimate_form(
 
         return RedirectResponse(f"/board?error={quote(str(exc))}", status_code=303)
 
-    task = await estimate(EstimateRequest(description=normalized_description), request)
-    if intake_metadata:
-        db.update_task(
-            request.app.state.settings.database_path,
-            task["id"],
-            {"metadata": {**task.get("metadata", {}), **intake_metadata}},
-        )
+    if _requires_task_breakdown_review(normalized_description, intake_metadata):
+        breakdown = await _create_task_breakdown_review(request, normalized_description, intake_metadata)
+        return RedirectResponse(f"/task-breakdowns/{breakdown['id']}/review", status_code=303)
+
+    await _estimate_and_create_task(request, normalized_description, extra_metadata=intake_metadata)
     return RedirectResponse("/board", status_code=303)
+
+
+@router.get("/task-breakdowns/{breakdown_id}/review", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
+def task_breakdown_review(breakdown_id: str, request: Request) -> HTMLResponse:
+    try:
+        breakdown = db.get_task_breakdown(request.app.state.settings.database_path, breakdown_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Task breakdown not found") from exc
+    return templates.TemplateResponse(
+        request,
+        "task_breakdown_review.html",
+        {"active_page": "board", "breakdown": breakdown},
+    )
+
+
+@router.post("/task-breakdowns/{breakdown_id}/accept", dependencies=[Depends(require_portal_auth)])
+async def accept_task_breakdown(breakdown_id: str, request: Request) -> RedirectResponse:
+    database_path = request.app.state.settings.database_path
+    try:
+        breakdown = db.get_task_breakdown(database_path, breakdown_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Task breakdown not found") from exc
+    if breakdown["status"] == "accepted":
+        return RedirectResponse("/board", status_code=303)
+    if breakdown["status"] == "failed":
+        return RedirectResponse(f"/task-breakdowns/{breakdown_id}/review", status_code=303)
+
+    form = await request.form()
+    global_constraints = _textarea_lines(str(form.get("global_constraints") or ""))
+    verification = _textarea_lines(str(form.get("verification") or ""))
+    accepted_candidates = _accepted_breakdown_candidates(breakdown, form)
+    created_task_ids: list[str] = []
+    for index, candidate in enumerate(accepted_candidates, start=1):
+        description = _breakdown_candidate_description(candidate, global_constraints, verification)
+        task = await _estimate_and_create_task(
+            request,
+            description,
+            extra_metadata={
+                **breakdown.get("intake_metadata", {}),
+                "task_breakdown_id": breakdown["id"],
+                "task_breakdown_source_sha256": breakdown["source_sha256"],
+                "task_breakdown_decision": breakdown["decision"],
+                "task_breakdown_index": index,
+                "task_breakdown_count": len(accepted_candidates),
+                "task_breakdown_title": candidate["title"],
+                "task_breakdown_prompt": candidate["prompt"],
+                "task_breakdown_acceptance_criteria": candidate["acceptance_criteria"],
+                "task_breakdown_constraints": candidate["constraints"],
+                "task_breakdown_global_constraints": global_constraints,
+                "task_breakdown_verification": verification,
+            },
+        )
+        created_task_ids.append(task["id"])
+    db.update_task_breakdown(
+        database_path,
+        breakdown_id,
+        {
+            "status": "accepted",
+            "candidates": accepted_candidates,
+            "global_constraints": global_constraints,
+            "verification": verification,
+            "created_task_ids": created_task_ids,
+        },
+    )
+    return RedirectResponse("/board", status_code=303)
+
+
+@router.post("/task-breakdowns/{breakdown_id}/retry", dependencies=[Depends(require_portal_auth)])
+async def retry_task_breakdown(breakdown_id: str, request: Request) -> RedirectResponse:
+    database_path = request.app.state.settings.database_path
+    try:
+        breakdown = db.get_task_breakdown(database_path, breakdown_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Task breakdown not found") from exc
+    if breakdown["status"] == "accepted":
+        return RedirectResponse("/board", status_code=303)
+    updates = await _task_breakdown_agent_updates(
+        request,
+        breakdown["source_text"],
+        breakdown.get("intake_metadata", {}),
+        source_sha256=breakdown["source_sha256"],
+    )
+    db.update_task_breakdown(database_path, breakdown_id, updates)
+    return RedirectResponse(f"/task-breakdowns/{breakdown_id}/review", status_code=303)
+
+
+@router.post("/task-breakdowns/{breakdown_id}/manual", dependencies=[Depends(require_portal_auth)])
+async def manual_task_breakdown_candidate(
+    breakdown_id: str,
+    request: Request,
+    title: str = Form(""),
+    prompt: str = Form(""),
+    acceptance_criteria: str = Form(""),
+) -> RedirectResponse:
+    database_path = request.app.state.settings.database_path
+    try:
+        breakdown = db.get_task_breakdown(database_path, breakdown_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Task breakdown not found") from exc
+    if breakdown["status"] == "accepted":
+        return RedirectResponse("/board", status_code=303)
+    candidate = {
+        "title": (title or "Manual task from source").strip(),
+        "prompt": (prompt or breakdown["source_text"]).strip(),
+        "acceptance_criteria": acceptance_criteria.strip(),
+        "constraints": [],
+        "human_in_loop": True,
+    }
+    db.update_task_breakdown(
+        database_path,
+        breakdown_id,
+        {
+            "status": "proposed",
+            "decision": "single_task",
+            "candidates": [candidate],
+            "failure_type": None,
+            "failure_message": None,
+        },
+    )
+    return RedirectResponse(f"/task-breakdowns/{breakdown_id}/review", status_code=303)
+
+
+def _requires_task_breakdown_review(description: str, intake_metadata: dict[str, Any]) -> bool:
+    if intake_metadata.get("intake_source") in {"markdown_paste", "markdown_upload"}:
+        return True
+    return len(description.split()) >= 120
+
+
+async def _create_task_breakdown_review(
+    request: Request, description: str, intake_metadata: dict[str, Any]
+) -> dict[str, Any]:
+    database_path = request.app.state.settings.database_path
+    source_sha256 = hashlib.sha256(description.encode("utf-8")).hexdigest()
+    payload = await _task_breakdown_agent_updates(
+        request,
+        description,
+        intake_metadata,
+        source_sha256=source_sha256,
+    )
+    return db.create_task_breakdown(
+        database_path,
+        source_text=description,
+        source_sha256=source_sha256,
+        intake_metadata=intake_metadata,
+        **payload,
+    )
+
+
+async def _task_breakdown_agent_updates(
+    request: Request,
+    description: str,
+    intake_metadata: dict[str, Any],
+    *,
+    source_sha256: str,
+) -> dict[str, Any]:
+    database_path = request.app.state.settings.database_path
+    settings = request.app.state.settings
+    model = settings.task_breakdown_model
+    try:
+        result, response = await breakdown_task_source(
+            description,
+            llm_client=request.app.state.llm_client,
+            task_breakdown_model=model,
+            intake_metadata=intake_metadata,
+            structure_hints=_markdown_task_items(description),
+        )
+        session = db.create_session(
+            database_path,
+            task_description=f"Task breakdown review for {source_sha256[:12]}",
+            model=model,
+            session_key_hash=_task_breakdown_session_key_hash(source_sha256),
+            guardrail_overrides={"spend_category": "task_breakdown"},
+            status="completed",
+        )
+        response_body = response_to_dict(response)
+        usage = extract_usage(response_body)
+        db.record_token_turn(
+            database_path,
+            session_id=session["id"],
+            usage_kind="task_breakdown",
+            model=model,
+            prompt_tokens=usage["prompt_tokens"],
+            completion_tokens=usage["completion_tokens"],
+            cost=calculate_cost(model, usage["prompt_tokens"], usage["completion_tokens"]) or 0.0,
+            raw_usage={**usage, "spend_category": "task_breakdown", "usage_source": "control_plane"},
+        )
+        payload = result.as_dict()
+        return {
+            "status": "proposed",
+            "decision": payload["decision"],
+            "model": model,
+            "session_id": session["id"],
+            "candidates": payload["candidates"],
+            "rejected_items": payload["rejected_items"],
+            "global_constraints": payload["global_constraints"],
+            "verification": payload["verification"],
+            "non_goals": payload["non_goals"],
+            "recommended_sequence": payload["recommended_sequence"],
+            "confidence": payload["confidence"],
+            "rationale": payload["rationale"],
+            "failure_type": None,
+            "failure_message": None,
+        }
+    except TaskBreakdownError as exc:
+        reason = str(_safe_review_value(str(exc))).strip()
+        failure_message = "Task Breakdown Agent failed; retry or create a manual candidate."
+        if reason:
+            failure_message = f"Task Breakdown Agent failed: {reason}. Retry or create a manual candidate."
+        return {
+            "status": "failed",
+            "decision": "manual_required",
+            "model": model,
+            "session_id": None,
+            "candidates": [],
+            "rejected_items": [],
+            "global_constraints": [],
+            "verification": [],
+            "non_goals": [],
+            "recommended_sequence": [],
+            "confidence": None,
+            "rationale": "",
+            "failure_type": type(exc).__name__,
+            "failure_message": failure_message,
+        }
+
+
+def _accepted_breakdown_candidates(breakdown: dict[str, Any], form: Any) -> list[dict[str, Any]]:
+    accepted: list[dict[str, Any]] = []
+    for index, original in enumerate(breakdown.get("candidates", [])):
+        if f"accept_{index}" not in form:
+            continue
+        title = str(form.get(f"title_{index}") or original.get("title") or "").strip()
+        prompt = str(form.get(f"prompt_{index}") or original.get("prompt") or "").strip()
+        if not title or not prompt:
+            continue
+        accepted.append(
+            {
+                "title": title,
+                "prompt": prompt,
+                "acceptance_criteria": str(
+                    form.get(f"acceptance_criteria_{index}")
+                    or original.get("acceptance_criteria")
+                    or ""
+                ).strip(),
+                "constraints": _textarea_lines(
+                    str(form.get(f"constraints_{index}") or "\n".join(original.get("constraints", [])))
+                ),
+                "human_in_loop": True,
+            }
+        )
+    if not accepted:
+        raise HTTPException(status_code=422, detail="Select at least one task candidate to accept.")
+    validate_breakdown_result(
+        {
+            "decision": breakdown.get("decision") if breakdown.get("decision") in {"single_task", "proposed_task_breakdown"} else "proposed_task_breakdown",
+            "candidates": accepted,
+            "rejected_items": breakdown.get("rejected_items", []),
+            "global_constraints": breakdown.get("global_constraints", []),
+            "verification": breakdown.get("verification", []),
+            "non_goals": breakdown.get("non_goals", []),
+            "recommended_sequence": breakdown.get("recommended_sequence", []),
+            "confidence": breakdown.get("confidence") or 0,
+            "rationale": breakdown.get("rationale") or "Operator-edited candidate.",
+            "source": "llm",
+        }
+    )
+    return accepted
+
+
+def _breakdown_candidate_description(
+    candidate: dict[str, Any], global_constraints: list[str], verification: list[str]
+) -> str:
+    sections = [candidate["title"], "", candidate["prompt"]]
+    if candidate.get("acceptance_criteria"):
+        sections.extend(["", "Acceptance criteria:", candidate["acceptance_criteria"]])
+    combined_constraints = [*global_constraints, *candidate.get("constraints", [])]
+    if combined_constraints:
+        sections.extend(["", "Constraints:", *[f"- {item}" for item in combined_constraints]])
+    if verification:
+        sections.extend(["", "Verification:", *[f"- {item}" for item in verification]])
+    return "\n".join(sections).strip()
+
+
+def _textarea_lines(value: str) -> list[str]:
+    return [line.strip() for line in value.splitlines() if line.strip()]
+
+
+def _task_breakdown_session_key_hash(source_sha256: str) -> str:
+    return hashlib.sha256(f"task-breakdown:v1:{source_sha256}:{_now_iso()}".encode("utf-8")).hexdigest()
 
 
 async def _description_from_intake_form(
@@ -350,6 +698,33 @@ async def _description_from_intake_form(
 def _looks_like_markdown(text: str) -> bool:
     markdown_markers = ("# ", "## ", "- [ ]", "- [x]", "```", "\n- ", "\n* ", "\n1. ")
     return any(marker in text for marker in markdown_markers)
+
+
+def _markdown_task_items(description: str) -> list[str]:
+    items: list[str] = []
+    for raw_line in description.splitlines():
+        line = raw_line.strip()
+        if line.startswith("- [ ]") or line.startswith("- [x]"):
+            item = line[5:].strip()
+        elif line.startswith("* [ ]") or line.startswith("* [x]"):
+            item = line[5:].strip()
+        elif line.startswith("- ") or line.startswith("* "):
+            item = line[2:].strip()
+        elif len(line) > 3 and line[0].isdigit() and line[1:3] == ". ":
+            item = line[3:].strip()
+        else:
+            continue
+        if item:
+            items.append(item)
+    return items
+
+
+def _markdown_source_title(description: str) -> str | None:
+    for raw_line in description.splitlines():
+        line = raw_line.strip()
+        if line.startswith("#"):
+            return line.lstrip("#").strip() or None
+    return None
 
 
 async def _review_action_payload_from_request(request: Request) -> tuple[TaskReviewActionRequest, bool]:
@@ -577,32 +952,6 @@ def _safe_review_value(value: Any, key_hint: str = "") -> Any:
     if isinstance(value, str):
         return SECRET_TEXT_PATTERN.sub("***REDACTED***", value)[:1000]
     return value
-
-
-def _markdown_breakdown_metadata(description: str) -> dict[str, Any]:
-    items: list[str] = []
-    for raw_line in description.splitlines():
-        line = raw_line.strip()
-        if line.startswith("- [ ]") or line.startswith("- [x]"):
-            item = line[5:].strip()
-        elif line.startswith("- ") or line.startswith("* "):
-            item = line[2:].strip()
-        elif len(line) > 3 and line[0].isdigit() and line[1:3] == ". ":
-            item = line[3:].strip()
-        else:
-            continue
-        if item:
-            items.append(item)
-    if len(items) < 2:
-        return {}
-    return {
-        "task_breakdown": {
-            "source": "markdown_structure",
-            "items": items,
-            "count": len(items),
-            "spend_category": "task_breakdown",
-        }
-    }
 
 
 def _estimation_session_key_hash(description: str) -> str:

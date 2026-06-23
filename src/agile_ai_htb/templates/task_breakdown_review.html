@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Task breakdown review | AGILE-AI-HTB{% endblock %}
+{% block content %}
+<h1 class="page-title">Task breakdown review</h1>
+<p class="page-sub">review vertical slices before estimation · no board Tasks exist until acceptance</p>
+
+<div class="panel">
+  <div class="panel-header">
+    <h3>Source</h3>
+    <span class="pill {% if breakdown.status == 'failed' %}red{% elif breakdown.status == 'accepted' %}green{% else %}yellow{% endif %}">{{ breakdown.status }}</span>
+  </div>
+  <div class="panel-body">
+    <div class="kv">
+      <div class="k">Review</div><div class="v">{{ breakdown.id }}</div>
+      <div class="k">Decision</div><div class="v">{{ breakdown.decision }}</div>
+      <div class="k">Model</div><div class="v">{{ breakdown.model }}</div>
+      <div class="k">Confidence</div><div class="v">{{ breakdown.confidence }}</div>
+      {% if breakdown.session_id %}<div class="k">Token session</div><div class="v"><a href="/sessions/{{ breakdown.session_id }}">{{ breakdown.session_id }}</a></div>{% endif %}
+    </div>
+    {% if breakdown.rationale %}<p class="muted">{{ breakdown.rationale }}</p>{% endif %}
+    {% if breakdown.status == 'failed' %}
+      <div class="alarm high">
+        <div class="head"><strong>Breakdown failed</strong><span class="id">{{ breakdown.failure_type }}</span></div>
+        <div class="body">{{ breakdown.failure_message }}</div>
+      </div>
+      <div class="btn-row" style="margin-top:12px">
+        <form method="post" action="/task-breakdowns/{{ breakdown.id }}/retry">
+          <button type="submit" class="primary">Retry breakdown</button>
+        </form>
+        <a href="/board" class="btn ghost">Cancel</a>
+      </div>
+      <form method="post" action="/task-breakdowns/{{ breakdown.id }}/manual" style="display:grid;gap:8px;margin-top:12px">
+        <label>Create one manual candidate from the source</label>
+        <input name="title" value="Manual task from Markdown source">
+        <textarea name="prompt" rows="5">{{ breakdown.source_text }}</textarea>
+        <textarea name="acceptance_criteria" rows="3" placeholder="Acceptance criteria / verification"></textarea>
+        <button type="submit" class="primary">Create manual candidate</button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if breakdown.status != 'failed' %}
+<form method="post" action="/task-breakdowns/{{ breakdown.id }}/accept">
+  <div class="grid cols-2">
+    <section class="panel">
+      <div class="panel-header"><h3>Candidate vertical slices</h3></div>
+      <div class="panel-body">
+        {% for candidate in breakdown.candidates %}
+        <div class="task">
+          <label class="mono"><input type="checkbox" name="accept_{{ loop.index0 }}" value="1" checked style="width:auto"> Accept candidate {{ loop.index }}</label>
+          <label>Title</label>
+          <input name="title_{{ loop.index0 }}" value="{{ candidate.title }}">
+          <label>Implementation prompt</label>
+          <textarea name="prompt_{{ loop.index0 }}" rows="5">{{ candidate.prompt }}</textarea>
+          <label>Acceptance criteria</label>
+          <textarea name="acceptance_criteria_{{ loop.index0 }}" rows="3">{{ candidate.acceptance_criteria }}</textarea>
+          <label>Task-specific constraints</label>
+          <textarea name="constraints_{{ loop.index0 }}" rows="2">{{ candidate.constraints|join('\n') }}</textarea>
+        </div>
+        {% else %}
+        <p class="muted">No candidates available.</p>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header"><h3>Preserved context</h3></div>
+      <div class="panel-body">
+        <h4>Global constraints</h4>
+        <textarea name="global_constraints" rows="4">{{ breakdown.global_constraints|join('\n') }}</textarea>
+        <h4>Verification</h4>
+        <textarea name="verification" rows="4">{{ breakdown.verification|join('\n') }}</textarea>
+        <h4>Rejected as Tasks</h4>
+        {% if breakdown.rejected_items %}
+        <ul class="muted">
+          {% for item in breakdown.rejected_items %}<li><strong>{{ item.reason }}</strong>: {{ item.text }}</li>{% endfor %}
+        </ul>
+        {% else %}<p class="muted">No rejected items.</p>{% endif %}
+        {% if breakdown.non_goals %}<h4>Non-goals</h4><ul class="muted">{% for item in breakdown.non_goals %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+        {% if breakdown.recommended_sequence %}<h4>Recommended sequence</h4><ol class="muted">{% for item in breakdown.recommended_sequence %}<li>{{ item }}</li>{% endfor %}</ol>{% endif %}
+      </div>
+    </section>
+  </div>
+  <div class="btn-row">
+    <button type="submit" class="primary">Accept selected and estimate</button>
+    <a href="/board" class="btn ghost">Cancel</a>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

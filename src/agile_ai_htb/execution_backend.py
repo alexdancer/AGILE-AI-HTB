@@ -111,8 +111,6 @@ def validate_local_project_path(root_path: Path | str) -> str | None:
         return f"Local project path cannot be read: {exc.strerror or type(exc).__name__}."
     if not resolved.is_dir():
         return "Local project path must be a directory."
-    if not _looks_like_project(resolved):
-        return "Local project path must contain project markers such as .git, pyproject.toml, package.json, or README.md."
     return None
 
 
@@ -172,18 +170,6 @@ def build_project_capability(
         "can_analyze": state in {"analysis_ready", "launch_ready"},
     }
 
-
-def _looks_like_project(path: Path) -> bool:
-    markers = {
-        ".git",
-        "pyproject.toml",
-        "package.json",
-        "Cargo.toml",
-        "go.mod",
-        "requirements.txt",
-        "README.md",
-    }
-    return any((path / marker).exists() for marker in markers)
 
 
 def _git_branch(root: Path) -> str | None:

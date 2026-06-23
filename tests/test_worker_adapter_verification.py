@@ -387,6 +387,8 @@ def test_verify_worker_adapter_native_usage_records_authoritative_token_row(tmp_
     assert runner.calls[0].command == [
         "opencode",
         "run",
+        "--dir",
+        str(tmp_path),
         "--model",
         "opencode/gpt-5.1",
         "--format",

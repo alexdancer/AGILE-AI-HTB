@@ -78,6 +78,30 @@ PROJECT_ROOT=$PWD scripts/local-opencode-readonly-demo.sh
 
 Flow: tests control-plane connection → discovers OpenCode Worker models from the installed CLI → verifies `native_usage` tracking → connects local project → launches read-only proof. No OpenAI-style Worker credential is required for native OpenCode; configure OpenCode itself first. If OpenCode cannot emit trustworthy run-bound native usage evidence, the adapter remains diagnostic/`observed_only` and is not launchable from the AGILE Board.
 
+### Long OpenCode comparison baseline
+
+For the long comparison demo, run the same synthetic task directly through OpenCode and then through AGILE-AI-HTB:
+
+- Task: [`demo_tasks/DEMO_2099_LONG_OPENCODE_COMPARISON_TASK.md`](demo_tasks/DEMO_2099_LONG_OPENCODE_COMPARISON_TASK.md)
+- Runbook: [`docs/DEMO_2099_OPENCODE_COMPARISON_RUNBOOK.md`](docs/DEMO_2099_OPENCODE_COMPARISON_RUNBOOK.md)
+- Direct baseline evidence: `.demo/opencode-comparison/evidence/direct-opencode-raw-events.jsonl`
+
+Direct OpenCode baseline already recorded from `openai/gpt-5.5` with `--variant high`:
+
+| Metric | Result |
+|---|---:|
+| Raw JSONL events | 134 |
+| Evidence size | 330,303 bytes |
+| Session | `ses_113fd6d71ffeE3YVEEQk7PvcDA` |
+| Usage records | 36 |
+| Cumulative token units | 1,601,736 |
+| Input tokens | 63,303 |
+| Output tokens | 22,078 |
+| Reasoning tokens | 5,955 |
+| Generated target tests | 16 passed |
+
+The cumulative token total is OpenCode event-stream accounting from `step_finish -> part.tokens`, including cache-read usage. The comparison claim is governance, not magic compression: direct OpenCode shows uncontrolled baseline usage; AGILE-AI-HTB adds estimate, budget gate, launch evidence, token ledger, alarms, and review workflow around the same Worker task.
+
 ## Deploy to Render
 
 One-click Blueprint deploy via `render.yaml` at the repo root.
@@ -99,6 +123,7 @@ Full runbook: [`docs/DEPLOY.md`](docs/DEPLOY.md)
 | `TOKEN_TRACKER_PORTAL_TOKEN` | — | Portal login/bearer token (required) |
 | `TOKEN_TRACKER_PORTAL_COOKIE_SECURE` | `false` | Set `true` for HTTPS |
 | `TOKEN_TRACKER_CONTROL_PLANE_MODEL` / `AGILE_AI_HTB_CONTROL_MODEL` | `gpt-4o-mini` | Control-plane model for estimates, summaries, and reports. Local/demo runs should set `gpt-5.4-mini`. |
+| `TOKEN_TRACKER_TASK_BREAKDOWN_MODEL` / `AGILE_AI_HTB_TASK_BREAKDOWN_MODEL` | control-plane model | Optional Task Breakdown Agent model. Falls back to the control-plane model and records spend as control-plane orchestration tokens labeled `task_breakdown`, not Worker Adapter spend. |
 | `TOKEN_TRACKER_CONTROL_PLANE_PROVIDER` / `AGILE_AI_HTB_CONTROL_PROVIDER` | `openai` | Direct upstream provider (`openai`, `openai-compatible`, or `anthropic`) |
 | `AGILE_AI_HTB_CONTROL_BASE_URL` | — | Optional base URL for OpenAI-compatible upstreams |
 | `AGILE_AI_HTB_CONTROL_API_KEY_ENV` | `AGILE_AI_HTB_CONTROL_API_KEY` | Env var name holding control-plane API key |
@@ -154,8 +179,8 @@ src/agile_ai_htb/
 tests/
   test_eval_*.py      31 behavioral evals
   test_*.py           Unit + integration tests
+CONTEXT.md            Domain glossary
 docs/
-  CONTEXT.md          Domain glossary
   PRD.md              Product requirements
   IMPLEMENTATION-PLAN.md  Implementation plan + status
   HARNESS.md          Architecture reference

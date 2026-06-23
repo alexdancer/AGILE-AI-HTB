@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import time
 
@@ -25,14 +26,12 @@ def _project_root(tmp_path: Path) -> Path:
     return root
 
 
-def test_local_project_validation_rejects_missing_and_non_project_paths(tmp_path):
+def test_local_project_validation_rejects_missing_paths_but_allows_unmarked_directories(tmp_path):
     assert validate_local_project_path(tmp_path / "missing") == "Local project path does not exist."
 
     empty = tmp_path / "empty"
     empty.mkdir()
-    error = validate_local_project_path(empty)
-    assert error is not None
-    assert "project markers" in error
+    assert validate_local_project_path(empty) is None
 
 
 def test_profile_detection_records_lightweight_project_context(tmp_path):
@@ -66,6 +65,23 @@ def test_local_execution_backend_persists_project_profile_and_analysis_capabilit
     assert "No verified launchable Worker Adapter is available." in project["capability"]["reasons"]
     backend_status = db.get_execution_backend_status(db_path, "local_runner")
     assert backend_status["online"] is True
+
+
+def test_local_execution_backend_connects_unmarked_directory(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    root = tmp_path / "experiment-demo"
+    root.mkdir()
+    (root / "notes.txt").write_text("demo inputs\n")
+
+    result = LocalExecutionBackend(db_path).connect_project(root)
+
+    assert result.error is None
+    assert result.project is not None
+    assert result.project["root_path"] == str(root.resolve())
+    assert result.project["profile"]["name"] == "experiment-demo"
+    assert result.project["profile"]["top_level_entries"] == ["notes.txt"]
+    assert result.project["capability"]["state"] == "analysis_ready"
 
 
 def test_project_capability_stays_analysis_ready_with_observed_only_adapter(tmp_path):
@@ -223,3 +239,87 @@ def test_read_only_proof_blocks_when_worker_modifies_files(tmp_path):
     assert blocked["status"] == "Blocked"
     assert blocked["metadata"]["launch_blocked_reason"] == "Read-only Worker session modified the connected project."
     assert "src/" in blocked["metadata"]["readonly_diff_evidence"]["after"]
+
+
+def _native_usage_stdout(model: str, *, extra_path: str | None = None) -> str:
+    payload = {
+        "session_id": "DEMO_2099_NATIVE_RUN_999",
+        "model": model,
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15, "cost_usd": 0},
+    }
+    lines = [json.dumps(payload)]
+    if extra_path:
+        lines.append(f"wrote {extra_path}")
+    return "\n".join(lines)
+
+
+def _estimated_task(db_path: Path) -> dict:
+    return db.create_task(
+        db_path,
+        description="Implement DEMO_2099 incident ledger task.",
+        status="Estimated",
+        estimate_tokens=1_000,
+        recommended_model="openai/gpt-5.5",
+    )
+
+
+def test_native_worker_run_fails_when_output_points_outside_empty_configured_workdir(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    harness_target = tmp_path / "harness-target"
+    harness_target.mkdir()
+    outside_file = tmp_path / "incident-ledger" / "src" / "incident_ledger" / "cli.py"
+    outside_file.parent.mkdir(parents=True)
+    outside_file.write_text("print('DEMO_2099')\n")
+    db.update_worker_adapter(db_path, "opencode", workdir=str(harness_target), supported_models=["openai/gpt-5.5"])
+    db.mark_worker_adapter_verification(db_path, "opencode", verified=True, evidence={"tracking_mode": "native_usage"})
+    task = _estimated_task(db_path)
+
+    launch_task(
+        db_path,
+        task["id"],
+        adapter_id="opencode",
+        model="openai/gpt-5.5",
+        proxy_url="http://127.0.0.1:8000/v1",
+        runner=lambda plan: {"returncode": 0, "stdout": _native_usage_stdout("openai/gpt-5.5", extra_path=str(outside_file)), "stderr": ""},
+    )
+    run = _wait_for_worker_run(db_path, task["id"], "failed")
+    blocked = db.get_task(db_path, task["id"])
+
+    assert blocked["status"] == "Estimated"
+    assert blocked["metadata"]["launch_failure_type"] == "workdir_mismatch"
+    assert blocked["metadata"]["launch_error"] == "Worker completed but produced evidence outside the configured workdir."
+    evidence = blocked["metadata"]["workdir_evidence"]
+    assert evidence["configured_workdir"] == str(harness_target.resolve())
+    assert evidence["top_level_entries"] == []
+    assert str(outside_file.resolve()) in evidence["outside_paths"]
+    assert run["metadata"]["workdir_evidence"] == evidence
+
+
+def test_native_worker_run_records_workdir_evidence_and_moves_to_review(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    harness_target = tmp_path / "harness-target"
+    harness_target.mkdir()
+    (harness_target / "README.md").write_text("# DEMO_2099\n")
+    db.update_worker_adapter(db_path, "opencode", workdir=str(harness_target), supported_models=["openai/gpt-5.5"])
+    db.mark_worker_adapter_verification(db_path, "opencode", verified=True, evidence={"tracking_mode": "native_usage"})
+    task = _estimated_task(db_path)
+
+    launch_task(
+        db_path,
+        task["id"],
+        adapter_id="opencode",
+        model="openai/gpt-5.5",
+        proxy_url="http://127.0.0.1:8000/v1",
+        runner=lambda plan: {"returncode": 0, "stdout": _native_usage_stdout("openai/gpt-5.5"), "stderr": ""},
+    )
+    run = _wait_for_worker_run(db_path, task["id"], "completed")
+    reviewed = db.get_task(db_path, task["id"])
+
+    assert reviewed["status"] == "Review"
+    evidence = reviewed["metadata"]["workdir_evidence"]
+    assert evidence["configured_workdir"] == str(harness_target.resolve())
+    assert evidence["top_level_entries"] == ["README.md"]
+    assert evidence["outside_paths"] == []
+    assert run["metadata"]["workdir_evidence"] == evidence

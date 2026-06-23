@@ -22,6 +22,7 @@ SENTINEL_PROMPT = (
 SECRET_ENV_TERMS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "AUTHORIZATION")
 SECRET_VALUE_PATTERN = re.compile("s" "k_" r"[A-Za-z0-9_\-.]+")
 SUBPROCESS_RUNNER_TIMEOUT_SECONDS = 60
+OPENCODE_AGENT_LAUNCH_TIMEOUT_SECONDS = 600
 SECRET_COMMAND_FLAGS = {
     "--api-key",
     "--apikey",
@@ -107,9 +108,12 @@ class WorkerAdapterBuilder:
         model: str,
         prompt: str,
     ) -> CommandPlan:
-        template = self.config.get("native_verification_template") or self._default_native_verification_template()
-        command = [str(part).format(model=model, prompt=prompt) for part in template]
         workdir = self.adapter.get("workdir")
+        template = self._normalize_template(
+            "native_verification_template",
+            self.config.get("native_verification_template") or self._default_native_verification_template(),
+        )
+        command = [str(part).format(model=model, prompt=prompt, workdir=workdir or "") for part in template]
         return CommandPlan(
             command=command,
             cwd=Path(workdir) if workdir else None,
@@ -134,9 +138,12 @@ class WorkerAdapterBuilder:
         model: str,
         task_prompt: str,
     ) -> CommandPlan:
-        template = self.config.get("native_launch_template") or self._default_native_launch_template()
-        command = [str(part).format(model=model, prompt=task_prompt) for part in template]
         workdir = self.adapter.get("workdir")
+        template = self._normalize_template(
+            "native_launch_template",
+            self.config.get("native_launch_template") or self._default_native_launch_template(),
+        )
+        command = [str(part).format(model=model, prompt=task_prompt, workdir=workdir or "") for part in template]
         return CommandPlan(
             command=command,
             cwd=Path(workdir) if workdir else None,
@@ -185,7 +192,7 @@ class WorkerAdapterBuilder:
         session_api_key: str,
         purpose: str,
     ) -> CommandPlan:
-        template = self.config.get(template_key) or fallback
+        template = self._normalize_template(template_key, self.config.get(template_key) or fallback)
         command = [
             str(part).format(
                 model=model,
@@ -223,6 +230,9 @@ class WorkerAdapterBuilder:
             "AGILE_AI_HTB_SESSION_API_KEY": session_api_key,
         }
 
+    def _normalize_template(self, template_key: str, template: list[Any]) -> list[Any]:
+        return template
+
     def _timeout_metadata(self, purpose_key: str) -> dict[str, int]:
         timeout = self.config.get(purpose_key, self.config.get("subprocess_timeout_seconds"))
         if timeout is None:
@@ -247,6 +257,33 @@ class CodexAdapterBuilder(WorkerAdapterBuilder):
 class OpenCodeAdapterBuilder(WorkerAdapterBuilder):
     api_key_env = "OPENAI_API_KEY"
     base_url_env = "OPENAI_BASE_URL"
+
+    def _normalize_template(self, template_key: str, template: list[Any]) -> list[Any]:
+        command = [str(part) for part in template]
+        if template_key in {"launch_template", "native_launch_template", "native_verification_template"} and command == ["opencode"]:
+            command = ["opencode", "run", "--model", "{model}", "--format", "json", "{prompt}"]
+        if template_key in {"native_launch_template", "native_verification_template"}:
+            return self._ensure_dir_argument(command)
+        return command
+
+    def _default_native_verification_template(self) -> list[str]:
+        return self._ensure_dir_argument(super()._default_native_verification_template())
+
+    def _default_native_launch_template(self) -> list[str]:
+        return self._ensure_dir_argument(super()._default_native_launch_template())
+
+    def _ensure_dir_argument(self, command: list[str]) -> list[str]:
+        if not self.adapter.get("workdir") or "--dir" in command:
+            return command
+        if len(command) >= 2 and command[0] == "opencode" and command[1] == "run":
+            return [command[0], command[1], "--dir", "{workdir}", *command[2:]]
+        return command
+
+    def _timeout_metadata(self, purpose_key: str) -> dict[str, int]:
+        configured = super()._timeout_metadata(purpose_key)
+        if configured or purpose_key != "launch_timeout_seconds":
+            return configured
+        return {"timeout_seconds": OPENCODE_AGENT_LAUNCH_TIMEOUT_SECONDS}
 
 
 BUILDERS = {

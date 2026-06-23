@@ -541,6 +541,37 @@ def _execute_worker_run(
         )
         return
 
+    workdir_evidence = _workdir_run_evidence(plan, stdout=stdout, stderr=stderr)
+    workdir_mismatch = _workdir_mismatch_failure(workdir_evidence)
+    if workdir_mismatch is not None:
+        db.update_session_status(database_path, session["id"], "failed")
+        failed = _mark_recoverable_launch_failure(
+            database_path,
+            task=task,
+            claimed=claimed,
+            session_id=session["id"],
+            reason=workdir_mismatch,
+            failure_type="workdir_mismatch",
+            returncode=returncode,
+            stdout=stdout,
+            stderr=stderr,
+            project_root=project_root,
+            write_capable=write_capable,
+            guardrail_reasons=[workdir_mismatch],
+            evidence={"workdir_evidence": workdir_evidence},
+        )
+        db.mark_worker_run_failed(
+            database_path,
+            worker_run_id,
+            error_type="workdir_mismatch",
+            error_message=workdir_mismatch,
+            returncode=returncode,
+            stdout=stdout,
+            stderr=stderr,
+            metadata={"task_status": failed["status"], "workdir_evidence": workdir_evidence},
+        )
+        return
+
     if write_capable:
         try:
             write_result = _finalize_write_capable_launch(
@@ -565,7 +596,14 @@ def _execute_worker_run(
                 metadata={"task_status": exc.task["status"]},
             )
             return
-        db.mark_worker_run_completed(database_path, worker_run_id, returncode=returncode, stdout=stdout, stderr=stderr, metadata={"task_status": write_result["status"]})
+        db.mark_worker_run_completed(
+            database_path,
+            worker_run_id,
+            returncode=returncode,
+            stdout=stdout,
+            stderr=stderr,
+            metadata={"task_status": write_result["status"], "workdir_evidence": workdir_evidence},
+        )
         return
 
     after_tree = _git_porcelain(project_root) if project_root else before_tree
@@ -614,12 +652,20 @@ def _execute_worker_run(
                 "launch_stderr": _safe_text(stderr),
                 "worker_run_status": "completed",
                 "active_worker_run_id": worker_run_id,
+                "workdir_evidence": workdir_evidence,
                 **({"diff_summary": _git_diff_summary(project_root)} if project_root else {}),
                 **(_read_only_report_metadata(task) if read_only else {}),
             },
         },
     )
-    db.mark_worker_run_completed(database_path, worker_run_id, returncode=returncode, stdout=stdout, stderr=stderr, metadata={"task_status": launched["status"]})
+    db.mark_worker_run_completed(
+        database_path,
+        worker_run_id,
+        returncode=returncode,
+        stdout=stdout,
+        stderr=stderr,
+        metadata={"task_status": launched["status"], "workdir_evidence": workdir_evidence},
+    )
 
 
 def _apply_manual_estimate(
@@ -732,6 +778,7 @@ def _mark_recoverable_launch_failure(
     project_root: str | None = None,
     write_capable: bool = False,
     guardrail_reasons: list[str] | None = None,
+    evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     failure: dict[str, Any] = {
         "type": failure_type,
@@ -742,6 +789,8 @@ def _mark_recoverable_launch_failure(
         failure["stderr"] = _safe_text(stderr)
     if stdout:
         failure["stdout"] = _safe_text(stdout)
+    if evidence:
+        failure.update(evidence)
     metadata = {
         **claimed.get("metadata", {}),
         "last_launch_failure": failure,
@@ -753,6 +802,7 @@ def _mark_recoverable_launch_failure(
         **({"launch_stderr": _safe_text(stderr)} if stderr else {}),
         **({"launch_stdout": _safe_text(stdout)} if stdout else {}),
         **({"diff_summary": _git_diff_summary(project_root)} if write_capable else {}),
+        **(evidence or {}),
     }
     metadata.pop("launch_blocked_reason", None)
     metadata.pop("blocked_reason", None)
@@ -1099,6 +1149,58 @@ def _slug(value: str) -> str:
 def _session_has_worker_token_usage(database_path: Path | str, session_id: str) -> bool:
     artifact = db.build_session_artifact(database_path, session_id)
     return any(turn.get("usage_kind") in {"task_execution", "worker"} for turn in artifact["token_log"])
+
+
+def _workdir_run_evidence(plan: Any, *, stdout: str, stderr: str) -> dict[str, Any]:
+    configured = Path(plan.cwd).resolve() if getattr(plan, "cwd", None) else None
+    top_level_entries: list[str] = []
+    exists = False
+    if configured is not None:
+        exists = configured.exists()
+        if exists and configured.is_dir():
+            top_level_entries = sorted(entry.name for entry in configured.iterdir())[:50]
+    outside_paths = _outside_workdir_paths(stdout + "\n" + stderr, configured)
+    return {
+        "configured_workdir": str(configured) if configured else None,
+        "command_cwd": str(getattr(plan, "cwd", None)) if getattr(plan, "cwd", None) else None,
+        "exists": exists,
+        "top_level_entries": top_level_entries,
+        "has_filesystem_evidence": bool(top_level_entries),
+        "outside_paths": outside_paths,
+    }
+
+
+def _workdir_mismatch_failure(evidence: dict[str, Any]) -> str | None:
+    if not evidence.get("configured_workdir"):
+        return None
+    if evidence.get("has_filesystem_evidence"):
+        return None
+    if not evidence.get("outside_paths"):
+        return None
+    return "Worker completed but produced evidence outside the configured workdir."
+
+
+def _outside_workdir_paths(text: str, configured_workdir: Path | None) -> list[str]:
+    if configured_workdir is None:
+        return []
+    paths: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(r"/(?:Users|private|tmp|var|Volumes)/[^\s'\"`<>),]+", text):
+        raw = match.group(0).rstrip(".:;]")
+        try:
+            candidate = Path(raw).resolve()
+        except OSError:
+            continue
+        try:
+            candidate.relative_to(configured_workdir)
+            continue
+        except ValueError:
+            pass
+        value = _safe_text(str(candidate), limit=500)
+        if value not in seen:
+            seen.add(value)
+            paths.append(value)
+    return paths[:20]
 
 
 def _git_porcelain(root_path: str | None) -> str | None:

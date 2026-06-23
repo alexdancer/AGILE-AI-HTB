@@ -21,6 +21,7 @@ from agile_ai_htb.estimation import (
 )
 from agile_ai_htb.guardrails import load_guardrails
 from agile_ai_htb.settings import Settings
+from agile_ai_htb.task_breakdown import TaskBreakdownResult, breakdown_task_source
 
 ROOT = Path(__file__).resolve().parents[1]
 PORTAL_TOKEN = "test-portal-token"
@@ -79,6 +80,50 @@ class FakeEstimatorLLM:
             "choices": [{"message": {"content": json.dumps(self.content)}}],
             "usage": self.usage,
         }
+
+
+
+
+class FakeSequentialLLM:
+    def __init__(self, contents):
+        self.contents = list(contents)
+        self.requests = []
+        self.usage = {"prompt_tokens": 111, "completion_tokens": 22, "total_tokens": 133}
+
+    async def acompletion(self, request):
+        self.requests.append(request)
+        if not self.contents:
+            raise AssertionError("unexpected LLM request")
+        return {
+            "choices": [{"message": {"content": json.dumps(self.contents.pop(0))}}],
+            "usage": self.usage,
+        }
+
+
+def _breakdown_content(*titles):
+    return {
+        "decision": "proposed_task_breakdown" if len(titles) > 1 else "single_task",
+        "candidates": [
+            {
+                "title": title,
+                "prompt": f"Implement {title}",
+                "acceptance_criteria": f"{title} has tests.",
+                "constraints": [],
+                "human_in_loop": True,
+            }
+            for title in titles
+        ],
+        "rejected_items": [
+            {"text": "Date: 2099-04-01", "reason": "context metadata, not a task"}
+        ],
+        "global_constraints": ["Do not add network dependencies."],
+        "verification": ["Run pytest."],
+        "non_goals": [],
+        "recommended_sequence": list(titles),
+        "confidence": 0.88,
+        "rationale": "Task candidates are vertical slices derived from Markdown evidence.",
+        "source": "llm",
+    }
 
 
 def _client_with_llm(tmp_path, llm):
@@ -183,6 +228,66 @@ def test_eval_estimator_usage_tracked_as_estimation_kind(tmp_path, monkeypatch):
     assert "estimation" in kinds
 
 
+@pytest.mark.asyncio
+async def test_eval_task_breakdown_accepts_common_model_json_variants():
+    """Task Breakdown Agent tolerates harmless JSON-shape drift from real models."""
+    llm = FakeSequentialLLM(
+        [
+            {
+                "decision": "single_task",
+                "candidates": [
+                    {
+                        "title": "Run DEMO_2099 comparison",
+                        "prompt": "Run the comparison demo from the uploaded Markdown.",
+                        "acceptance_criteria": ["Portal shows reviewed candidate.", "pytest passes."],
+                        "constraints": "Do not add network dependencies.",
+                        "human_in_loop": True,
+                    }
+                ],
+                "rejected_items": [],
+                "global_constraints": [],
+                "verification": ["Run pytest."],
+                "non_goals": [],
+                "recommended_sequence": ["Run DEMO_2099 comparison"],
+                "confidence": 0.84,
+                "rationale": "The uploaded Markdown describes one vertical slice.",
+                "source": "llm",
+                "notes": "Harmless extra provider/model field.",
+            }
+        ]
+    )
+
+    result, _ = await breakdown_task_source(
+        "# DEMO_TASK_2099 comparison\n\n- [ ] Run comparison\n- [ ] Run pytest.",
+        llm_client=llm,
+        task_breakdown_model="gpt-5.4-mini",
+    )
+
+    assert isinstance(result, TaskBreakdownResult)
+    assert result.candidates[0].acceptance_criteria == "Portal shows reviewed candidate.\npytest passes."
+    assert result.candidates[0].constraints == ["Do not add network dependencies."]
+
+
+def test_estimate_form_failed_breakdown_records_validation_reason(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeSequentialLLM([{"not": "a valid breakdown"}])
+
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={"description": "# DEMO_TASK_2099 invalid output\n\n- [ ] Run comparison"},
+            follow_redirects=False,
+        )
+        breakdown_id = response.headers["location"].split("/")[2]
+        breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
+
+    assert response.status_code == 303
+    assert breakdown["status"] == "failed"
+    assert breakdown["failure_type"] == "TaskBreakdownValidationError"
+    assert "task breakdown missing fields" in breakdown["failure_message"]
+
+
 def test_eval_estimator_tokens_count_against_daily_budget(tmp_path, monkeypatch):
     """Estimator tokens are recorded in token_turns and accumulate toward daily total."""
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
@@ -253,19 +358,16 @@ def test_eval_estimator_failure_creates_blocked_task(tmp_path, monkeypatch):
 # Markdown task intake / decomposition behavior
 # ---------------------------------------------------------------------------
 
-def test_eval_repo_aware_markdown_intake_records_estimate_model_and_metadata(tmp_path, monkeypatch):
+def test_eval_repo_aware_markdown_intake_records_breakdown_review_and_model_usage(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    llm = FakeEstimatorLLM(content={**FakeEstimatorLLM().content, "recommended_model": "claude-3-5-sonnet-20240620"})
+    llm = FakeSequentialLLM([
+        _breakdown_content(
+            "Add DEMO_ROUTE_2099_budget_alarm fixture coverage",
+            "Update DEMO_TEMPLATE_2099_session_report visibility",
+        )
+    ])
     client = _client_with_llm(tmp_path, llm)
     with client:
-        db.update_worker_adapter(
-            tmp_path / "harness.db",
-            "opencode",
-            workdir=str(tmp_path),
-            config={"command": "opencode"},
-            supported_models=["claude-3-5-sonnet-20240620"],
-            is_default=True,
-        )
         response = client.post(
             "/tasks/estimate-form",
             data={"description": MARKDOWN_EVAL_FIXTURES["repo_aware"]},
@@ -273,16 +375,25 @@ def test_eval_repo_aware_markdown_intake_records_estimate_model_and_metadata(tmp
             follow_redirects=False,
         )
         tasks = db.list_tasks(tmp_path / "harness.db")
+        breakdown_id = response.headers["location"].split("/")[2]
+        breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
+        usage = db.token_usage_breakdown(tmp_path / "harness.db")
 
     assert response.status_code == 303
-    assert tasks[0]["status"] == "Estimated"
-    assert tasks[0]["estimate_tokens"] == 12_345
-    assert tasks[0]["recommended_model"] == "claude-3-5-sonnet-20240620"
-    assert tasks[0]["metadata"]["intake_source"] == "markdown_paste"
-    assert tasks[0]["metadata"]["task_breakdown"]["count"] == 2
+    assert response.headers["location"].startswith("/task-breakdowns/")
+    assert tasks == []
+    assert breakdown["status"] == "proposed"
+    assert breakdown["model"] == "openai/gpt-4.1-mini"
+    assert breakdown["intake_metadata"]["intake_source"] == "markdown_paste"
+    assert [candidate["title"] for candidate in breakdown["candidates"]] == [
+        "Add DEMO_ROUTE_2099_budget_alarm fixture coverage",
+        "Update DEMO_TEMPLATE_2099_session_report visibility",
+    ]
+    assert breakdown["rejected_items"][0]["reason"] == "context metadata, not a task"
+    assert usage["by_category"]["task_breakdown"] == 133
 
 
-def test_eval_bullet_markdown_records_structured_breakdown_metadata(tmp_path, monkeypatch):
+def test_eval_bullet_markdown_direct_estimate_does_not_create_deterministic_breakdown_metadata(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     llm = FakeEstimatorLLM()
     client = _client_with_llm(tmp_path, llm)
@@ -295,16 +406,9 @@ def test_eval_bullet_markdown_records_structured_breakdown_metadata(tmp_path, mo
 
     task = response.json()
     assert response.status_code == 200
-    assert task["metadata"]["task_breakdown"] == {
-        "source": "markdown_structure",
-        "items": [
-            "Phase DEMO_PHASE_2099_A: parse markdown intake",
-            "Phase DEMO_PHASE_2099_B: decompose checklist tasks",
-            "Phase DEMO_PHASE_2099_C: verify budget dashboard copy",
-        ],
-        "count": 3,
-        "spend_category": "task_breakdown",
-    }
+    assert task["status"] == "Estimated"
+    assert "task_breakdown" not in task["metadata"]
+    assert "decomposition_source" not in task["metadata"]
 
 
 def test_eval_complex_markdown_failure_has_specific_manual_estimate_reason(tmp_path, monkeypatch):

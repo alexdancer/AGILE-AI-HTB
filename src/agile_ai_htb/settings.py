@@ -16,6 +16,7 @@ class Settings:
     control_plane_base_url: str = ""
     provider_api_key_env: str = "PROVIDER_API_KEY"
     estimator_model: str = "gpt-4o-mini"
+    task_breakdown_model: str = "gpt-4o-mini"
     portal_token_env: str = "TOKEN_TRACKER_PORTAL_TOKEN"
     portal_cookie_secure: bool = False
     local_runner_enabled: bool = False
@@ -31,6 +32,7 @@ class Settings:
         control_plane_base_url: str | None = None,
         provider_api_key_env: str | None = None,
         estimator_model: str | None = None,
+        task_breakdown_model: str | None = None,
         portal_token_env: str | None = None,
         portal_cookie_secure: bool | None = None,
         local_runner_enabled: bool | None = None,
@@ -90,7 +92,18 @@ class Settings:
         object.__setattr__(
             self,
             "estimator_model",
-            resolved_control_model,
+            estimator_model
+            or os.getenv("AGILE_AI_HTB_ESTIMATOR_MODEL")
+            or os.getenv("TOKEN_TRACKER_ESTIMATOR_MODEL")
+            or resolved_control_model,
+        )
+        object.__setattr__(
+            self,
+            "task_breakdown_model",
+            task_breakdown_model
+            or os.getenv("AGILE_AI_HTB_TASK_BREAKDOWN_MODEL")
+            or os.getenv("TOKEN_TRACKER_TASK_BREAKDOWN_MODEL")
+            or resolved_control_model,
         )
         object.__setattr__(
             self,

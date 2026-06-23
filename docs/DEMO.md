@@ -2,6 +2,8 @@
 
 A synthetic project that a coding agent builds live under harness governance. The project is a Python CLI tool (`snip`) for managing code snippets — small enough to complete in a demo but with enough surface area for tasks of varying complexity.
 
+For a longer token-usage comparison between direct OpenCode and AGILE-AI-HTB-launched OpenCode, use `demo_tasks/DEMO_2099_LONG_OPENCODE_COMPARISON_TASK.md` with the runbook at `docs/DEMO_2099_OPENCODE_COMPARISON_RUNBOOK.md`. That comparison keeps the control-plane/orchestrator model separate from the OpenCode Worker model and demonstrates budget governance, usage authority, launch/review lifecycle, and measured outcomes under a configured harness Worker budget; it does not claim the same full OpenCode prompt automatically uses fewer Worker tokens through `native_usage`.
+
 ## The Project
 
 **`snip`** — a CLI snippet manager. Commands: `snip save`, `snip list`, `snip search`, `snip delete`. Snippets stored as JSON files in `~/.snip/`. Each snippet has a title, language tag, and body.

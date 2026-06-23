@@ -177,7 +177,11 @@ WORKER_ADAPTER_PRESETS = [
         "id": "opencode",
         "kind": "opencode",
         "name": "OpenCode",
-        "config": {"verification_template": ["opencode", "run", "{prompt}"], "launch_template": ["opencode"]},
+        "config": {
+            "verification_template": ["opencode", "run", "--model", "{model}", "--format", "json", "{prompt}"],
+            "launch_template": ["opencode", "run", "--model", "{model}", "--format", "json", "{prompt}"],
+            "launch_timeout_seconds": 600,
+        },
         "supported_models": ["opencode/gpt-5.1", "gpt-5.1-codex"],
     },
     {
@@ -303,8 +307,37 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
             )
             """
         )
+    if "task_breakdowns" not in existing_tables:
+        conn.execute(
+            """
+            create table task_breakdowns (
+                id text primary key,
+                source_text text not null,
+                source_sha256 text not null,
+                intake_metadata_json text not null default '{}',
+                status text not null,
+                decision text not null,
+                model text not null,
+                session_id text references sessions(id) on delete set null,
+                candidates_json text not null default '[]',
+                rejected_items_json text not null default '[]',
+                global_constraints_json text not null default '[]',
+                verification_json text not null default '[]',
+                non_goals_json text not null default '[]',
+                recommended_sequence_json text not null default '[]',
+                confidence real,
+                rationale text not null default '',
+                failure_type text,
+                failure_message text,
+                created_task_ids_json text not null default '[]',
+                created_at text not null,
+                updated_at text not null
+            )
+            """
+        )
     conn.execute("create index if not exists idx_worker_runs_task_status on worker_runs(task_id, status)")
     conn.execute("create index if not exists idx_worker_runs_session on worker_runs(session_id)")
+    conn.execute("create index if not exists idx_task_breakdowns_status on task_breakdowns(status, created_at)")
     conn.execute("update tasks set status = 'Estimated' where status = 'Ready'")
 
 
@@ -536,6 +569,122 @@ def create_task(
             ),
         )
     return get_task(path, task_id)
+
+
+def create_task_breakdown(
+    path: Path | str,
+    *,
+    source_text: str,
+    source_sha256: str,
+    intake_metadata: dict[str, Any],
+    status: str,
+    decision: str,
+    model: str,
+    session_id: str | None = None,
+    candidates: list[dict[str, Any]] | None = None,
+    rejected_items: list[dict[str, Any]] | None = None,
+    global_constraints: list[str] | None = None,
+    verification: list[str] | None = None,
+    non_goals: list[str] | None = None,
+    recommended_sequence: list[str] | None = None,
+    confidence: float | None = None,
+    rationale: str = "",
+    failure_type: str | None = None,
+    failure_message: str | None = None,
+) -> dict[str, Any]:
+    breakdown_id = f"bd_{uuid.uuid4().hex}"
+    now = _now_iso()
+    with connect(path) as conn:
+        conn.execute(
+            """
+            insert into task_breakdowns (
+                id, source_text, source_sha256, intake_metadata_json, status, decision, model, session_id,
+                candidates_json, rejected_items_json, global_constraints_json, verification_json,
+                non_goals_json, recommended_sequence_json, confidence, rationale, failure_type,
+                failure_message, created_task_ids_json, created_at, updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                breakdown_id,
+                source_text,
+                source_sha256,
+                _to_json(intake_metadata),
+                status,
+                decision,
+                model,
+                session_id,
+                _to_json_list(candidates or []),
+                _to_json_list(rejected_items or []),
+                _to_json_list(global_constraints or []),
+                _to_json_list(verification or []),
+                _to_json_list(non_goals or []),
+                _to_json_list(recommended_sequence or []),
+                confidence,
+                rationale,
+                failure_type,
+                failure_message,
+                _to_json_list([]),
+                now,
+                now,
+            ),
+        )
+    return get_task_breakdown(path, breakdown_id)
+
+
+def get_task_breakdown(path: Path | str, breakdown_id: str) -> dict[str, Any]:
+    with connect(path) as conn:
+        row = conn.execute("select * from task_breakdowns where id = ?", (breakdown_id,)).fetchone()
+    if row is None:
+        raise KeyError(f"task breakdown not found: {breakdown_id}")
+    return _task_breakdown_from_row(row)
+
+
+def update_task_breakdown(path: Path | str, breakdown_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    allowed = {
+        "status": "status",
+        "decision": "decision",
+        "model": "model",
+        "session_id": "session_id",
+        "candidates": "candidates_json",
+        "rejected_items": "rejected_items_json",
+        "global_constraints": "global_constraints_json",
+        "verification": "verification_json",
+        "non_goals": "non_goals_json",
+        "recommended_sequence": "recommended_sequence_json",
+        "confidence": "confidence",
+        "rationale": "rationale",
+        "failure_type": "failure_type",
+        "failure_message": "failure_message",
+        "created_task_ids": "created_task_ids_json",
+    }
+    json_fields = {
+        "candidates",
+        "rejected_items",
+        "global_constraints",
+        "verification",
+        "non_goals",
+        "recommended_sequence",
+        "created_task_ids",
+    }
+    assignments: list[str] = []
+    values: list[Any] = []
+    for key, value in updates.items():
+        if key not in allowed:
+            continue
+        assignments.append(f"{allowed[key]} = ?")
+        values.append(_to_json_list(value) if key in json_fields else value)
+    if not assignments:
+        return get_task_breakdown(path, breakdown_id)
+    assignments.append("updated_at = ?")
+    values.append(_now_iso())
+    with connect(path) as conn:
+        cursor = conn.execute(
+            f"update task_breakdowns set {', '.join(assignments)} where id = ?",
+            (*values, breakdown_id),
+        )
+        if cursor.rowcount == 0:
+            raise KeyError(f"task breakdown not found: {breakdown_id}")
+    return get_task_breakdown(path, breakdown_id)
 
 
 def get_task(path: Path | str, task_id: str) -> dict[str, Any]:
@@ -1233,6 +1382,8 @@ def _classified_raw_usage(usage_kind: str, raw_usage: dict[str, Any]) -> dict[st
 
 
 def _spend_category_for_usage_kind(usage_kind: str) -> str:
+    if usage_kind == "task_breakdown":
+        return "task_breakdown"
     if usage_kind == "estimation":
         return "control_plane"
     if usage_kind in {"worker", "task_execution"}:
@@ -1245,7 +1396,7 @@ def _spend_category_for_usage_kind(usage_kind: str) -> str:
 
 
 def _usage_source_for_usage_kind(usage_kind: str, spend_category: str) -> str:
-    if spend_category == "control_plane":
+    if spend_category in {"control_plane", "task_breakdown"}:
         return "control_plane"
     if spend_category == "adapter_verification":
         return "harness_proxy"
@@ -1279,6 +1430,7 @@ def _token_turns_for_breakdown(
 def _summarize_token_turns(turns: list[dict[str, Any]]) -> dict[str, Any]:
     by_category = {
         "control_plane": 0,
+        "task_breakdown": 0,
         "worker_execution": 0,
         "adapter_verification": 0,
         "reporting_summary": 0,
@@ -1322,6 +1474,32 @@ def _task_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "session_id": row["session_id"],
         "metadata": _from_json(row["metadata_json"]),
         "created_at": row["created_at"],
+    }
+
+
+def _task_breakdown_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "source_text": row["source_text"],
+        "source_sha256": row["source_sha256"],
+        "intake_metadata": _from_json(row["intake_metadata_json"]),
+        "status": row["status"],
+        "decision": row["decision"],
+        "model": row["model"],
+        "session_id": row["session_id"],
+        "candidates": _from_json_list(row["candidates_json"]),
+        "rejected_items": _from_json_list(row["rejected_items_json"]),
+        "global_constraints": _from_json_list(row["global_constraints_json"]),
+        "verification": _from_json_list(row["verification_json"]),
+        "non_goals": _from_json_list(row["non_goals_json"]),
+        "recommended_sequence": _from_json_list(row["recommended_sequence_json"]),
+        "confidence": row["confidence"],
+        "rationale": row["rationale"],
+        "failure_type": row["failure_type"],
+        "failure_message": row["failure_message"],
+        "created_task_ids": _from_json_list(row["created_task_ids_json"]),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
     }
 
 
@@ -1486,8 +1664,17 @@ def _to_json(value: dict[str, Any]) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
+def _to_json_list(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
 def _from_json(value: str) -> dict[str, Any]:
     return json.loads(value)
+
+
+def _from_json_list(value: str) -> list[Any]:
+    parsed = json.loads(value)
+    return parsed if isinstance(parsed, list) else []
 
 
 def _now_iso() -> str:

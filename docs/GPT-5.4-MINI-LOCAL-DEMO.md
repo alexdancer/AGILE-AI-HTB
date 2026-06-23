@@ -18,6 +18,8 @@ gpt-5.4-mini
 - Token usage is written to the SQLite ledger.
 - Provider keys are not copied/fanned out into generic provider env vars.
 
+For a longer side-by-side token-usage comparison, use `demo_tasks/DEMO_2099_LONG_OPENCODE_COMPARISON_TASK.md` and `docs/DEMO_2099_OPENCODE_COMPARISON_RUNBOOK.md`. That runbook compares direct OpenCode baseline usage against AGILE-AI-HTB OpenCode Worker execution with a separately configured harness Worker budget. It preserves the model-layer split: `gpt-5.4-mini` or another control-plane/orchestrator model can estimate and report, while OpenCode selects and runs the Worker/coding harness model.
+
 ## Fixed compatibility assumptions
 
 This runbook assumes the local branch includes the fixes verified by the test suite:

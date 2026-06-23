@@ -93,6 +93,7 @@ All env vars read by `Settings()`:
 | `TOKEN_TRACKER_ESTIMATOR_MODEL` | `gpt-4o-mini` | Legacy alias for the control-plane model |
 | `TOKEN_TRACKER_CONTROL_PLANE_PROVIDER` / `AGILE_AI_HTB_CONTROL_PROVIDER` | `openai` | Direct upstream provider (`openai`, `openai-compatible`, or `anthropic`) |
 | `TOKEN_TRACKER_CONTROL_PLANE_MODEL` / `AGILE_AI_HTB_CONTROL_MODEL` | `gpt-4o-mini` | Model used by control-plane and proxy upstream calls |
+| `TOKEN_TRACKER_TASK_BREAKDOWN_MODEL` / `AGILE_AI_HTB_TASK_BREAKDOWN_MODEL` | control-plane model | Optional Task Breakdown Agent model. Falls back to the control-plane model and records spend as control-plane orchestration tokens labeled `task_breakdown`, not Worker Adapter spend. |
 | `AGILE_AI_HTB_CONTROL_API_KEY_ENV` | `AGILE_AI_HTB_CONTROL_API_KEY` | Name of the env var holding the control-plane API key |
 | `AGILE_AI_HTB_CONTROL_API_KEY` | — | Control-plane/proxy upstream provider API key |
 | `AGILE_AI_HTB_CONTROL_BASE_URL` | — | Optional OpenAI-compatible upstream base URL |
