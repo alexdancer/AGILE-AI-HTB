@@ -2,13 +2,39 @@
 set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://127.0.0.1:8000}"
-PORTAL_TOKEN="${TOKEN_TRACKER_PORTAL_TOKEN:-${PORTAL_TOKEN:-}}"
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 || command -v python || true)}"
+CONFIG_FILE="${HTB_CONFIG_FILE:-.htb/config.toml}"
+SECRETS_ENV="${HTB_SECRETS_ENV:-.htb/secrets.env}"
+PORTAL_TOKEN_ENV="${PORTAL_TOKEN_ENV:-TOKEN_TRACKER_PORTAL_TOKEN}"
+if [[ -f "$CONFIG_FILE" && -n "$PYTHON_BIN" ]]; then
+  CONFIG_PORTAL_TOKEN_ENV="$(
+    "$PYTHON_BIN" - "$CONFIG_FILE" <<'PY' || true
+import sys, tomllib
+try:
+    with open(sys.argv[1], "rb") as handle:
+        value = tomllib.load(handle).get("portal_token_env")
+except Exception:
+    value = None
+if isinstance(value, str) and value:
+    print(value)
+PY
+  )"
+  if [[ -n "$CONFIG_PORTAL_TOKEN_ENV" ]]; then
+    PORTAL_TOKEN_ENV="$CONFIG_PORTAL_TOKEN_ENV"
+  fi
+fi
+if [[ -z "${!PORTAL_TOKEN_ENV:-${TOKEN_TRACKER_PORTAL_TOKEN:-${PORTAL_TOKEN:-}}}" && -f "$SECRETS_ENV" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$SECRETS_ENV"
+  set +a
+fi
+PORTAL_TOKEN="${!PORTAL_TOKEN_ENV:-${TOKEN_TRACKER_PORTAL_TOKEN:-${PORTAL_TOKEN:-}}}"
 PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 VERIFY_MODEL="${WORKER_MODEL:-}"
-PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 || command -v python || true)}"
 
 if [[ -z "$PORTAL_TOKEN" ]]; then
-  echo "Set TOKEN_TRACKER_PORTAL_TOKEN (portal password/token) before running." >&2
+  echo "Set ${PORTAL_TOKEN_ENV} or edit ${SECRETS_ENV} with the portal token before running." >&2
   exit 2
 fi
 

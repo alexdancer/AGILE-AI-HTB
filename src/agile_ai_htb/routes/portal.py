@@ -46,7 +46,6 @@ class ProjectConnectRequest(BaseModel):
 
 
 class WorkerConfigureRequest(BaseModel):
-    workdir: str = Field(default="", min_length=0)
     is_default: bool = False
 
 
@@ -73,7 +72,7 @@ def login(request: Request, token: str = Form(...)):
     if not secrets.compare_digest(token, expected_token):
         raise HTTPException(status_code=401, detail="invalid portal token")
 
-    response = RedirectResponse("/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    response = RedirectResponse(_default_portal_landing(request.app.state.settings.database_path), status_code=status.HTTP_303_SEE_OTHER)
     response.set_cookie(
         PORTAL_COOKIE_NAME,
         sign_portal_cookie(expected_token),
@@ -115,11 +114,23 @@ def dashboard(request: Request):
         for alarm in open_alarms
         if str(alarm.get("severity", "")).lower() in {"critical", "high"}
     ]
+    tasks = db.list_tasks(database_path)
+    ready_task_count = sum(1 for task in tasks if task.get("status") in {"Estimated", "Ready"})
+    review_task_count = sum(1 for task in tasks if task.get("status") == "Review")
+    has_launchable_worker = any(adapter.get("launchable") for adapter in _worker_adapter_view_models(database_path))
+    next_actions = _dashboard_next_actions(
+        ready_task_count=ready_task_count,
+        review_task_count=review_task_count,
+        has_launchable_worker=has_launchable_worker,
+        open_alarm_count=len(open_alarms),
+        critical_alarm_count=len(critical_alarms),
+    )
     return templates.TemplateResponse(
         request,
         "dashboard.html",
         {
             "active_page": "dashboard",
+            "next_actions": next_actions,
             "token_total": token_total,
             "worker_token_total": token_breakdown["by_category"]["worker_execution"],
             "token_breakdown": token_breakdown,
@@ -133,6 +144,102 @@ def dashboard(request: Request):
             "active_sessions": list(reversed(active_sessions[-5:])),
             "recent_sessions": list(reversed(sessions[-5:])),
             "recent_alarms": list(reversed(alarms[-5:])),
+        },
+    )
+
+
+def _dashboard_next_actions(
+    *,
+    ready_task_count: int,
+    review_task_count: int,
+    has_launchable_worker: bool,
+    open_alarm_count: int,
+    critical_alarm_count: int,
+) -> list[dict[str, str]]:
+    actions: list[dict[str, str]] = []
+    if not has_launchable_worker:
+        actions.append(
+            {
+                "label": "Set up Worker adapter",
+                "detail": "No launchable Worker adapter",
+                "href": "/settings/workers",
+                "tone": "yellow",
+            }
+        )
+    if review_task_count:
+        actions.append(
+            {
+                "label": f"Review {review_task_count} task{'s' if review_task_count != 1 else ''}",
+                "detail": "Awaiting operator review",
+                "href": "/board",
+                "tone": "purple",
+            }
+        )
+    if ready_task_count:
+        actions.append(
+            {
+                "label": f"Launch {ready_task_count} estimated task{'s' if ready_task_count != 1 else ''}",
+                "detail": "Ready on task board",
+                "href": "/board",
+                "tone": "blue",
+            }
+        )
+    if critical_alarm_count:
+        actions.append(
+            {
+                "label": f"Handle {critical_alarm_count} critical alarm{'s' if critical_alarm_count != 1 else ''}",
+                "detail": "High priority alarm inbox",
+                "href": "/alarms",
+                "tone": "red",
+            }
+        )
+    elif open_alarm_count:
+        actions.append(
+            {
+                "label": f"Review {open_alarm_count} open alarm{'s' if open_alarm_count != 1 else ''}",
+                "detail": "Alarm inbox",
+                "href": "/alarms",
+                "tone": "yellow",
+            }
+        )
+    actions.append(
+        {
+            "label": "Open task board",
+            "detail": "Estimate, launch, refresh, review, or block tasks",
+            "href": "/board",
+            "tone": "green",
+        }
+    )
+    return actions
+
+
+@router.get("/projects", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
+def projects(request: Request):
+    return templates.TemplateResponse(
+        request,
+        "projects.html",
+        {
+            "active_page": "projects",
+            "projects": _project_view_models(request),
+            "local_runner_enabled": request.app.state.settings.local_runner_enabled,
+        },
+    )
+
+
+@router.get("/projects/{project_id}", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
+def project_workspace(project_id: str, request: Request):
+    try:
+        project = db.get_connected_project(request.app.state.settings.database_path, project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="connected project not found") from exc
+    project = _project_view_model(request, project)
+    return templates.TemplateResponse(
+        request,
+        "project_workspace.html",
+        {
+            "active_page": "project_workspace",
+            "active_project": project,
+            "project": project,
         },
     )
 
@@ -286,14 +393,13 @@ def worker_settings(request: Request):
 
 @router.post("/settings/workers/{adapter_id}/configure", dependencies=[Depends(require_portal_auth)])
 async def configure_worker_adapter(adapter_id: str, request: Request):
-    """Accept workdir and is_default form fields, update adapter, redirect to workers page."""
+    """Accept adapter settings form fields, update adapter, redirect to workers page."""
     database_path = request.app.state.settings.database_path
     payload, _ = await _config_payload_from_request(request)
     try:
         db.update_worker_adapter(
             database_path,
             adapter_id,
-            workdir=payload.workdir if payload.workdir else None,
             is_default=payload.is_default,
         )
     except KeyError as exc:
@@ -404,7 +510,7 @@ async def connect_project_route(request: Request):
     payload, wants_html = await _project_connect_payload_from_request(request)
     backend = _local_backend(request)
     if backend is None:
-        message = "Local Runner backend is disabled. Start with htb serve --local-runner."
+        message = "Local Runner backend is disabled. Run htb init, then htb serve."
         if wants_html:
             return _project_settings_with_error(request, message)
         return JSONResponse(status_code=409, content={"detail": message})
@@ -415,6 +521,8 @@ async def connect_project_route(request: Request):
             return _project_settings_with_error(request, result.error)
         return JSONResponse(status_code=422, content={"detail": result.error})
 
+    if wants_html and request.query_params.get("redirect") == "workspace" and result.project:
+        return RedirectResponse(f"/projects/{result.project['id']}", status_code=status.HTTP_303_SEE_OTHER)
     if wants_html:
         return RedirectResponse("/settings/project", status_code=status.HTTP_303_SEE_OTHER)
     return JSONResponse(status_code=200, content={"project": result.project})
@@ -664,6 +772,23 @@ def _local_backend(request: Request) -> LocalExecutionBackend | None:
         backend = LocalExecutionBackend(request.app.state.settings.database_path)
         request.app.state.execution_backend = backend
     return backend
+
+
+def _default_portal_landing(database_path: Path | str) -> str:
+    projects = db.list_connected_projects(database_path)
+    if projects:
+        return f"/projects/{projects[0]['id']}"
+    return "/projects"
+
+
+def _project_view_models(request: Request) -> list[dict[str, Any]]:
+    return [_project_view_model(request, project) for project in db.list_connected_projects(request.app.state.settings.database_path)]
+
+
+def _project_view_model(request: Request, project: dict[str, Any]) -> dict[str, Any]:
+    backend = _local_backend(request)
+    capability = backend.project_capability(project) if backend else project.get("capability", {})
+    return {**project, "capability": capability}
 
 
 def _project_settings_with_error(request: Request, error: str):

@@ -26,6 +26,16 @@ def _project_root(tmp_path: Path) -> Path:
     return root
 
 
+def _connect_project(db_path: Path, root: Path) -> dict:
+    return db.upsert_connected_project(
+        db_path,
+        name=root.name,
+        root_path=str(root.resolve()),
+        profile={"name": root.name, "root_path": str(root.resolve()), "test_command": "pytest"},
+        capability={"state": "launch_ready", "can_launch": True},
+    )
+
+
 def test_local_project_validation_rejects_missing_paths_but_allows_unmarked_directories(tmp_path):
     assert validate_local_project_path(tmp_path / "missing") == "Local project path does not exist."
 
@@ -271,6 +281,7 @@ def test_native_worker_run_fails_when_output_points_outside_empty_configured_wor
     outside_file = tmp_path / "incident-ledger" / "src" / "incident_ledger" / "cli.py"
     outside_file.parent.mkdir(parents=True)
     outside_file.write_text("print('DEMO_2099')\n")
+    _connect_project(db_path, harness_target)
     db.update_worker_adapter(db_path, "opencode", workdir=str(harness_target), supported_models=["openai/gpt-5.5"])
     db.mark_worker_adapter_verification(db_path, "opencode", verified=True, evidence={"tracking_mode": "native_usage"})
     task = _estimated_task(db_path)
@@ -302,6 +313,7 @@ def test_native_worker_run_records_workdir_evidence_and_moves_to_review(tmp_path
     harness_target = tmp_path / "harness-target"
     harness_target.mkdir()
     (harness_target / "README.md").write_text("# DEMO_2099\n")
+    _connect_project(db_path, harness_target)
     db.update_worker_adapter(db_path, "opencode", workdir=str(harness_target), supported_models=["openai/gpt-5.5"])
     db.mark_worker_adapter_verification(db_path, "opencode", verified=True, evidence={"tracking_mode": "native_usage"})
     task = _estimated_task(db_path)

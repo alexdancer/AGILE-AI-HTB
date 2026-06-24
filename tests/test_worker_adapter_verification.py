@@ -585,11 +585,14 @@ def test_workers_page_renders_verify_form_without_secrets(tmp_path, monkeypatch)
             tmp_path / "harness.db",
             "opencode",
             workdir=str(tmp_path),
-            config={"env": {"OPENAI_API_KEY": "super-secret-key"}},
+            config={
+                "env": {"OPENAI_API_KEY": "super-secret-key"},
+                "native_verification_template": ["opencode", "run", "--model", "{model}", "--format", "json", "{prompt}"],
+            },
             supported_models=["opencode/gpt-5.1"],
         )
 
-        response = client.get("/settings/workers", headers=_auth_headers())
+        response = client.get("/settings/workers?adapter_id=opencode", headers=_auth_headers())
 
     assert response.status_code == 200
     assert 'action="/settings/workers/opencode/verify"' in response.text

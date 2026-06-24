@@ -45,7 +45,7 @@ The presenter walks through the harness as the agent works through the tasks. Ea
 
 ### Beat 0: Setup (30 seconds)
 
-- Show the harness startup: `uv run htb serve --local-runner --host 127.0.0.1 --port 8000` for the local proof. If using Docker on this Mac, use `docker-compose`, not `docker compose`.
+- Show the operator setup path: `uv run htb init`, edit `.htb/secrets.env`, `uv run htb serve`, then `uv run htb check`. If using Docker on this Mac, use `docker-compose`, not `docker compose`.
 - Portal at `http://localhost:8000` — dashboard empty, 0 sessions
 - Show `guardrails.yaml`: daily cap 200K, session cap 50K, zones configured
 - AGILE board with all 6 tasks seeded in Estimated column, awaiting Worker Adapter verification
@@ -126,7 +126,7 @@ The presenter walks through the harness as the agent works through the tasks. Ea
 - [ ] Set up notification channel (macOS notification for simplicity)
 - [ ] Prepare the "budget clamp" demo by having a lowered daily cap ready
 - [ ] Prepare the "midnight reset" demo with a script that resets the counter instantly
-- [ ] Have direct provider control-plane env vars configured for the provider you will demo (`AGILE_AI_HTB_CONTROL_PROVIDER`, `AGILE_AI_HTB_CONTROL_MODEL`, `AGILE_AI_HTB_CONTROL_API_KEY`)
+- [ ] Have direct provider control-plane settings configured for the provider you will demo: provider/model in `.htb/config.toml`, and `AGILE_AI_HTB_CONTROL_API_KEY` in `.htb/secrets.env`
 - [ ] Test T1 (save) and T3 (list) end-to-end — these are the core demo beats
 - [ ] Have a second browser tab open showing the raw system prompts at each zone (for the yellow/red demo)
 
@@ -138,7 +138,7 @@ Current guarded launch path: a task can move from **Estimated** to **Running** o
 
 - adapter exists and is configured
 - adapter verification proves a budget-authoritative tracking mode: `proxy_governed` or trustworthy `native_usage`
-- adapter workdir exists
+- a project is connected and its root exists
 - selected model is supported by the adapter
 - harness proxy URL and per-session bearer key are available when the verified mode is `proxy_governed`
 - `observed_only` diagnostics are not launchable from the normal AGILE Board
@@ -146,17 +146,22 @@ Current guarded launch path: a task can move from **Estimated** to **Running** o
 The launch endpoint is operator-protected:
 
 ```bash
-export TOKEN_TRACKER_PORTAL_TOKEN=***
-# Start the app with your usual local command, then open http://127.0.0.1:8000
+uv run htb init
+# Edit .htb/secrets.env once; htb serve/check load it automatically
+uv run htb serve
+set -a
+source .htb/secrets.env
+set +a
+uv run htb check
+# Open http://127.0.0.1:8000
 ```
 
-1. Configure the locally available adapter. Prefer the Portal **Settings → Worker adapters** flow. Direct SQLite editing is only for local operator recovery. Example for Codex:
+1. Connect the target project in the Portal **Projects** flow, then configure the locally available adapter in **Settings → Worker adapters**. Direct SQLite editing is only for local operator recovery. Example for Codex:
 
    ```bash
    sqlite3 data/harness.db <<'SQL'
    update worker_adapters
-      set workdir = '/absolute/path/to/demo/project',
-          config_json = '{"command":"codex"}',
+      set config_json = '{"command":"codex"}',
           supported_models_json = '["gpt-5.1-codex"]',
           is_default = 1,
           updated_at = datetime('now')

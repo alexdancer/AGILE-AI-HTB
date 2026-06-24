@@ -49,6 +49,11 @@
         {% for candidate in breakdown.candidates %}
         <div class="task">
           <label class="mono"><input type="checkbox" name="accept_{{ loop.index0 }}" value="1" checked style="width:auto"> Accept candidate {{ loop.index }}</label>
+          <label>Candidate kind</label>
+          <select name="kind_{{ loop.index0 }}">
+            <option value="implementation" {% if candidate.kind|default('implementation') == 'implementation' %}selected{% endif %}>implementation</option>
+            <option value="acceptance_verification" {% if candidate.kind|default('implementation') == 'acceptance_verification' %}selected{% endif %}>acceptance_verification</option>
+          </select>
           <label>Title</label>
           <input name="title_{{ loop.index0 }}" value="{{ candidate.title }}">
           <label>Implementation prompt</label>
@@ -67,6 +72,8 @@
     <section class="panel">
       <div class="panel-header"><h3>Preserved context</h3></div>
       <div class="panel-body">
+        <h4>Global contract summary</h4>
+        <textarea name="global_contract_summary" rows="4">{{ breakdown.global_contract_summary }}</textarea>
         <h4>Global constraints</h4>
         <textarea name="global_constraints" rows="4">{{ breakdown.global_constraints|join('\n') }}</textarea>
         <h4>Verification</h4>

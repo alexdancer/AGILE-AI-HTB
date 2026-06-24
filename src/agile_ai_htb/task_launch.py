@@ -142,6 +142,9 @@ def _launch_task_unlocked(
         )
         raise TaskLaunchBlocked(blocked, ["Only Estimated tasks can launch."])
 
+    metadata = task.get("metadata") or {}
+    read_only = bool(metadata.get("read_only")) or metadata.get("launch_mode") == "read_only"
+    write_capable = bool(metadata.get("write_capable")) or metadata.get("launch_mode") == "write_capable"
     selected_model = model or task.get("recommended_model")
     selected_adapter_id = adapter_id or _default_adapter_id(database_path)
     selected_proxy_url = proxy_url or DEFAULT_PROXY_URL
@@ -157,10 +160,17 @@ def _launch_task_unlocked(
         blocked = _mark_launch_blocked(database_path, task, ["No worker adapter is configured for launch."])
         raise TaskLaunchBlocked(blocked, ["No worker adapter is configured for launch."])
 
+    project_root = _resolve_launch_project_root(database_path, task, read_only=read_only, write_capable=write_capable)
+    if not project_root:
+        reason = "Connect a project before launching a Worker task."
+        blocked = _mark_launch_blocked(database_path, task, [reason])
+        raise TaskLaunchBlocked(blocked, [reason])
+
     guardrails = evaluate_launch_guardrails(
         database_path,
         adapter_id=selected_adapter_id,
         model=selected_model,
+        project_root=project_root,
         session_api_key=session_api_key,
         proxy_url=selected_proxy_url,
     )
@@ -168,9 +178,6 @@ def _launch_task_unlocked(
         blocked = _mark_launch_blocked(database_path, task, guardrails.reasons)
         raise TaskLaunchBlocked(blocked, guardrails.reasons)
 
-    metadata = task.get("metadata") or {}
-    read_only = bool(metadata.get("read_only")) or metadata.get("launch_mode") == "read_only"
-    write_capable = bool(metadata.get("write_capable")) or metadata.get("launch_mode") == "write_capable"
     tracking_mode = (guardrails.adapter.get("verification_evidence") or {}).get("tracking_mode") or PROXY_GOVERNED
     usage_source = NATIVE_USAGE if tracking_mode == NATIVE_USAGE else "harness_proxy"
 
@@ -188,7 +195,6 @@ def _launch_task_unlocked(
         )
         raise TaskLaunchBlocked(blocked, ["Native usage budget override requires acknowledgement that runtime request throttling is not available."])
 
-    project_root = metadata.get("project_root_path") if (read_only or write_capable) else None
     before_tree = _git_porcelain(project_root) if project_root else None
     task_branch = None
     if write_capable:
@@ -221,6 +227,7 @@ def _launch_task_unlocked(
         plan = builder.build_native_launch_command(
             model=selected_model,
             task_prompt=task["description"],
+            project_root=project_root,
         )
     else:
         plan = builder.build_launch_command(
@@ -228,6 +235,7 @@ def _launch_task_unlocked(
             task_prompt=task["description"],
             proxy_url=selected_proxy_url,
             session_api_key=session_api_key,
+            project_root=project_root,
         )
     plan = replace(
         plan,
@@ -254,6 +262,7 @@ def _launch_task_unlocked(
                     "tracking_mode": tracking_mode,
                     "usage_source": usage_source,
                     "launch_command_plan": command_plan,
+                    "launch_project_root": project_root,
                     "launch_mode": "write_capable" if write_capable else "read_only" if read_only else "standard",
                     "budget_check": budget_check,
                     **({"budget_override": {"approved": True, "reason": "operator_approved_launch"}} if budget_override else {}),
@@ -274,6 +283,7 @@ def _launch_task_unlocked(
         metadata={
             "usage_source": usage_source,
             "launch_mode": "write_capable" if write_capable else "read_only" if read_only else "standard",
+            "launch_project_root": project_root,
             **({"task_branch": task_branch} if task_branch else {}),
         },
     )
@@ -309,6 +319,25 @@ def _launch_task_unlocked(
         worker_run=worker_run,
         launch_guardrails={"passed": True, "reasons": [], "adapter_id": selected_adapter_id, "worker_run_id": worker_run["id"]},
     )
+
+
+def _resolve_launch_project_root(
+    database_path: Path | str,
+    task: dict[str, Any],
+    *,
+    read_only: bool,
+    write_capable: bool,
+) -> str | None:
+    metadata = task.get("metadata") or {}
+    task_project_root = metadata.get("project_root_path")
+    projects = db.list_connected_projects(database_path)
+    if not projects:
+        return None
+    connected_roots = {str(Path(str(project["root_path"])).expanduser().resolve()) for project in projects}
+    if (read_only or write_capable) and task_project_root:
+        resolved_task_root = str(Path(str(task_project_root)).expanduser().resolve())
+        return resolved_task_root if resolved_task_root in connected_roots else None
+    return str(Path(str(projects[0]["root_path"])).expanduser().resolve())
 
 
 def _start_background_worker_run(

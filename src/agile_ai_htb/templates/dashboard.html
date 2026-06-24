@@ -4,6 +4,21 @@
 <h1 class="page-title">Dashboard</h1>
 <p class="page-sub">overview · daily budget · active sessions · recent alarms</p>
 
+<section class="panel">
+  <div class="panel-header"><h3>Operator next actions</h3></div>
+  <div class="panel-body">
+    <div class="grid cols-4">
+      {% for action in next_actions %}
+      <a class="card" href="{{ action.href }}" style="display:block;margin-bottom:0;color:var(--fg-0)">
+        <span class="pill {{ action.tone }}">Action</span>
+        <h3 style="margin:10px 0 4px">{{ action.label }}</h3>
+        <p class="muted" style="margin:0">{{ action.detail }}</p>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
 <section class="grid cols-4" style="margin-bottom:20px">
   <article class="kpi">
     <div class="label">Daily budget (Worker execution)</div>

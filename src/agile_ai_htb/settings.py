@@ -3,6 +3,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+from agile_ai_htb.operator_config import load_operator_config
 
 
 @dataclass(frozen=True)
@@ -36,29 +39,40 @@ class Settings:
         portal_token_env: str | None = None,
         portal_cookie_secure: bool | None = None,
         local_runner_enabled: bool | None = None,
+        operator_config: dict[str, Any] | None = None,
     ) -> None:
+        config = load_operator_config() if operator_config is None else operator_config
         object.__setattr__(
             self,
             "database_path",
-            Path(database_path or os.getenv("TOKEN_TRACKER_DATABASE_PATH", "harness.db")),
+            Path(database_path or os.getenv("TOKEN_TRACKER_DATABASE_PATH") or config.get("database_path") or "harness.db"),
         )
         object.__setattr__(
             self,
             "guardrails_path",
-            Path(guardrails_path or os.getenv("TOKEN_TRACKER_GUARDRAILS_PATH", "guardrails.yaml")),
+            Path(
+                guardrails_path
+                or os.getenv("TOKEN_TRACKER_GUARDRAILS_PATH")
+                or config.get("guardrails_path")
+                or "guardrails.yaml"
+            ),
         )
         object.__setattr__(
             self,
             "timezone",
-            timezone or os.getenv("TOKEN_TRACKER_TIMEZONE", "local"),
+            timezone or os.getenv("TOKEN_TRACKER_TIMEZONE") or config.get("timezone") or "local",
         )
-        legacy_provider_env = provider_api_key_env or os.getenv(
-            "TOKEN_TRACKER_PROVIDER_API_KEY_ENV", "PROVIDER_API_KEY"
+        legacy_provider_env = (
+            provider_api_key_env
+            or os.getenv("TOKEN_TRACKER_PROVIDER_API_KEY_ENV")
+            or config.get("provider_api_key_env")
+            or "PROVIDER_API_KEY"
         )
         resolved_control_api_env = (
             control_plane_api_key_env
             or os.getenv("AGILE_AI_HTB_CONTROL_API_KEY_ENV")
             or os.getenv("TOKEN_TRACKER_CONTROL_PLANE_API_KEY_ENV")
+            or config.get("control_plane_api_key_env")
             or "AGILE_AI_HTB_CONTROL_API_KEY"
         )
         resolved_control_model = (
@@ -66,14 +80,18 @@ class Settings:
             or os.getenv("AGILE_AI_HTB_CONTROL_MODEL")
             or os.getenv("TOKEN_TRACKER_CONTROL_PLANE_MODEL")
             or estimator_model
-            or os.getenv("TOKEN_TRACKER_ESTIMATOR_MODEL", "gpt-4o-mini")
+            or os.getenv("TOKEN_TRACKER_ESTIMATOR_MODEL")
+            or config.get("control_plane_model")
+            or "gpt-4o-mini"
         )
         object.__setattr__(
             self,
             "control_plane_provider",
             control_plane_provider
             or os.getenv("AGILE_AI_HTB_CONTROL_PROVIDER")
-            or os.getenv("TOKEN_TRACKER_CONTROL_PLANE_PROVIDER", "openai"),
+            or os.getenv("TOKEN_TRACKER_CONTROL_PLANE_PROVIDER")
+            or config.get("control_plane_provider")
+            or "openai",
         )
         object.__setattr__(self, "control_plane_model", resolved_control_model)
         object.__setattr__(self, "control_plane_api_key_env", resolved_control_api_env)
@@ -82,7 +100,9 @@ class Settings:
             "control_plane_base_url",
             control_plane_base_url
             or os.getenv("AGILE_AI_HTB_CONTROL_BASE_URL")
-            or os.getenv("TOKEN_TRACKER_CONTROL_PLANE_BASE_URL", ""),
+            or os.getenv("TOKEN_TRACKER_CONTROL_PLANE_BASE_URL")
+            or config.get("control_plane_base_url")
+            or "",
         )
         object.__setattr__(
             self,
@@ -95,6 +115,7 @@ class Settings:
             estimator_model
             or os.getenv("AGILE_AI_HTB_ESTIMATOR_MODEL")
             or os.getenv("TOKEN_TRACKER_ESTIMATOR_MODEL")
+            or config.get("estimator_model")
             or resolved_control_model,
         )
         object.__setattr__(
@@ -103,28 +124,39 @@ class Settings:
             task_breakdown_model
             or os.getenv("AGILE_AI_HTB_TASK_BREAKDOWN_MODEL")
             or os.getenv("TOKEN_TRACKER_TASK_BREAKDOWN_MODEL")
+            or config.get("task_breakdown_model")
             or resolved_control_model,
         )
         object.__setattr__(
             self,
             "portal_token_env",
-            portal_token_env or os.getenv("TOKEN_TRACKER_PORTAL_TOKEN_ENV", "TOKEN_TRACKER_PORTAL_TOKEN"),
+            portal_token_env
+            or os.getenv("TOKEN_TRACKER_PORTAL_TOKEN_ENV")
+            or config.get("portal_token_env")
+            or "TOKEN_TRACKER_PORTAL_TOKEN",
         )
         object.__setattr__(
             self,
             "portal_cookie_secure",
-            _env_bool("TOKEN_TRACKER_PORTAL_COOKIE_SECURE")
-            if portal_cookie_secure is None
-            else portal_cookie_secure,
+            portal_cookie_secure
+            if portal_cookie_secure is not None
+            else _env_bool("TOKEN_TRACKER_PORTAL_COOKIE_SECURE", _config_bool(config, "portal_cookie_secure")),
         )
         object.__setattr__(
             self,
             "local_runner_enabled",
-            _env_bool("TOKEN_TRACKER_LOCAL_RUNNER")
-            if local_runner_enabled is None
-            else local_runner_enabled,
+            local_runner_enabled
+            if local_runner_enabled is not None
+            else _env_bool("TOKEN_TRACKER_LOCAL_RUNNER", _config_bool(config, "local_runner_enabled")),
         )
 
 
-def _env_bool(name: str) -> bool:
-    return os.getenv(name, "").lower() in {"1", "true", "yes", "on"}
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _config_bool(config: dict[str, Any], name: str) -> bool:
+    return bool(config.get(name))

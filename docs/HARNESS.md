@@ -77,7 +77,7 @@ The minimum scale proof is one Control Plane coordinating multiple project/backe
 
 This proves the Control Plane can govern heterogeneous execution readiness at scale while keeping launch claims truthful.
 
-The first implementation slice is the **local execution slice**. It must prove real governance before expanding the dashboard: `htb serve --local-runner`, connect a local repo path, detect OpenCode, verify the real OpenCode CLI launch path, record `adapter_verification` tokens through a budget-authoritative tracking mode, mark the project **Launch-ready via Local Runner**, launch one tiny task through OpenCode, and prove Worker tokens hit the Harness ledger. The first launch proof should be read-only: OpenCode inspects the connected repo and writes a short session report artifact summarizing language, test command, and top-level structure. After that passes, a second proof may perform a tiny docs-only codebase change.
+The first implementation slice is the **local execution slice**. It must prove real governance before expanding the dashboard: `htb init`, edit `.htb/secrets.env`, `htb serve`, `htb check`, connect a local repo path, detect OpenCode, verify the real OpenCode CLI launch path, record `adapter_verification` tokens through a budget-authoritative tracking mode, mark the project **Launch-ready via Local Runner**, launch one tiny task through OpenCode, and prove Worker tokens hit the Harness ledger. The first launch proof should be read-only: OpenCode inspects the connected repo and writes a short session report artifact summarizing language, test command, and top-level structure. After that passes, a second proof may perform a tiny docs-only codebase change.
 
 Launch Guardrails distinguish read-only from write-capable sessions. Read-only repo inspection may run even when the connected repository has uncommitted changes. Write-capable sessions require a detected git repository, visible current branch, and clean working tree before launch so Worker changes do not mix with pre-existing user edits. After the clean-tree check passes, the runner creates a task branch such as `htb/task-123-short-title`, launches the Worker on that branch, and records the branch name in the Session Artifact and Portal review flow. The Worker may edit files on the task branch, but the Harness owns final git history: after configured verification passes, the Harness creates the commit with task/session metadata. Commit gating uses the Project Profile test command plus a Harness-generated git diff review summary. If no test command is configured, verification is marked "missing test command" and manual approval is required before commit. If verification fails, changes remain uncommitted for review or retry. Pull request creation is optional, not required for the first local execution slice: when a GitHub remote and authenticated `gh` CLI are available, the Portal may show an Open PR action after the Harness-Owned Commit exists.
 
@@ -88,7 +88,9 @@ Worker failure handling separates operational launch failures from hard blockers
 The first local implementation should be **all-in-one local mode**:
 
 ```bash
-htb serve --local-runner
+htb init
+htb serve
+htb check
 ```
 
 In this mode, the Control Plane and Local Runner run on the same machine and may share one process. The Portal connects a local repo path, validates the Project Profile, detects Worker Adapters, verifies launch capability, and launches Workers in that repo. A Worker Adapter is a local coding-agent CLI integration; Harness Proxy routing is one tracking mode, not the definition of the adapter.
@@ -97,7 +99,10 @@ Local execution smoke path:
 
 ```bash
 # Start the all-in-one Control Plane + Local Runner
-uv run htb serve --local-runner
+uv run htb init
+# Edit .htb/secrets.env once; htb serve/check load it automatically
+uv run htb serve
+uv run htb check
 
 # In another shell, run the reproducible synthetic smoke.
 # It requires OpenCode on PATH, initializes a temporary git repo, connects it
@@ -113,7 +118,7 @@ Later modes preserve the same Execution Backend contract:
 
 | Mode | Shape | Purpose |
 |---|---|---|
-| **All-in-one local** | `htb serve --local-runner` | First demo/dev path; proves real local repo + local Worker launch |
+| **All-in-one local** | `htb init` then `htb serve` | First demo/dev path; proves real local repo + local Worker launch |
 | **Split local** | `htb serve` plus `htb-runner serve --server http://localhost:8000 --project /path/to/repo` | Tests runner lifecycle and mirrors hosted architecture |
 | **Hosted + tunnel** | `htb-runner connect --server https://... --project /path/to/repo --tunnel ngrok|cloudflare` | Deployed Control Plane controlling a local execution backend |
 

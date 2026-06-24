@@ -29,15 +29,16 @@ uv pip install -e ".[test]"
 # Run tests (zero provider calls — all fakes)
 uv run python -m pytest -q
 
-# Start the portal
-export TOKEN_TRACKER_PORTAL_TOKEN=demo-token
-export AGILE_AI_HTB_CONTROL_MODEL=gpt-5.4-mini
-uv run htb serve --host 127.0.0.1 --port 8000
+# Configure local operator defaults (non-secrets only)
+uv run htb init
+# Edit .htb/secrets.env once, then start the portal
+uv run htb serve
 
-# In another terminal, seed demo tasks
+# In another terminal, verify setup; optionally seed demo tasks
+uv run htb check
 uv run htb seed-demo
 
-# Open http://localhost:8000/login — log in with "demo-token"
+# Open http://localhost:8000/login — log in with your portal token
 ```
 
 ## Docker
@@ -59,20 +60,19 @@ docker-compose exec agile-ai-htb htb seed-demo
 4. **Worker runs async** — Each launch creates a persisted Worker Run with command plan metadata, stdout/stderr evidence, timeout/error details, and token/usage evidence. Successful runs move to `Review`; retryable launch/runtime failures return to `Estimated`; hard safety failures move to `Blocked`.
 5. **Report** — Session artifact shows token totals, tool breakdown, zone snapshots, alarms, checkpoint results, and Worker Run evidence.
 
-Set `AGILE_AI_HTB_CONTROL_PROVIDER`, `AGILE_AI_HTB_CONTROL_MODEL`, and `AGILE_AI_HTB_CONTROL_API_KEY` for real control-plane/proxy upstream calls. `PROVIDER_API_KEY` remains a compatibility alias for older deployments only; native OpenCode mode uses the installed `opencode` CLI's own config/auth.
+Use `.htb/config.toml` for the control-plane provider/model and `.htb/secrets.env` for `AGILE_AI_HTB_CONTROL_API_KEY` in the local operator flow. `PROVIDER_API_KEY` remains a compatibility alias for older deployments only; native OpenCode mode uses the installed `opencode` CLI's own config/auth.
 
 ### Local OpenCode read-only proof
 
-Start portal with Local Runner enabled, then run script:
+Initialize the operator config, edit `.htb/secrets.env`, start the portal, then run the script:
 
 ```bash
-export TOKEN_TRACKER_PORTAL_TOKEN=demo-token
-export AGILE_AI_HTB_CONTROL_API_KEY=your-control-plane-key
-export AGILE_AI_HTB_CONTROL_MODEL=gpt-5.4-mini
-uv run htb serve --local-runner --host 127.0.0.1 --port 8000
+uv run htb init
+# Edit .htb/secrets.env and replace AGILE_AI_HTB_CONTROL_API_KEY=<your-control-plane-api-key>
+uv run htb serve
 
 # second terminal
-export TOKEN_TRACKER_PORTAL_TOKEN=demo-token
+uv run htb check
 PROJECT_ROOT=$PWD scripts/local-opencode-readonly-demo.sh
 ```
 
@@ -167,7 +167,7 @@ Full runbook: [`docs/DEPLOY.md`](docs/DEPLOY.md)
 ## Tests
 
 ```bash
-# Full suite (286 tests, 0 failures)
+# Full suite
 uv run python -m pytest -q
 
 # Behavioral evals only (31 tests)

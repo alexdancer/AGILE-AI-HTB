@@ -53,7 +53,7 @@
 ### What the portal needs to close the loop
 
 1. **Task intake form on `/board`** — text input + "Estimate task" button that POSTs to `/estimate`, HTMX-swaps the new card into the Estimated column.
-2. **Worker adapter configuration on `/settings/workers`** — form per adapter card to set `workdir`, select supported models, and trigger verification (which calls the adapter's verification template against a test prompt).
+2. **Worker adapter configuration on `/settings/workers`** — form per adapter card to select supported models/default adapter and trigger verification (which calls the adapter's verification template against a test prompt); project roots come from connected projects, not adapter workdir.
 3. **Launch button conditional logic** — currently hidden when no verified adapter exists. Needs to show when `has_verified_worker_adapter` is true AND the task has a matching model.
 
 Until these three portal forms exist, the demo loop requires `curl` for every step. The backend can handle every state transition correctly — the portal just can't drive them yet.

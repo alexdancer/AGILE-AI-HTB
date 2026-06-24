@@ -17,7 +17,7 @@ def test_settings_defaults_point_to_local_development_files(monkeypatch):
 
     from agile_ai_htb.settings import Settings
 
-    settings = Settings()
+    settings = Settings(operator_config={})
 
     assert settings.database_path == Path("harness.db")
     assert settings.guardrails_path == Path("guardrails.yaml")
@@ -51,7 +51,7 @@ def test_settings_reads_environment_overrides(monkeypatch, tmp_path):
 
     from agile_ai_htb.settings import Settings
 
-    settings = Settings()
+    settings = Settings(operator_config={})
 
     assert settings.database_path == database_path
     assert settings.guardrails_path == guardrails_path
@@ -73,7 +73,44 @@ def test_settings_keeps_legacy_estimator_model_as_control_plane_alias(monkeypatc
 
     from agile_ai_htb.settings import Settings
 
-    settings = Settings()
+    settings = Settings(operator_config={})
 
     assert settings.control_plane_model == "openai/gpt-4.1-mini"
     assert settings.estimator_model == "openai/gpt-4.1-mini"
+
+
+def test_settings_reads_operator_config_when_env_missing(monkeypatch):
+    monkeypatch.delenv("TOKEN_TRACKER_DATABASE_PATH", raising=False)
+    monkeypatch.delenv("AGILE_AI_HTB_CONTROL_MODEL", raising=False)
+    monkeypatch.delenv("TOKEN_TRACKER_LOCAL_RUNNER", raising=False)
+
+    from agile_ai_htb.settings import Settings
+
+    settings = Settings(
+        operator_config={
+            "database_path": ".htb/configured.db",
+            "control_plane_model": "gpt-5.4-mini",
+            "local_runner_enabled": True,
+        }
+    )
+
+    assert settings.database_path == Path(".htb/configured.db")
+    assert settings.control_plane_model == "gpt-5.4-mini"
+    assert settings.local_runner_enabled is True
+
+
+def test_settings_environment_overrides_operator_config(monkeypatch):
+    monkeypatch.setenv("AGILE_AI_HTB_CONTROL_MODEL", "env-model")
+    monkeypatch.setenv("TOKEN_TRACKER_LOCAL_RUNNER", "0")
+
+    from agile_ai_htb.settings import Settings
+
+    settings = Settings(
+        operator_config={
+            "control_plane_model": "config-model",
+            "local_runner_enabled": True,
+        }
+    )
+
+    assert settings.control_plane_model == "env-model"
+    assert settings.local_runner_enabled is False

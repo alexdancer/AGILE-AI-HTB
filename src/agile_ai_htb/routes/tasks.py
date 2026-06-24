@@ -408,12 +408,21 @@ async def accept_task_breakdown(breakdown_id: str, request: Request) -> Redirect
         return RedirectResponse(f"/task-breakdowns/{breakdown_id}/review", status_code=303)
 
     form = await request.form()
+    global_contract_summary = str(
+        form.get("global_contract_summary") or breakdown.get("global_contract_summary") or ""
+    ).strip()
     global_constraints = _textarea_lines(str(form.get("global_constraints") or ""))
     verification = _textarea_lines(str(form.get("verification") or ""))
     accepted_candidates = _accepted_breakdown_candidates(breakdown, form)
     created_task_ids: list[str] = []
     for index, candidate in enumerate(accepted_candidates, start=1):
-        description = _breakdown_candidate_description(candidate, global_constraints, verification)
+        description = _breakdown_candidate_description(
+            candidate,
+            global_contract_summary,
+            global_constraints,
+            verification,
+            source_text=breakdown.get("source_text", ""),
+        )
         task = await _estimate_and_create_task(
             request,
             description,
@@ -424,12 +433,15 @@ async def accept_task_breakdown(breakdown_id: str, request: Request) -> Redirect
                 "task_breakdown_decision": breakdown["decision"],
                 "task_breakdown_index": index,
                 "task_breakdown_count": len(accepted_candidates),
+                "task_breakdown_kind": candidate["kind"],
                 "task_breakdown_title": candidate["title"],
                 "task_breakdown_prompt": candidate["prompt"],
                 "task_breakdown_acceptance_criteria": candidate["acceptance_criteria"],
                 "task_breakdown_constraints": candidate["constraints"],
+                "task_breakdown_global_contract_summary": global_contract_summary,
                 "task_breakdown_global_constraints": global_constraints,
                 "task_breakdown_verification": verification,
+                "task_breakdown_recommended_last": candidate["kind"] == "acceptance_verification",
             },
         )
         created_task_ids.append(task["id"])
@@ -439,6 +451,7 @@ async def accept_task_breakdown(breakdown_id: str, request: Request) -> Redirect
         {
             "status": "accepted",
             "candidates": accepted_candidates,
+            "global_contract_summary": global_contract_summary,
             "global_constraints": global_constraints,
             "verification": verification,
             "created_task_ids": created_task_ids,
@@ -482,6 +495,7 @@ async def manual_task_breakdown_candidate(
     if breakdown["status"] == "accepted":
         return RedirectResponse("/board", status_code=303)
     candidate = {
+        "kind": "implementation",
         "title": (title or "Manual task from source").strip(),
         "prompt": (prompt or breakdown["source_text"]).strip(),
         "acceptance_criteria": acceptance_criteria.strip(),
@@ -574,6 +588,7 @@ async def _task_breakdown_agent_updates(
             "session_id": session["id"],
             "candidates": payload["candidates"],
             "rejected_items": payload["rejected_items"],
+            "global_contract_summary": payload["global_contract_summary"],
             "global_constraints": payload["global_constraints"],
             "verification": payload["verification"],
             "non_goals": payload["non_goals"],
@@ -595,6 +610,7 @@ async def _task_breakdown_agent_updates(
             "session_id": None,
             "candidates": [],
             "rejected_items": [],
+            "global_contract_summary": "",
             "global_constraints": [],
             "verification": [],
             "non_goals": [],
@@ -613,10 +629,12 @@ def _accepted_breakdown_candidates(breakdown: dict[str, Any], form: Any) -> list
             continue
         title = str(form.get(f"title_{index}") or original.get("title") or "").strip()
         prompt = str(form.get(f"prompt_{index}") or original.get("prompt") or "").strip()
+        kind = str(form.get(f"kind_{index}") or original.get("kind") or "implementation").strip()
         if not title or not prompt:
             continue
         accepted.append(
             {
+                "kind": kind,
                 "title": title,
                 "prompt": prompt,
                 "acceptance_criteria": str(
@@ -637,6 +655,7 @@ def _accepted_breakdown_candidates(breakdown: dict[str, Any], form: Any) -> list
             "decision": breakdown.get("decision") if breakdown.get("decision") in {"single_task", "proposed_task_breakdown"} else "proposed_task_breakdown",
             "candidates": accepted,
             "rejected_items": breakdown.get("rejected_items", []),
+            "global_contract_summary": breakdown.get("global_contract_summary", ""),
             "global_constraints": breakdown.get("global_constraints", []),
             "verification": breakdown.get("verification", []),
             "non_goals": breakdown.get("non_goals", []),
@@ -650,9 +669,26 @@ def _accepted_breakdown_candidates(breakdown: dict[str, Any], form: Any) -> list
 
 
 def _breakdown_candidate_description(
-    candidate: dict[str, Any], global_constraints: list[str], verification: list[str]
+    candidate: dict[str, Any],
+    global_contract_summary: str,
+    global_constraints: list[str],
+    verification: list[str],
+    *,
+    source_text: str,
 ) -> str:
     sections = [candidate["title"], "", candidate["prompt"]]
+    if global_contract_summary:
+        sections.extend(["", "Global contract summary:", global_contract_summary])
+    if candidate.get("kind") == "acceptance_verification":
+        sections.extend(
+            [
+                "",
+                "Acceptance Verification scope:",
+                "Verify the combined artifact against the original source contract. Use the smallest executable proof available and report findings. Do not reimplement the whole source task as one oversized implementation task.",
+            ]
+        )
+        if source_text.strip():
+            sections.extend(["", "Original source contract:", source_text.strip()])
     if candidate.get("acceptance_criteria"):
         sections.extend(["", "Acceptance criteria:", candidate["acceptance_criteria"]])
     combined_constraints = [*global_constraints, *candidate.get("constraints", [])]

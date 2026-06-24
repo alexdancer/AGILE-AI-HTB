@@ -321,6 +321,7 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
                 session_id text references sessions(id) on delete set null,
                 candidates_json text not null default '[]',
                 rejected_items_json text not null default '[]',
+                global_contract_summary text not null default '',
                 global_constraints_json text not null default '[]',
                 verification_json text not null default '[]',
                 non_goals_json text not null default '[]',
@@ -335,6 +336,12 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
             )
             """
         )
+    else:
+        task_breakdown_columns = {
+            row["name"] for row in conn.execute("pragma table_info(task_breakdowns)").fetchall()
+        }
+        if "global_contract_summary" not in task_breakdown_columns:
+            conn.execute("alter table task_breakdowns add column global_contract_summary text not null default ''")
     conn.execute("create index if not exists idx_worker_runs_task_status on worker_runs(task_id, status)")
     conn.execute("create index if not exists idx_worker_runs_session on worker_runs(session_id)")
     conn.execute("create index if not exists idx_task_breakdowns_status on task_breakdowns(status, created_at)")
@@ -583,6 +590,7 @@ def create_task_breakdown(
     session_id: str | None = None,
     candidates: list[dict[str, Any]] | None = None,
     rejected_items: list[dict[str, Any]] | None = None,
+    global_contract_summary: str = "",
     global_constraints: list[str] | None = None,
     verification: list[str] | None = None,
     non_goals: list[str] | None = None,
@@ -599,10 +607,10 @@ def create_task_breakdown(
             """
             insert into task_breakdowns (
                 id, source_text, source_sha256, intake_metadata_json, status, decision, model, session_id,
-                candidates_json, rejected_items_json, global_constraints_json, verification_json,
+                candidates_json, rejected_items_json, global_contract_summary, global_constraints_json, verification_json,
                 non_goals_json, recommended_sequence_json, confidence, rationale, failure_type,
                 failure_message, created_task_ids_json, created_at, updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 breakdown_id,
@@ -615,6 +623,7 @@ def create_task_breakdown(
                 session_id,
                 _to_json_list(candidates or []),
                 _to_json_list(rejected_items or []),
+                global_contract_summary,
                 _to_json_list(global_constraints or []),
                 _to_json_list(verification or []),
                 _to_json_list(non_goals or []),
@@ -647,6 +656,7 @@ def update_task_breakdown(path: Path | str, breakdown_id: str, updates: dict[str
         "session_id": "session_id",
         "candidates": "candidates_json",
         "rejected_items": "rejected_items_json",
+        "global_contract_summary": "global_contract_summary",
         "global_constraints": "global_constraints_json",
         "verification": "verification_json",
         "non_goals": "non_goals_json",
@@ -1489,6 +1499,7 @@ def _task_breakdown_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "session_id": row["session_id"],
         "candidates": _from_json_list(row["candidates_json"]),
         "rejected_items": _from_json_list(row["rejected_items_json"]),
+        "global_contract_summary": row["global_contract_summary"],
         "global_constraints": _from_json_list(row["global_constraints_json"]),
         "verification": _from_json_list(row["verification_json"]),
         "non_goals": _from_json_list(row["non_goals_json"]),
@@ -1605,7 +1616,13 @@ def _worker_adapter_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "verified_at": row["verified_at"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
-        "configured": bool(row["workdir"]) or bool(config.get("command")),
+        "configured": bool(
+            config.get("command")
+            or config.get("verification_template")
+            or config.get("launch_template")
+            or config.get("native_verification_template")
+            or config.get("native_launch_template")
+        ),
     }
 
 

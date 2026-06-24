@@ -25,7 +25,13 @@ services:
       # Secrets — set manually in Render dashboard
       - key: TOKEN_TRACKER_PORTAL_TOKEN
         sync: false
-      - key: PROVIDER_API_KEY
+      - key: AGILE_AI_HTB_CONTROL_PROVIDER
+        sync: false
+      - key: AGILE_AI_HTB_CONTROL_MODEL
+        sync: false
+      - key: AGILE_AI_HTB_CONTROL_API_KEY
+        sync: false
+      - key: AGILE_AI_HTB_CONTROL_BASE_URL
         sync: false
     disk:
       name: harness-data

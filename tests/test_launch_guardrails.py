@@ -80,7 +80,7 @@ def test_launch_guardrails_return_human_readable_failures(tmp_path):
     assert result.launchable is False
     assert "Worker adapter is not configured." in result.reasons
     assert "Token tracking has not been verified for this adapter." in result.reasons
-    assert "Worker adapter workdir does not exist." in result.reasons
+    assert "Worker launch project root does not exist." in result.reasons
     assert "Selected model is not supported by this adapter." in result.reasons
     assert "Session API key is required for harness proxy token tracking." not in result.reasons
     assert "Harness proxy URL is required for adapter launch." not in result.reasons

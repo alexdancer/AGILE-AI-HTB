@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} | AGILE-AI-HTB{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ project.name }}</h1>
+<p class="page-sub">{{ project.root_path }}</p>
+
+<section class="grid cols-4" style="margin-bottom:20px">
+  <a class="kpi" href="/board" style="display:block;color:var(--fg-0)">
+    <div class="label">Task board</div>
+    <div class="value mono">Open</div>
+    <div class="sub">estimate, launch, review</div>
+  </a>
+  <a class="kpi" href="/sessions" style="display:block;color:var(--fg-0)">
+    <div class="label">Sessions</div>
+    <div class="value mono">Open</div>
+    <div class="sub">run evidence and reports</div>
+  </a>
+  <a class="kpi" href="/settings/workers" style="display:block;color:var(--fg-0)">
+    <div class="label">Worker adapters</div>
+    <div class="value mono">Setup</div>
+    <div class="sub">CLI harness readiness</div>
+  </a>
+  <a class="kpi" href="/settings/project" style="display:block;color:var(--fg-0)">
+    <div class="label">Project settings</div>
+    <div class="value mono">Manage</div>
+    <div class="sub">connected repos</div>
+  </a>
+</section>
+
+<section class="panel">
+  <div class="panel-header"><h3>Project readiness</h3></div>
+  <div class="panel-body">
+    {% if project.capability.state == 'launch_ready' %}<span class="pill green">{{ project.capability.label }}</span>{% elif project.capability.state == 'analysis_ready' %}<span class="pill blue">{{ project.capability.label }}</span>{% else %}<span class="pill red">{{ project.capability.label or 'Blocked' }}</span>{% endif %}
+    {% if project.capability.reasons %}
+    <ul class="mono muted">
+      {% for reason in project.capability.reasons %}<li>{{ reason }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-header"><h3>Repo profile</h3></div>
+  <div class="panel-body">
+    <div class="kv">
+      <div class="k">Root</div><div class="v">{{ project.root_path }}</div>
+      <div class="k">Git branch</div><div class="v">{{ project.profile.git_branch or 'not detected' }}</div>
+      <div class="k">Languages</div><div class="v">{{ project.profile.language_hints|join(', ') or 'not detected' }}</div>
+      <div class="k">Frameworks</div><div class="v">{{ project.profile.framework_hints|join(', ') or 'not detected' }}</div>
+      <div class="k">Package managers</div><div class="v">{{ project.profile.package_manager_hints|join(', ') or 'not detected' }}</div>
+      <div class="k">Test command</div><div class="v">{{ project.profile.test_command or 'not detected' }}</div>
+      <div class="k">Run command</div><div class="v">{{ project.profile.run_command or 'not detected' }}</div>
+      <div class="k">Docs</div><div class="v">{{ project.profile.relevant_docs|join(', ') or 'none' }}</div>
+    </div>
+  </div>
+</section>
+{% endblock %}

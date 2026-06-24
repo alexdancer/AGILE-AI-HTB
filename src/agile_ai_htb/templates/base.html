@@ -122,10 +122,20 @@
       <div class="meta">live harness · human-in-loop governance</div>
     </header>
     <aside class="sidebar">
+      {% if active_project %}
+      <div class="group">Project</div>
+      <nav>
+        <a href="/projects/{{ active_project.id }}" class="{% if active_page == 'project_workspace' %}active{% endif %}">{{ active_project.name }}</a>
+        <a href="/projects" class="{% if active_page == 'projects' %}active{% endif %}">Switch project</a>
+      </nav>
+      <div class="group mono" style="padding-top:6px;text-transform:none;letter-spacing:0;overflow-wrap:anywhere">{{ active_project.root_path }}</div>
+      {% else %}
       <div class="group">Setup</div>
       <nav>
         <a href="/setup" class="{% if active_page == 'setup' %}active{% endif %}">First-run setup</a>
+        <a href="/projects" class="{% if active_page == 'projects' %}active{% endif %}">Projects</a>
       </nav>
+      {% endif %}
       <div class="group">Governance</div>
       <nav>
         <a href="/dashboard" class="{% if active_page == 'dashboard' %}active{% endif %}">Dashboard</a>

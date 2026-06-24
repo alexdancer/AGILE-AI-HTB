@@ -1,42 +1,42 @@
 # worker-workdir-enforcement Specification
 
 ## Purpose
-Define how Worker Adapter launches are bound to their configured working directories and how the harness preserves evidence when Worker output lands somewhere else.
+Define how Worker Adapter launches are bound to the active connected project root and how the harness preserves evidence when Worker output lands somewhere else.
 
 ## Requirements
 
-### Requirement: Worker launch is bound to configured workdir
-The system SHALL bind Worker Adapter launches to the configured adapter workdir using the adapter's native project-directory mechanism when one exists, and SHALL record the configured workdir in command evidence.
+### Requirement: Worker launch is bound to connected project root
+The system SHALL bind normal Worker Adapter launches to the connected project root using the adapter's native project-directory mechanism when one exists, and SHALL record the effective project root/workdir in command evidence.
 
-#### Scenario: OpenCode launch passes configured workdir
-- **WHEN** the system builds an OpenCode Worker launch command for an adapter with a configured workdir
-- **THEN** the command plan invokes `opencode run` with `--dir` set to the configured workdir
-- **AND** the command plan cwd is also set to the configured workdir
-- **AND** the redacted command plan evidence preserves the configured workdir without exposing secrets
+#### Scenario: OpenCode launch passes connected project root
+- **WHEN** the system builds an OpenCode Worker launch command for an active project root
+- **THEN** the command plan invokes `opencode run` with `--dir` set to the active project root
+- **AND** the command plan cwd is also set to the active project root
+- **AND** the redacted command plan evidence preserves the configured workdir/project root without exposing secrets
 
-#### Scenario: OpenCode verification passes configured workdir
-- **WHEN** the system builds an OpenCode native verification command for an adapter with a configured workdir
-- **THEN** the command plan invokes `opencode run` with `--dir` set to the configured workdir
+#### Scenario: OpenCode verification remains project independent
+- **WHEN** the system builds an OpenCode native verification command
+- **THEN** verification may run without requiring an active project root
 - **AND** the sentinel verification prompt remains the scoped prompt sent to OpenCode
 
-#### Scenario: Custom OpenCode template already specifies dir
-- **WHEN** an OpenCode native launch or verification template already includes a `--dir` argument
+#### Scenario: Custom OpenCode launch template already specifies dir
+- **WHEN** an OpenCode native launch template already includes a `--dir` argument
 - **THEN** the system SHALL NOT duplicate the `--dir` argument
-- **AND** the launch remains eligible only if the effective workdir matches the configured adapter workdir or a clear compatibility reason is shown
+- **AND** the launch command SHALL bind that argument to the active connected project root
 
 ### Requirement: Workdir mismatch evidence is preserved
-The system SHALL preserve evidence when a Worker process exits successfully but the resulting work does not appear in the configured workdir.
+The system SHALL preserve evidence when a Worker process exits successfully but the resulting work does not appear in the connected project root/workdir.
 
-#### Scenario: Successful process edits outside configured workdir
+#### Scenario: Successful process edits outside project root
 - **WHEN** a Worker Run exits with return code 0
-- **AND** the configured workdir has no expected file changes or output evidence
-- **AND** Worker stdout/stderr or parsed native events reference edited files outside the configured workdir
+- **AND** the connected project root has no expected file changes or output evidence
+- **AND** Worker stdout/stderr or parsed native events reference edited files outside the connected project root
 - **THEN** the system records a workdir mismatch failure for the Worker Run
 - **AND** the task remains eligible for retry rather than being treated as completed target work
-- **AND** the task metadata preserves sanitized configured workdir, command cwd, selected adapter, selected model, and suspicious outside paths
+- **AND** the task metadata preserves sanitized project root/workdir, command cwd, selected adapter, selected model, and suspicious outside paths
 
-#### Scenario: Successful process writes configured workdir
+#### Scenario: Successful process writes connected project root
 - **WHEN** a Worker Run exits with return code 0
-- **AND** configured-workdir evidence shows files or diffs produced under that workdir
+- **AND** project-root/workdir evidence shows files or diffs produced under that root
 - **THEN** the system may continue the normal Worker Run completion flow
-- **AND** the review evidence includes the configured workdir evidence
+- **AND** the review evidence includes the project-root/workdir evidence

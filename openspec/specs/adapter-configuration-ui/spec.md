@@ -2,24 +2,23 @@
 
 ## Purpose
 
-Enable operators to configure worker adapter presets through the portal UI — setting working directories, designating default adapters, viewing installation diagnostics for all adapter kinds, and refreshing diagnostics on demand.
+Enable operators to configure Worker Adapter presets through the portal UI — designating default adapters, viewing installation diagnostics for all adapter kinds, refreshing diagnostics on demand, and keeping project root selection in the connected project workspace.
 
 ## Requirements
 
-### Requirement: Operator can set adapter working directory
-The Workers settings page SHALL provide a guided Worker Setup form for the active adapter allowing the operator to set or change the working directory. The form SHALL POST to `/settings/workers/{adapter_id}/configure` which updates the adapter record and redirects back to the Workers page.
+### Requirement: Worker Setup does not own project workdir
+The Workers settings page SHALL NOT present adapter workdir as the normal project root selection mechanism. Project root selection SHALL come from connected project workspace state, while Worker Adapter setup SHALL remain focused on CLI/tracking readiness and default adapter selection.
 
-#### Scenario: Setting workdir for an unconfigured adapter
-- **WHEN** operator enters a valid filesystem path in the active adapter workdir form and submits
-- **THEN** the adapter's workdir is updated in the database
-- **AND** the Workers page shows the new workdir value in the guided setup workflow
-- **AND** the adapter's readiness summary no longer reports the project folder as missing
+#### Scenario: Saving adapter settings ignores legacy workdir input
+- **WHEN** operator submits `/settings/workers/{adapter_id}/configure` with a legacy `workdir` form field
+- **THEN** the adapter's workdir is not changed
+- **AND** the adapter default selection is still applied when requested
+- **AND** the Workers page explains that project root is managed by the connected project workspace
 
-#### Scenario: Setting workdir to a non-existent path
-- **WHEN** operator enters a path that does not exist on the filesystem
-- **THEN** the workdir is still accepted
-- **AND** subsequent verification will fail with "Worker adapter workdir does not exist"
-- **AND** the readiness summary shows the adapter as not launch-ready
+#### Scenario: Connected project supplies launch root
+- **WHEN** operator connects a project through the project workspace flow
+- **THEN** the connected project root is persisted as project workspace state
+- **AND** Worker Adapter settings do not duplicate that root into adapter configuration
 
 ### Requirement: Operator can set default adapter
 The Workers settings page SHALL provide a control in the guided setup workflow to designate the active adapter as the default. Setting an adapter as default SHALL clear the default flag from all other adapters.
@@ -78,21 +77,8 @@ The Workers settings page SHALL display canonical tracking labels and separate l
 - **AND** it shows `Accounting: Budget-authoritative after run`
 
 #### Scenario: Observed-only adapter label
-- **WHEN** Worker Setup renders an adapter with `observed_only` tracking mode
+- **WHEN** Worker Setup renders an adapter verified with `observed_only` tracking mode
 - **THEN** it shows `Tracking: Observed Only`
 - **AND** it shows `Runtime request guardrails: Not available`
 - **AND** it shows `Accounting: Not budget-authoritative`
-- **AND** it does not show a Launch-ready badge
-
-### Requirement: Observed-only diagnostics stay outside task launch
-The Workers settings page MAY provide a diagnostic action for observed-only adapters, but that action SHALL NOT create or mutate AGILE Board task state.
-
-#### Scenario: Observed-only diagnostic captures command evidence
-- **WHEN** the operator runs a Worker Setup diagnostic for an observed-only adapter
-- **THEN** the diagnostic records command start evidence, stdout/stderr, exit code or timeout, detected model when available, and a not-budget-authoritative warning
-- **AND** no Task moves to Running, Review, Done, or Blocked because of the diagnostic
-
-#### Scenario: Diagnostic does not imply launch readiness
-- **WHEN** an observed-only diagnostic succeeds
-- **THEN** Worker Setup continues to show the adapter as not launch-ready for governed Tasks
-- **AND** the normal AGILE Board remains unable to launch Tasks with that adapter
+- **AND** it does not mark the adapter launchable for governed board tasks

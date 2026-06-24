@@ -9,8 +9,19 @@ from agile_ai_htb import db
 from agile_ai_htb.task_launch import TaskLaunchBlocked, abort_worker_session, launch_task
 
 
+def _connect_project(db_path: Path, root: Path) -> dict:
+    return db.upsert_connected_project(
+        db_path,
+        name=root.name,
+        root_path=str(root.resolve()),
+        profile={"name": root.name, "root_path": str(root.resolve()), "test_command": "pytest"},
+        capability={"state": "launch_ready", "can_launch": True},
+    )
+
+
 def _verified_budget_task(db_path: Path, tmp_path: Path, *, estimate: int = 50, budget: dict | None = None):
     db.init_db(db_path)
+    _connect_project(db_path, tmp_path)
     db.update_worker_adapter(
         db_path,
         "opencode",
@@ -57,6 +68,67 @@ def _runner_recording(db_path: Path, *, total_tokens: int = 10):
     return runner
 
 
+def test_launch_blocks_when_no_project_is_connected(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(
+        db_path,
+        "opencode",
+        config={"launch_template": ["python", "-c", "print('worker')"]},
+        supported_models=["opencode/gpt-5.1"],
+        is_default=True,
+    )
+    db.mark_worker_adapter_verification(db_path, "opencode", verified=True, evidence={"ok": True})
+    task = db.create_task(
+        db_path,
+        description="Needs connected project",
+        status="Estimated",
+        estimate_tokens=50,
+        recommended_model="opencode/gpt-5.1",
+    )
+
+    try:
+        launch_task(db_path, task["id"], adapter_id="opencode", model=None, proxy_url=None, runner=lambda plan: None)
+    except TaskLaunchBlocked as exc:
+        blocked = exc.task
+    else:
+        raise AssertionError("launch succeeded without a connected project")
+
+    assert blocked["status"] == "Estimated"
+    assert blocked["metadata"]["launch_guardrail_reasons"] == ["Connect a project before launching a Worker task."]
+
+
+def test_read_only_launch_blocks_metadata_project_when_no_project_is_connected(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(
+        db_path,
+        "opencode",
+        config={"launch_template": ["python", "-c", "print('worker')"]},
+        supported_models=["opencode/gpt-5.1"],
+        is_default=True,
+    )
+    db.mark_worker_adapter_verification(db_path, "opencode", verified=True, evidence={"ok": True})
+    task = db.create_task(
+        db_path,
+        description="Read-only needs connected project",
+        status="Estimated",
+        estimate_tokens=50,
+        recommended_model="opencode/gpt-5.1",
+        metadata={"launch_mode": "read_only", "project_root_path": str(tmp_path / "stale-project")},
+    )
+
+    try:
+        launch_task(db_path, task["id"], adapter_id="opencode", model=None, proxy_url=None, runner=lambda plan: None)
+    except TaskLaunchBlocked as exc:
+        blocked = exc.task
+    else:
+        raise AssertionError("launch succeeded without a connected project")
+
+    assert blocked["status"] == "Estimated"
+    assert blocked["metadata"]["launch_guardrail_reasons"] == ["Connect a project before launching a Worker task."]
+
+
 def test_estimate_within_budget_launches(tmp_path):
     db_path = tmp_path / "harness.db"
     task = _verified_budget_task(db_path, tmp_path, estimate=50, budget={"daily_used_tokens": 25, "daily_cap_tokens": 100})
@@ -70,6 +142,7 @@ def test_estimate_within_budget_launches(tmp_path):
 def test_default_adapter_selection_skips_observed_only_adapter(tmp_path):
     db_path = tmp_path / "harness.db"
     db.init_db(db_path)
+    _connect_project(db_path, tmp_path)
     db.update_worker_adapter(
         db_path,
         "opencode",
@@ -252,11 +325,12 @@ def test_worker_adapter_launch_failure_preserves_launchable_status_and_records_r
 
 def test_opencode_bare_launch_template_is_normalized_to_noninteractive_run_command(tmp_path):
     db_path = tmp_path / "harness.db"
-    task = _verified_budget_task(db_path, tmp_path, estimate=50, budget={"daily_used_tokens": 0, "daily_cap_tokens": 100})
+    project_root = tmp_path / "connected-project"
+    project_root.mkdir()
+    task = _verified_budget_task(db_path, project_root, estimate=50, budget={"daily_used_tokens": 0, "daily_cap_tokens": 100})
     db.update_worker_adapter(
         db_path,
         "opencode",
-        workdir=str(tmp_path),
         config={"launch_template": ["opencode"]},
         supported_models=["opencode/gpt-5.1"],
         is_default=True,
@@ -271,7 +345,18 @@ def test_opencode_bare_launch_template_is_normalized_to_noninteractive_run_comma
     _wait_for_worker_run(db_path, task["id"], "failed")
     failed = db.get_task(db_path, task["id"])
 
-    assert calls[0].command == ["opencode", "run", "--model", "opencode/gpt-5.1", "--format", "json", "Budgeted launch"]
+    assert calls[0].cwd == project_root.resolve()
+    assert calls[0].command == [
+        "opencode",
+        "run",
+        "--dir",
+        str(project_root.resolve()),
+        "--model",
+        "opencode/gpt-5.1",
+        "--format",
+        "json",
+        "Budgeted launch",
+    ]
     assert failed["status"] == "Estimated"
     assert failed["metadata"]["last_launch_failure"]["returncode"] == 1
     assert failed["metadata"]["launch_command_plan"]["command"] == calls[0].command

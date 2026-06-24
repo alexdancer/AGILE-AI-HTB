@@ -6,6 +6,8 @@ from typing import Any
 
 from agile_ai_htb.llm import response_to_dict
 
+TASK_BREAKDOWN_CANDIDATE_KINDS = {"implementation", "acceptance_verification"}
+
 
 class TaskBreakdownError(Exception):
     """Base class for Task Breakdown Agent failures that require review recovery."""
@@ -21,6 +23,7 @@ class TaskBreakdownValidationError(TaskBreakdownError):
 
 @dataclass(frozen=True)
 class BreakdownCandidate:
+    kind: str
     title: str
     prompt: str
     acceptance_criteria: str
@@ -29,6 +32,7 @@ class BreakdownCandidate:
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            "kind": self.kind,
             "title": self.title,
             "prompt": self.prompt,
             "acceptance_criteria": self.acceptance_criteria,
@@ -51,6 +55,7 @@ class TaskBreakdownResult:
     decision: str
     candidates: list[BreakdownCandidate]
     rejected_items: list[RejectedBreakdownItem]
+    global_contract_summary: str
     global_constraints: list[str]
     verification: list[str]
     non_goals: list[str]
@@ -64,6 +69,7 @@ class TaskBreakdownResult:
             "decision": self.decision,
             "candidates": [candidate.as_dict() for candidate in self.candidates],
             "rejected_items": [item.as_dict() for item in self.rejected_items],
+            "global_contract_summary": self.global_contract_summary,
             "global_constraints": self.global_constraints,
             "verification": self.verification,
             "non_goals": self.non_goals,
@@ -113,10 +119,16 @@ def _system_prompt() -> str:
         "You are the AGILE-AI-HTB Task Breakdown Agent. Classify Markdown or oversized coding-task input "
         "into independently grabbable vertical-slice task candidates. Markdown bullets are evidence, not tasks. "
         "Return ONLY valid JSON with exactly these fields: decision (single_task|proposed_task_breakdown), "
-        "candidates (array of objects with title, prompt, acceptance_criteria, constraints array, human_in_loop boolean), "
-        "rejected_items (array of objects with text and reason), global_constraints (array of strings), "
+        "candidates (array of objects with kind, title, prompt, acceptance_criteria, constraints array, human_in_loop boolean), "
+        "rejected_items (array of objects with text and reason), global_contract_summary (string), global_constraints (array of strings), "
         "verification (array of strings), non_goals (array of strings), recommended_sequence (array of candidate titles), "
         "confidence (number 0-1), rationale (string), source (string, use 'llm'). "
+        "Classify every candidate kind as either 'implementation' or 'acceptance_verification'. "
+        "For multi-slice breakdowns that produce one integrated artifact (CLI, app, API, demo, report, or similar), "
+        "include one acceptance_verification candidate recommended last. That candidate must verify the combined artifact "
+        "against the original source contract using the smallest executable proof available; it must not ask the Worker to "
+        "reimplement the whole source task as one oversized implementation task. "
+        "Write one concise global_contract_summary describing what all accepted slices must collectively satisfy. "
         "Do not turn constraints like 'Do not add network dependencies.' or verification like 'Run pytest.' into standalone tasks."
     )
 
@@ -136,6 +148,7 @@ def validate_breakdown_result(data: dict[str, Any]) -> TaskBreakdownResult:
         "decision",
         "candidates",
         "rejected_items",
+        "global_contract_summary",
         "global_constraints",
         "verification",
         "non_goals",
@@ -161,10 +174,14 @@ def validate_breakdown_result(data: dict[str, Any]) -> TaskBreakdownResult:
     rationale = data["rationale"]
     if not isinstance(rationale, str):
         raise TaskBreakdownValidationError("rationale must be a string")
+    global_contract_summary = data["global_contract_summary"]
+    if not isinstance(global_contract_summary, str):
+        raise TaskBreakdownValidationError("global_contract_summary must be a string")
     return TaskBreakdownResult(
         decision=decision,
         candidates=candidates,
         rejected_items=_validate_rejected_items(data["rejected_items"]),
+        global_contract_summary=global_contract_summary.strip(),
         global_constraints=_validate_string_array(data["global_constraints"], "global_constraints"),
         verification=_validate_string_array(data["verification"], "verification"),
         non_goals=_validate_string_array(data["non_goals"], "non_goals"),
@@ -185,6 +202,11 @@ def _validate_candidates(value: Any) -> list[BreakdownCandidate]:
         title = item.get("title")
         prompt = item.get("prompt")
         acceptance_criteria = item.get("acceptance_criteria")
+        kind = item.get("kind", "implementation")
+        if kind not in TASK_BREAKDOWN_CANDIDATE_KINDS:
+            raise TaskBreakdownValidationError(
+                "candidate kind must be implementation or acceptance_verification"
+            )
         if not isinstance(title, str) or not title.strip():
             raise TaskBreakdownValidationError("candidate title must be a non-empty string")
         if not isinstance(prompt, str) or not prompt.strip():
@@ -195,6 +217,7 @@ def _validate_candidates(value: Any) -> list[BreakdownCandidate]:
             raise TaskBreakdownValidationError("candidate human_in_loop must be a boolean")
         candidates.append(
             BreakdownCandidate(
+                kind=kind,
                 title=title.strip(),
                 prompt=prompt.strip(),
                 acceptance_criteria=acceptance_criteria,

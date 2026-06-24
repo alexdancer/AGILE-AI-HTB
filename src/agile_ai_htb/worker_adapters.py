@@ -137,8 +137,9 @@ class WorkerAdapterBuilder:
         *,
         model: str,
         task_prompt: str,
+        project_root: str | None = None,
     ) -> CommandPlan:
-        workdir = self.adapter.get("workdir")
+        workdir = project_root or self.adapter.get("workdir")
         template = self._normalize_template(
             "native_launch_template",
             self.config.get("native_launch_template") or self._default_native_launch_template(),
@@ -170,6 +171,7 @@ class WorkerAdapterBuilder:
         task_prompt: str,
         proxy_url: str,
         session_api_key: str,
+        project_root: str | None = None,
     ) -> CommandPlan:
         return self._build_command(
             template_key="launch_template",
@@ -179,6 +181,7 @@ class WorkerAdapterBuilder:
             proxy_url=proxy_url,
             session_api_key=session_api_key,
             purpose="task_launch",
+            project_root=project_root,
         )
 
     def _build_command(
@@ -191,6 +194,7 @@ class WorkerAdapterBuilder:
         proxy_url: str,
         session_api_key: str,
         purpose: str,
+        project_root: str | None = None,
     ) -> CommandPlan:
         template = self._normalize_template(template_key, self.config.get(template_key) or fallback)
         command = [
@@ -206,7 +210,7 @@ class WorkerAdapterBuilder:
         for key, value in (self.config.get("env") or {}).items():
             if not _is_secret_name(key):
                 env[str(key)] = str(value)
-        workdir = self.adapter.get("workdir")
+        workdir = project_root or self.adapter.get("workdir")
         return CommandPlan(
             command=command,
             cwd=Path(workdir) if workdir else None,
@@ -258,6 +262,48 @@ class OpenCodeAdapterBuilder(WorkerAdapterBuilder):
     api_key_env = "OPENAI_API_KEY"
     base_url_env = "OPENAI_BASE_URL"
 
+    def build_launch_command(
+        self,
+        *,
+        model: str,
+        task_prompt: str,
+        proxy_url: str,
+        session_api_key: str,
+        project_root: str | None = None,
+    ) -> CommandPlan:
+        workdir = project_root or self.adapter.get("workdir")
+        template = self._normalize_template(
+            "launch_template",
+            self.config.get("launch_template") or ["opencode", "run", "--model", "{model}", "--format", "json", "{prompt}"],
+        )
+        if workdir:
+            template = self._ensure_dir_argument([str(part) for part in template], require_workdir=True)
+        command = [
+            str(part).format(
+                model=model,
+                prompt=task_prompt,
+                proxy_url=proxy_url,
+                session_api_key=session_api_key,
+                workdir=workdir or "",
+            )
+            for part in template
+        ]
+        env = self._env(proxy_url=proxy_url, session_api_key=session_api_key)
+        return CommandPlan(
+            command=command,
+            cwd=Path(workdir) if workdir else None,
+            env=env,
+            metadata={
+                "adapter_id": self.adapter["id"],
+                "kind": self.adapter["kind"],
+                "model": model,
+                "purpose": "task_launch",
+                "tracking_mode": "proxy_governed",
+                "usage_source": "harness_proxy",
+                **self._timeout_metadata("launch_timeout_seconds"),
+            },
+        )
+
     def _normalize_template(self, template_key: str, template: list[Any]) -> list[Any]:
         command = [str(part) for part in template]
         if template_key in {"launch_template", "native_launch_template", "native_verification_template"} and command == ["opencode"]:
@@ -272,9 +318,46 @@ class OpenCodeAdapterBuilder(WorkerAdapterBuilder):
     def _default_native_launch_template(self) -> list[str]:
         return self._ensure_dir_argument(super()._default_native_launch_template())
 
-    def _ensure_dir_argument(self, command: list[str]) -> list[str]:
-        if not self.adapter.get("workdir") or "--dir" in command:
+    def build_native_launch_command(
+        self,
+        *,
+        model: str,
+        task_prompt: str,
+        project_root: str | None = None,
+    ) -> CommandPlan:
+        workdir = project_root or self.adapter.get("workdir")
+        template = self._normalize_template(
+            "native_launch_template",
+            self.config.get("native_launch_template") or self._default_native_launch_template(),
+        )
+        if workdir:
+            template = self._ensure_dir_argument([str(part) for part in template], require_workdir=True)
+        command = [str(part).format(model=model, prompt=task_prompt, workdir=workdir or "") for part in template]
+        return CommandPlan(
+            command=command,
+            cwd=Path(workdir) if workdir else None,
+            env={},
+            metadata={
+                "adapter_id": self.adapter["id"],
+                "kind": self.adapter["kind"],
+                "model": model,
+                "purpose": "task_launch",
+                "tracking_mode": "native_usage",
+                "usage_source": "native_usage",
+                **self._timeout_metadata("launch_timeout_seconds"),
+            },
+        )
+
+    def _ensure_dir_argument(self, command: list[str], *, require_workdir: bool = False) -> list[str]:
+        if not require_workdir and not self.adapter.get("workdir"):
             return command
+        if "--dir" in command:
+            if not require_workdir:
+                return command
+            index = command.index("--dir")
+            if index + 1 < len(command):
+                return [*command[: index + 1], "{workdir}", *command[index + 2 :]]
+            return [*command, "{workdir}"]
         if len(command) >= 2 and command[0] == "opencode" and command[1] == "run":
             return [command[0], command[1], "--dir", "{workdir}", *command[2:]]
         return command

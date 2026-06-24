@@ -56,7 +56,7 @@ def test_adapter_readiness_collects_tracking_and_configuration_reasons(tmp_path)
     assert readiness.launchable_tracking is False
     assert readiness.reasons == [
         "Observed-only Worker tracking cannot launch governed tasks.",
-        "Worker adapter workdir does not exist.",
+        "Worker launch project root does not exist.",
         "Selected model is not supported by this adapter.",
     ]
 

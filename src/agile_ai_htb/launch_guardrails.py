@@ -21,6 +21,7 @@ def evaluate_launch_guardrails(
     *,
     adapter_id: str,
     model: str,
+    project_root: str | None = None,
     session_api_key: str | None,
     proxy_url: str | None,
 ) -> LaunchGuardrailResult:
@@ -32,6 +33,7 @@ def evaluate_launch_guardrails(
     readiness = evaluate_adapter_readiness(
         adapter,
         model=model,
+        project_root=project_root,
         session_api_key=session_api_key,
         proxy_url=proxy_url,
         include_launch_credentials=True,

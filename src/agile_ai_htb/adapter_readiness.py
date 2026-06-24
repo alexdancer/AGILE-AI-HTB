@@ -39,6 +39,7 @@ def evaluate_adapter_readiness(
     adapter: dict[str, Any],
     *,
     model: str | None = None,
+    project_root: str | None = None,
     session_api_key: str | None = None,
     proxy_url: str | None = None,
     include_launch_credentials: bool = False,
@@ -62,12 +63,10 @@ def evaluate_adapter_readiness(
         elif not launchable_tracking:
             reasons.append("Budget-authoritative Worker tracking has not been verified for this adapter.")
 
-    workdir = adapter.get("workdir")
-    workdir_ready = bool(workdir) and Path(str(workdir)).is_dir()
-    if not workdir:
-        reasons.append("Worker adapter workdir is not configured.")
-    elif not workdir_ready:
-        reasons.append("Worker adapter workdir does not exist.")
+    workdir = project_root or adapter.get("workdir")
+    workdir_ready = not workdir or Path(str(workdir)).is_dir()
+    if workdir and not workdir_ready:
+        reasons.append("Worker launch project root does not exist.")
 
     supported_models = adapter.get("supported_models") or []
     models_ready = bool(supported_models)
@@ -107,7 +106,7 @@ def evaluate_adapter_readiness(
 
 def _is_configured(adapter: dict[str, Any]) -> bool:
     config = adapter.get("config") or {}
-    return bool(adapter.get("workdir")) and bool(
+    return bool(
         config.get("command")
         or config.get("verification_template")
         or config.get("launch_template")

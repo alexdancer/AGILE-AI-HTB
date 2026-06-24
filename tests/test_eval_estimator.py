@@ -21,7 +21,12 @@ from agile_ai_htb.estimation import (
 )
 from agile_ai_htb.guardrails import load_guardrails
 from agile_ai_htb.settings import Settings
-from agile_ai_htb.task_breakdown import TaskBreakdownResult, breakdown_task_source
+from agile_ai_htb.task_breakdown import (
+    TaskBreakdownResult,
+    TaskBreakdownValidationError,
+    breakdown_task_source,
+    validate_breakdown_result,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 PORTAL_TOKEN = "test-portal-token"
@@ -105,6 +110,7 @@ def _breakdown_content(*titles):
         "decision": "proposed_task_breakdown" if len(titles) > 1 else "single_task",
         "candidates": [
             {
+                "kind": "implementation",
                 "title": title,
                 "prompt": f"Implement {title}",
                 "acceptance_criteria": f"{title} has tests.",
@@ -116,6 +122,7 @@ def _breakdown_content(*titles):
         "rejected_items": [
             {"text": "Date: 2099-04-01", "reason": "context metadata, not a task"}
         ],
+        "global_contract_summary": "Accepted slices must collectively preserve DEMO_TASK_2099 output invariants.",
         "global_constraints": ["Do not add network dependencies."],
         "verification": ["Run pytest."],
         "non_goals": [],
@@ -131,6 +138,8 @@ def _client_with_llm(tmp_path, llm):
         database_path=tmp_path / "harness.db",
         guardrails_path=ROOT / "guardrails.yaml",
         estimator_model="openai/gpt-4.1-mini",
+        task_breakdown_model="openai/gpt-4.1-mini",
+        operator_config={},
     )
     app = create_app(settings)
     app.state.llm_client = llm
@@ -237,6 +246,7 @@ async def test_eval_task_breakdown_accepts_common_model_json_variants():
                 "decision": "single_task",
                 "candidates": [
                     {
+                        "kind": "implementation",
                         "title": "Run DEMO_2099 comparison",
                         "prompt": "Run the comparison demo from the uploaded Markdown.",
                         "acceptance_criteria": ["Portal shows reviewed candidate.", "pytest passes."],
@@ -245,6 +255,7 @@ async def test_eval_task_breakdown_accepts_common_model_json_variants():
                     }
                 ],
                 "rejected_items": [],
+                "global_contract_summary": "The DEMO_2099 comparison must stay synthetic and verified.",
                 "global_constraints": [],
                 "verification": ["Run pytest."],
                 "non_goals": [],
@@ -264,8 +275,66 @@ async def test_eval_task_breakdown_accepts_common_model_json_variants():
     )
 
     assert isinstance(result, TaskBreakdownResult)
+    assert result.global_contract_summary == "The DEMO_2099 comparison must stay synthetic and verified."
+    assert result.candidates[0].kind == "implementation"
     assert result.candidates[0].acceptance_criteria == "Portal shows reviewed candidate.\npytest passes."
     assert result.candidates[0].constraints == ["Do not add network dependencies."]
+
+
+def test_task_breakdown_candidate_kind_defaults_for_legacy_records():
+    result = validate_breakdown_result(
+        {
+            "decision": "single_task",
+            "candidates": [
+                {
+                    "title": "DEMO_TASK_2099 legacy candidate",
+                    "prompt": "Implement the legacy DEMO candidate.",
+                    "acceptance_criteria": "Tests pass.",
+                    "constraints": [],
+                    "human_in_loop": True,
+                }
+            ],
+            "rejected_items": [],
+            "global_contract_summary": "Legacy breakdown summary.",
+            "global_constraints": [],
+            "verification": [],
+            "non_goals": [],
+            "recommended_sequence": ["DEMO_TASK_2099 legacy candidate"],
+            "confidence": 0.8,
+            "rationale": "Legacy records did not store kind.",
+            "source": "llm",
+        }
+    )
+
+    assert result.candidates[0].kind == "implementation"
+
+
+def test_task_breakdown_rejects_invalid_candidate_kind():
+    with pytest.raises(TaskBreakdownValidationError, match="candidate kind"):
+        validate_breakdown_result(
+            {
+                "decision": "single_task",
+                "candidates": [
+                    {
+                        "kind": "whole_task_rerun",
+                        "title": "DEMO_TASK_2099 invalid candidate",
+                        "prompt": "Do the DEMO task.",
+                        "acceptance_criteria": "Tests pass.",
+                        "constraints": [],
+                        "human_in_loop": True,
+                    }
+                ],
+                "rejected_items": [],
+                "global_contract_summary": "Invalid candidate summary.",
+                "global_constraints": [],
+                "verification": [],
+                "non_goals": [],
+                "recommended_sequence": ["DEMO_TASK_2099 invalid candidate"],
+                "confidence": 0.8,
+                "rationale": "Invalid kind must fail.",
+                "source": "llm",
+            }
+        )
 
 
 def test_estimate_form_failed_breakdown_records_validation_reason(tmp_path, monkeypatch):

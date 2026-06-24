@@ -47,6 +47,17 @@ def _portal_headers():
     return {"Authorization": f"Bearer {PORTAL_TOKEN}"}
 
 
+def _connect_project(database_path: Path, root: Path) -> dict:
+    root.mkdir(exist_ok=True)
+    return db.upsert_connected_project(
+        database_path,
+        name=root.name,
+        root_path=str(root.resolve()),
+        profile={"name": root.name, "root_path": str(root.resolve()), "test_command": "pytest"},
+        capability={"state": "launch_ready", "can_launch": True},
+    )
+
+
 def test_portal_routes_require_operator_bearer_token(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     with _client(tmp_path) as client:
@@ -67,7 +78,7 @@ def test_portal_login_sets_signed_http_only_cookie_and_logout_clears_it(tmp_path
         login = client.post("/login", data={"token": PORTAL_TOKEN}, follow_redirects=False)
 
         assert login.status_code == 303
-        assert login.headers["location"] == "/dashboard"
+        assert login.headers["location"] == "/projects"
         cookie = login.headers["set-cookie"]
         assert "agile_ai_htb_portal=" in cookie
         assert "HttpOnly" in cookie
@@ -82,6 +93,31 @@ def test_portal_login_sets_signed_http_only_cookie_and_logout_clears_it(tmp_path
         assert logout.headers["location"] == "/login"
         assert "agile_ai_htb_portal=\"\"" in logout.headers["set-cookie"]
         assert client.get("/dashboard").status_code == 401
+
+
+def test_portal_login_redirects_to_most_recent_project(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    db.init_db(tmp_path / "harness.db")
+    db.upsert_connected_project(
+        tmp_path / "harness.db",
+        name="first-project",
+        root_path=str(tmp_path / "first-project"),
+        profile={},
+        capability={},
+    )
+    recent = db.upsert_connected_project(
+        tmp_path / "harness.db",
+        name="second-project",
+        root_path=str(tmp_path / "second-project"),
+        profile={},
+        capability={},
+    )
+
+    with _client(tmp_path) as client:
+        login = client.post("/login", data={"token": PORTAL_TOKEN}, follow_redirects=False)
+
+    assert login.status_code == 303
+    assert login.headers["location"] == f"/projects/{recent['id']}"
 
 
 def test_portal_rejects_tampered_or_expired_login_cookie(tmp_path, monkeypatch):
@@ -164,6 +200,13 @@ def test_dashboard_renders_budget_alarm_and_navigation_sections(tmp_path, monkey
     assert "text/html" in response.headers["content-type"]
     html = response.text
     assert "Daily budget" in html
+    assert "Operator next actions" in html
+    assert "Set up Worker adapter" in html
+    assert 'href="/settings/workers"' in html
+    assert "Review 1 open alarm" in html
+    assert 'href="/alarms"' in html
+    assert "Open task board" in html
+    assert 'href="/board"' in html
     assert "150" in html
     assert "Sessions" in html
     assert "Alarms" in html
@@ -177,6 +220,99 @@ def test_dashboard_renders_budget_alarm_and_navigation_sections(tmp_path, monkey
     assert "https://cdn.jsdelivr.net/npm/chart.js" not in html
     assert "PROVIDER_API_KEY" not in html
     assert "sk_sess_" not in html
+
+
+def test_dashboard_next_actions_count_launch_and_review_tasks(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        client.post(
+            "/tasks",
+            json={
+                "description": "Ready launch task",
+                "status": "Estimated",
+                "estimate_tokens": 1000,
+                "recommended_model": "gpt-5.1-codex",
+            },
+        )
+        session = client.post(
+            "/session/start",
+            json={"task_description": "Completed Worker task", "model": "gpt-5.1-codex"},
+        ).json()
+        db.update_session_status(database_path, session["session_id"], "completed")
+        client.post(
+            "/tasks",
+            json={
+                "description": "Needs review",
+                "status": "Review",
+                "estimate_tokens": 1000,
+                "recommended_model": "gpt-5.1-codex",
+                "session_id": session["session_id"],
+            },
+        )
+
+        response = client.get("/dashboard", headers=_portal_headers())
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Launch 1 estimated task" in html
+    assert "Review 1 task" in html
+    assert html.count('href="/board"') >= 3
+
+
+def test_dashboard_next_actions_hide_worker_setup_when_adapter_launchable(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        db.update_worker_adapter(
+            database_path,
+            "opencode",
+            workdir=str(tmp_path),
+            config={"native_launch_template": ["opencode", "run"]},
+            supported_models=["openai/gpt-5.1"],
+            is_default=True,
+        )
+        db.mark_worker_adapter_verification(
+            database_path,
+            "opencode",
+            verified=True,
+            evidence={"tracking_mode": "native_usage", "tracking_authoritative": True},
+        )
+
+        response = client.get("/dashboard", headers=_portal_headers())
+
+    assert response.status_code == 200
+    assert "Set up Worker adapter" not in response.text
+    assert "Open task board" in response.text
+
+
+def test_dashboard_next_actions_prioritize_critical_alarms(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        session = client.post(
+            "/session/start",
+            json={"task_description": "Budget alarm", "model": "claude-haiku"},
+        ).json()
+        db.record_alarm(
+            database_path,
+            session_id=session["session_id"],
+            alarm={
+                "id": "critical-dashboard-alarm",
+                "type": "DAILY_CAP_EXCEEDED",
+                "severity": "HIGH",
+                "context": {},
+                "recommended_action": "Stop launches.",
+            },
+        )
+
+        response = client.get("/dashboard", headers=_portal_headers())
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Handle 1 critical alarm" in html
+    assert "Review 1 open alarm" not in html
+    assert 'href="/alarms"' in html
 
 
 def test_dashboard_budget_ignores_previous_day_usage(tmp_path, monkeypatch):
@@ -567,19 +703,20 @@ def test_session_report_missing_session_returns_404(tmp_path, monkeypatch):
 
 # ── Adapter configuration workflow tests ──
 
-def test_configure_route_sets_workdir(tmp_path, monkeypatch):
+def test_configure_route_sets_adapter_default_without_workdir(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     with _client(tmp_path) as client:
         response = client.post(
             "/settings/workers/opencode/configure",
             headers=_portal_headers(),
-            data={"workdir": str(tmp_path / "my-project")},
+            data={"workdir": str(tmp_path / "my-project"), "is_default": "1"},
             follow_redirects=False,
         )
     assert response.status_code == 303
     assert response.headers["location"] == "/settings/workers"
     adapter = db.get_worker_adapter(tmp_path / "harness.db", "opencode")
-    assert adapter["workdir"] == str(tmp_path / "my-project")
+    assert adapter["workdir"] is None
+    assert adapter["is_default"] is True
     assert adapter["configured"] is True
 
 
@@ -808,6 +945,7 @@ def test_saved_budget_gates_launch_and_is_carried_to_session(tmp_path, monkeypat
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
     with _client(tmp_path) as client:
+        _connect_project(database_path, tmp_path / "connected-project")
         db.set_token_budget_settings(database_path, daily_cap_tokens=1000, session_cap_tokens=700)
         db.update_worker_adapter(
             database_path,

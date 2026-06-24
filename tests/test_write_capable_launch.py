@@ -45,6 +45,13 @@ def _git_project(tmp_path: Path, *, test_command: str | None = "python -m pytest
 
 def _verified_task(db_path: Path, root: Path, *, test_command: str | None = "python -m pytest"):
     db.init_db(db_path)
+    db.upsert_connected_project(
+        db_path,
+        name="Write Project",
+        root_path=str(root),
+        profile={"test_command": test_command, "root_path": str(root)},
+        capability={"state": "launch_ready", "can_launch": True},
+    )
     db.update_worker_adapter(
         db_path,
         "opencode",

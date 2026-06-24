@@ -23,12 +23,10 @@
   </div>
   <div class="panel-body grid cols-2">
     <div class="card">
-      <h3>1. Configure Worker project</h3>
+      <h3>1. Select default Worker Adapter</h3>
       <form method="post" action="/settings/workers/{{ active_adapter.id }}/configure">
-        <label>Workdir</label>
-        <input name="workdir" value="{{ active_adapter.workdir or '' }}" placeholder="/path/to/repo">
         <input type="hidden" name="is_default" value="1">
-        <p class="muted">This becomes the default Worker adapter used by task launch.</p>
+        <p class="muted">Project root is selected from the connected project workspace. Adapter setup only controls the Worker CLI and tracking verification.</p>
         <button class="primary" type="submit">Save adapter</button>
       </form>
     </div>
@@ -116,7 +114,7 @@
             <summary>Advanced details</summary>
             <div class="kv" style="margin-top:8px">
               <div class="k">kind</div><div class="v">{{ adapter.kind }}</div>
-              <div class="k">workdir</div><div class="v">{{ adapter.workdir or 'not configured' }}</div>
+              <div class="k">project root</div><div class="v">managed by connected project workspace</div>
               <div class="k">connection type</div><div class="v">{{ adapter.connection_type }}</div>
               <div class="k">tracking modes</div><div class="v">{{ adapter.tracking_modes|join(', ') }}</div>
               <div class="k">runtime guardrails</div><div class="v">{{ adapter.tracking.runtime_request_guardrails }}</div>

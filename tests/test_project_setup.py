@@ -55,7 +55,8 @@ def test_project_setup_rejects_disabled_local_runner(tmp_path, monkeypatch):
         )
 
     assert response.status_code == 409
-    assert "htb serve --local-runner" in response.json()["detail"]
+    assert "htb init" in response.json()["detail"]
+    assert "htb serve" in response.json()["detail"]
 
 
 def test_project_setup_api_connects_valid_path_and_returns_detected_profile(tmp_path, monkeypatch):
@@ -109,6 +110,61 @@ def test_project_settings_page_displays_profile_and_capability_state(tmp_path, m
     assert "fastapi" in html
     assert "README.md" in html
 
+
+def test_projects_page_lists_connected_projects_and_open_form(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    root = _project_root(tmp_path)
+
+    with _client(tmp_path) as client:
+        empty = client.get("/projects", headers=_headers())
+        client.post("/settings/project/connect", headers=_headers(), json={"root_path": str(root)})
+        listed = client.get("/projects", headers=_headers())
+
+    assert empty.status_code == 200
+    assert "Open local repo" in empty.text
+    assert "No connected projects yet." in empty.text
+    assert listed.status_code == 200
+    assert "portal-project" in listed.text
+    assert str(root.resolve()) in listed.text
+    assert 'action="/settings/project/connect?redirect=workspace"' in listed.text
+
+
+def test_projects_open_form_redirects_to_project_workspace(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    root = _project_root(tmp_path)
+
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/settings/project/connect?redirect=workspace",
+            headers={**_headers(), "accept": "text/html"},
+            data={"root_path": str(root)},
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/projects/")
+
+
+def test_project_workspace_displays_profile_capability_and_workflow_links(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    root = _project_root(tmp_path)
+
+    with _client(tmp_path) as client:
+        project = client.post("/settings/project/connect", headers=_headers(), json={"root_path": str(root)}).json()["project"]
+        response = client.get(f"/projects/{project['id']}", headers=_headers())
+        missing = client.get("/projects/not-a-project", headers=_headers())
+
+    assert response.status_code == 200
+    html = response.text
+    assert "portal-project" in html
+    assert str(root.resolve()) in html
+    assert "Analysis-ready" in html
+    assert "pytest" in html
+    assert "fastapi" in html
+    assert "README.md" in html
+    for href in ['href="/board"', 'href="/sessions"', 'href="/settings/workers"', 'href="/settings/project"']:
+        assert href in html
+    assert missing.status_code == 404
 
 
 def test_project_page_shows_read_only_proof_only_when_launch_ready(tmp_path, monkeypatch):

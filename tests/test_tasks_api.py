@@ -31,7 +31,18 @@ def _wait_for_worker_run(db_path: Path, task_id: str, status: str | None = None)
 
 def _client(tmp_path):
     settings = Settings(database_path=tmp_path / "harness.db", guardrails_path=ROOT / "guardrails.yaml")
-    return TestClient(create_app(settings))
+    db.init_db(settings.database_path)
+    app = create_app(settings)
+    project_root = tmp_path / "connected-project"
+    project_root.mkdir(exist_ok=True)
+    db.upsert_connected_project(
+        settings.database_path,
+        name=project_root.name,
+        root_path=str(project_root.resolve()),
+        profile={"name": project_root.name, "root_path": str(project_root.resolve()), "test_command": "pytest"},
+        capability={"state": "launch_ready", "can_launch": True},
+    )
+    return TestClient(app)
 
 
 
@@ -55,6 +66,7 @@ class FakeSequentialLLM:
 def _breakdown_content(*titles):
     candidates = [
         {
+            "kind": "implementation",
             "title": title,
             "prompt": f"Implement {title}",
             "acceptance_criteria": f"{title} is covered by tests.",
@@ -69,12 +81,58 @@ def _breakdown_content(*titles):
         "rejected_items": [
             {"text": "Do not add network dependencies.", "reason": "constraint, not a task"}
         ],
+        "global_contract_summary": "Accepted slices must preserve the DEMO_TASK_2099 contract end-to-end.",
         "global_constraints": ["Do not add network dependencies."],
         "verification": ["Run pytest."],
         "non_goals": [],
         "recommended_sequence": list(titles),
         "confidence": 0.86,
         "rationale": "Markdown contains multiple vertical slices plus constraints.",
+        "source": "llm",
+    }
+
+
+def _integrated_artifact_breakdown():
+    return {
+        "decision": "proposed_task_breakdown",
+        "candidates": [
+            {
+                "kind": "implementation",
+                "title": "Build DEMO_CLI_2099 parser",
+                "prompt": "Implement the parser slice for DEMO_CLI_2099.",
+                "acceptance_criteria": "Parser tests pass.",
+                "constraints": ["Preserve DEMO_ID_999 values."],
+                "human_in_loop": True,
+            },
+            {
+                "kind": "implementation",
+                "title": "Render DEMO_REPORT_2099 output",
+                "prompt": "Implement the report rendering slice for DEMO_REPORT_2099.",
+                "acceptance_criteria": "Report shape is covered.",
+                "constraints": [],
+                "human_in_loop": True,
+            },
+            {
+                "kind": "acceptance_verification",
+                "title": "Acceptance Verification for DEMO_CLI_2099",
+                "prompt": "Verify the combined CLI/report artifact against the source contract.",
+                "acceptance_criteria": "Executable smoke proof and findings are recorded.",
+                "constraints": ["Do not rebuild the CLI."],
+                "human_in_loop": True,
+            },
+        ],
+        "rejected_items": [],
+        "global_contract_summary": "DEMO_CLI_2099 must parse input and emit DEMO_REPORT_2099 with 999-style IDs.",
+        "global_constraints": ["Use only synthetic DEMO_2099 data."],
+        "verification": ["Run a CLI smoke check."],
+        "non_goals": [],
+        "recommended_sequence": [
+            "Build DEMO_CLI_2099 parser",
+            "Render DEMO_REPORT_2099 output",
+            "Acceptance Verification for DEMO_CLI_2099",
+        ],
+        "confidence": 0.9,
+        "rationale": "Two implementation slices create one integrated artifact requiring final proof.",
         "source": "llm",
     }
 
@@ -463,18 +521,22 @@ def test_estimate_form_accepts_pasted_markdown_task(tmp_path, monkeypatch):
                 "accept_0": "1",
                 "accept_1": "1",
                 "accept_2": "1",
+                "kind_0": "implementation",
                 "title_0": "Add parser",
                 "prompt_0": "Implement Add parser",
                 "acceptance_criteria_0": "Parser is tested.",
                 "constraints_0": "",
+                "kind_1": "implementation",
                 "title_1": "Add tests",
                 "prompt_1": "Implement Add tests",
                 "acceptance_criteria_1": "Tests pass.",
                 "constraints_1": "",
+                "kind_2": "implementation",
                 "title_2": "Update docs",
                 "prompt_2": "Implement Update docs",
                 "acceptance_criteria_2": "Docs are updated.",
                 "constraints_2": "",
+                "global_contract_summary": "Edited DEMO_TASK_2099 contract summary.",
                 "global_constraints": "Do not add network dependencies.",
                 "verification": "Run pytest.",
             },
@@ -491,6 +553,8 @@ def test_estimate_form_accepts_pasted_markdown_task(tmp_path, monkeypatch):
     assert len(tasks) == 3
     assert len(llm.requests) == 4
     assert tasks[0]["metadata"]["task_breakdown_id"] == breakdown_id
+    assert tasks[0]["metadata"]["task_breakdown_kind"] == "implementation"
+    assert tasks[0]["metadata"]["task_breakdown_global_contract_summary"] == "Edited DEMO_TASK_2099 contract summary."
     assert tasks[0]["metadata"]["task_breakdown_global_constraints"] == ["Do not add network dependencies."]
     assert tasks[0]["metadata"]["task_breakdown_verification"] == ["Run pytest."]
     assert breakdown["status"] == "accepted"
@@ -547,6 +611,85 @@ def test_manual_recovery_cannot_reopen_accepted_breakdown(tmp_path, monkeypatch)
     assert after_stale_manual["candidates"] == accepted["candidates"]
     assert after_stale_manual["created_task_ids"] == accepted["created_task_ids"]
     assert len(tasks) == 1
+
+
+def test_acceptance_verification_candidate_carries_full_source_contract(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeSequentialLLM(
+        [
+            _integrated_artifact_breakdown(),
+            FakeEstimatorLLM().content,
+            FakeEstimatorLLM().content,
+            FakeEstimatorLLM().content,
+        ]
+    )
+    markdown = """# DEMO_TASK_2099 integrated CLI
+
+Build DEMO_CLI_2099 so it parses DEMO_INPUT_999 and emits DEMO_REPORT_2099 with DEMO_ID_999 fields.
+The final artifact must be verified with a CLI smoke check and must never use real customer data.
+""".strip()
+
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={"description": markdown},
+            follow_redirects=False,
+        )
+        breakdown_id = response.headers["location"].split("/")[2]
+        review = client.get(response.headers["location"], headers=_auth_headers())
+        accept = client.post(
+            f"/task-breakdowns/{breakdown_id}/accept",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={
+                "accept_0": "1",
+                "accept_1": "1",
+                "accept_2": "1",
+                "kind_0": "implementation",
+                "title_0": "Build DEMO_CLI_2099 parser",
+                "prompt_0": "Implement only parser behavior.",
+                "acceptance_criteria_0": "Parser tests pass.",
+                "constraints_0": "Preserve DEMO_ID_999 values.",
+                "kind_1": "implementation",
+                "title_1": "Render DEMO_REPORT_2099 output",
+                "prompt_1": "Implement only report rendering.",
+                "acceptance_criteria_1": "Report tests pass.",
+                "constraints_1": "",
+                "kind_2": "acceptance_verification",
+                "title_2": "Acceptance Verification for DEMO_CLI_2099",
+                "prompt_2": "Verify the combined artifact.",
+                "acceptance_criteria_2": "Smoke proof and findings are recorded.",
+                "constraints_2": "Do not rebuild the CLI.",
+                "global_contract_summary": "Edited summary: DEMO_CLI_2099 parses DEMO_INPUT_999 and emits DEMO_REPORT_2099.",
+                "global_constraints": "Use only synthetic DEMO_2099 data.",
+                "verification": "Run a CLI smoke check.",
+            },
+            follow_redirects=False,
+        )
+        tasks = db.list_tasks(tmp_path / "harness.db")
+        breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
+
+    assert response.status_code == 303
+    assert "Global contract summary" in review.text
+    assert "acceptance_verification" in review.text
+    assert accept.status_code == 303
+    assert [task["metadata"]["task_breakdown_kind"] for task in tasks] == [
+        "implementation",
+        "implementation",
+        "acceptance_verification",
+    ]
+    implementation_description = tasks[0]["description"]
+    verification_description = tasks[2]["description"]
+    assert "Edited summary: DEMO_CLI_2099 parses DEMO_INPUT_999" in implementation_description
+    assert "Original source contract:" not in implementation_description
+    assert "Original source contract:" in verification_description
+    assert "Build DEMO_CLI_2099 so it parses DEMO_INPUT_999" in verification_description
+    assert "Do not reimplement the whole source task" in verification_description
+    assert tasks[2]["metadata"]["task_breakdown_recommended_last"] is True
+    assert breakdown["global_contract_summary"] == (
+        "Edited summary: DEMO_CLI_2099 parses DEMO_INPUT_999 and emits DEMO_REPORT_2099."
+    )
+    assert breakdown["candidates"][2]["kind"] == "acceptance_verification"
 
 
 def test_estimate_form_markdown_file_overrides_pasted_text(tmp_path, monkeypatch):

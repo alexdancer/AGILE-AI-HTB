@@ -3,9 +3,7 @@
 ## Purpose
 
 Enable operators to select which worker adapter and model to use when launching tasks from the board, with the launch button always visible for Estimated tasks, no redundant Ready launch column, asynchronous Worker Run state visible on the board, and failure reasons surfaced inline.
-
 ## Requirements
-
 ### Requirement: Board launch form includes adapter selector
 The board task card for Estimated tasks SHALL include a dropdown selector listing all worker adapters. The initially selected adapter SHALL be the default adapter if one is set, otherwise the first adapter in the list. The board SHALL NOT require or render a Ready column for launchable tasks.
 
@@ -137,3 +135,28 @@ The board SHALL show tracking-mode-specific launch copy for the selected Worker 
 - **WHEN** an Estimated task's selected Worker Adapter uses `observed_only` tracking mode
 - **THEN** the board keeps Launch guardrail-blocked
 - **AND** the board links the operator to Worker Setup diagnostics instead of launching the Task
+
+### Requirement: Board launch requires active project root
+The system SHALL require a connected project root before launching a normal Worker task from the board.
+
+#### Scenario: Launch uses connected project root
+- **WHEN** an authenticated operator launches an Estimated task from the board
+- **AND** at least one connected project exists
+- **THEN** the system SHALL pass the active connected project's root path as the Worker launch workdir
+- **AND** the Worker Run evidence SHALL record the selected project root used for the launch
+
+#### Scenario: Launch fails without connected project
+- **WHEN** an authenticated operator launches an Estimated task from the board
+- **AND** no connected project exists
+- **THEN** the system SHALL reject the launch before starting any Worker Adapter process
+- **AND** the board SHALL show a setup error linking the operator to `/projects`
+
+### Requirement: Board launch binds OpenCode project directory explicitly
+The system SHALL bind OpenCode Worker launches to the active project root using OpenCode's explicit project-directory option rather than relying only on subprocess cwd.
+
+#### Scenario: OpenCode launch command includes project directory
+- **WHEN** the selected Worker Adapter is OpenCode
+- **AND** the active project root is `/repo/example`
+- **THEN** the launch command plan SHALL include `opencode run --dir /repo/example`
+- **AND** the command plan SHALL NOT rely on cwd alone as evidence of the project boundary
+

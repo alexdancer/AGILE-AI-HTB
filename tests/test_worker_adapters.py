@@ -133,6 +133,28 @@ def test_worker_adapter_template_can_reference_session_api_key(tmp_path):
     ]
 
 
+def test_opencode_proxy_launch_template_can_reference_session_api_key(tmp_path):
+    adapter = {
+        "id": "opencode",
+        "kind": "opencode",
+        "name": "OpenCode",
+        "workdir": str(tmp_path),
+        "config": {"launch_template": ["opencode", "run", "--session-key", "{session_api_key}", "{prompt}"]},
+        "supported_models": ["openai/gpt-5.5"],
+    }
+
+    plan = get_adapter_builder(adapter).build_launch_command(
+        model="openai/gpt-5.5",
+        task_prompt="Implement the task.",
+        proxy_url="http://127.0.0.1:8000/v1",
+        session_api_key="sk_sess_test",
+        project_root=str(tmp_path),
+    )
+
+    assert "sk_sess_test" in plan.command
+    assert plan.env["AGILE_AI_HTB_SESSION_API_KEY"] == "sk_sess_test"
+
+
 def test_opencode_native_launch_defaults_to_agent_sized_timeout(tmp_path):
     adapter = {
         "id": "opencode",
@@ -251,6 +273,32 @@ def test_opencode_native_launch_template_without_dir_is_injected(tmp_path):
     )
 
     assert plan.command[:4] == ["opencode", "run", "--dir", str(tmp_path)]
+
+
+def test_opencode_launch_template_with_stale_dir_uses_project_root(tmp_path):
+    stale_root = tmp_path / "stale"
+    project_root = tmp_path / "project"
+    adapter = {
+        "id": "opencode",
+        "kind": "opencode",
+        "name": "OpenCode",
+        "workdir": str(stale_root),
+        "config": {
+            "launch_template": ["opencode", "run", "--dir", str(stale_root), "--model", "{model}", "{prompt}"]
+        },
+        "supported_models": ["openai/gpt-5.5"],
+    }
+
+    plan = get_adapter_builder(adapter).build_launch_command(
+        model="openai/gpt-5.5",
+        task_prompt="Implement the task.",
+        proxy_url="http://127.0.0.1:8000/v1",
+        session_api_key="sk_sess_test",
+        project_root=str(project_root),
+    )
+
+    assert plan.command[:4] == ["opencode", "run", "--dir", str(project_root)]
+    assert str(stale_root) not in plan.command
 
 
 def test_detect_worker_adapter_reports_missing_command_without_verifying(monkeypatch):

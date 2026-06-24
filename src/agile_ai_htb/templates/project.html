@@ -19,7 +19,7 @@
       {% if backend_status and backend_status.online %}<span class="pill green">online</span>{% endif %}
     {% else %}
       <span class="pill yellow">disabled</span>
-      <p class="muted mono">Start with <code>htb serve --local-runner</code> to enable launch capability.</p>
+      <p class="muted mono">Run <code>htb init</code>, edit <code>.htb/secrets.env</code>, then start with <code>htb serve</code>.</p>
     {% endif %}
   </div>
 </section>

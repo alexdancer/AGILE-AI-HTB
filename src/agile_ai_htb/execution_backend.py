@@ -55,7 +55,6 @@ class LocalExecutionBackend:
             capability=capability,
             backend_id=self.id,
         )
-        _configure_local_opencode_adapter(self.database_path, profile["root_path"])
         self.status()
         return ProjectConnectionResult(project)
 
@@ -85,20 +84,6 @@ class LocalExecutionBackend:
                 "project_profile": profile,
             },
         )
-
-
-def _configure_local_opencode_adapter(database_path: Path | str, root_path: str) -> None:
-    adapter = db.get_worker_adapter(database_path, "opencode")
-    if not adapter:
-        return
-    db.update_worker_adapter(
-        database_path,
-        "opencode",
-        workdir=root_path,
-        config=adapter.get("config", {}),
-        supported_models=adapter.get("supported_models", []),
-        is_default=bool(adapter.get("is_default")),
-    )
 
 
 def validate_local_project_path(root_path: Path | str) -> str | None:
