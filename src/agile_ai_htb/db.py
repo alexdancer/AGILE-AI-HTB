@@ -57,6 +57,21 @@ create table if not exists worker_runs (
 create index if not exists idx_worker_runs_task_status on worker_runs(task_id, status);
 create index if not exists idx_worker_runs_session on worker_runs(session_id);
 
+create table if not exists worker_run_events (
+    id integer primary key autoincrement,
+    worker_run_id text not null references worker_runs(id) on delete cascade,
+    session_id text not null references sessions(id) on delete cascade,
+    task_id text not null references tasks(id) on delete cascade,
+    layer text not null default 'control_plane',
+    kind text not null,
+    level text not null,
+    title text not null,
+    detail_json text not null default '{}',
+    created_at text not null
+);
+create index if not exists idx_worker_run_events_run on worker_run_events(worker_run_id, created_at, id);
+create index if not exists idx_worker_run_events_session on worker_run_events(session_id, created_at, id);
+
 create table if not exists token_turns (
     id integer primary key autoincrement,
     session_id text not null references sessions(id) on delete cascade,
@@ -246,6 +261,12 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         row["name"]
         for row in conn.execute("select name from sqlite_master where type = 'table'").fetchall()
     }
+    if "worker_run_events" in existing_tables:
+        worker_run_event_columns = {
+            row["name"] for row in conn.execute("pragma table_info(worker_run_events)").fetchall()
+        }
+        if "layer" not in worker_run_event_columns:
+            conn.execute("alter table worker_run_events add column layer text not null default 'control_plane'")
     if "connected_projects" not in existing_tables:
         conn.execute(
             """
@@ -871,6 +892,66 @@ def list_worker_runs(
     return [_worker_run_from_row(row) for row in rows]
 
 
+def record_worker_run_event(
+    path: Path | str,
+    *,
+    worker_run_id: str,
+    session_id: str,
+    task_id: str,
+    kind: str,
+    title: str,
+    layer: str = "control_plane",
+    level: str = "info",
+    detail: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    now = _now_iso()
+    with connect(path) as conn:
+        cursor = conn.execute(
+            """
+            insert into worker_run_events (
+                worker_run_id, session_id, task_id, layer, kind, level, title, detail_json, created_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                worker_run_id,
+                session_id,
+                task_id,
+                layer,
+                kind,
+                level,
+                title,
+                _to_json(_sanitize_evidence(detail or {})),
+                now,
+            ),
+        )
+        row = conn.execute("select * from worker_run_events where id = ?", (cursor.lastrowid,)).fetchone()
+    return _worker_run_event_from_row(row)
+
+
+def list_worker_run_events(
+    path: Path | str,
+    *,
+    worker_run_id: str | None = None,
+    session_id: str | None = None,
+    task_id: str | None = None,
+) -> list[dict[str, Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    if worker_run_id is not None:
+        clauses.append("worker_run_id = ?")
+        params.append(worker_run_id)
+    if session_id is not None:
+        clauses.append("session_id = ?")
+        params.append(session_id)
+    if task_id is not None:
+        clauses.append("task_id = ?")
+        params.append(task_id)
+    where = f" where {' and '.join(clauses)}" if clauses else ""
+    with connect(path) as conn:
+        rows = conn.execute("select * from worker_run_events" + where + " order by created_at, id", params).fetchall()
+    return [_worker_run_event_from_row(row) for row in rows]
+
+
 def mark_worker_run_running(path: Path | str, run_id: str) -> dict[str, Any]:
     now = _now_iso()
     with connect(path) as conn:
@@ -959,6 +1040,33 @@ def _finish_worker_run(
                 _to_json(merged_metadata),
                 now,
                 run_id,
+            ),
+        )
+        conn.execute(
+            """
+            insert into worker_run_events (
+                worker_run_id, session_id, task_id, layer, kind, level, title, detail_json, created_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                existing["session_id"],
+                existing["task_id"],
+                "worker_harness",
+                "adapter" if status == "completed" else "guardrail",
+                "info" if status == "completed" else "error",
+                "Worker Run completed" if status == "completed" else "Worker Run failed",
+                _to_json(
+                    _sanitize_evidence(
+                        {
+                            "status": status,
+                            "returncode": returncode,
+                            **({"error_type": error_type} if error_type else {}),
+                            **({"error_message": error_message} if error_message else {}),
+                        }
+                    )
+                ),
+                now,
             ),
         )
     return get_worker_run(path, run_id)
@@ -1341,6 +1449,9 @@ def build_session_artifact(path: Path | str, session_id: str) -> dict[str, Any]:
         worker_run_rows = conn.execute(
             "select * from worker_runs where session_id = ? order by created_at, id", (session_id,)
         ).fetchall()
+        worker_run_event_rows = conn.execute(
+            "select * from worker_run_events where session_id = ? order by created_at, id", (session_id,)
+        ).fetchall()
 
     return {
         "session": _session_from_row(session_row),
@@ -1350,6 +1461,7 @@ def build_session_artifact(path: Path | str, session_id: str) -> dict[str, Any]:
         "guardrail_snapshots": [_snapshot_from_row(row) for row in snapshot_rows],
         "checkpoint_results": [_checkpoint_from_row(row) for row in checkpoint_rows],
         "worker_runs": [_worker_run_from_row(row) for row in worker_run_rows],
+        "worker_run_events": [_worker_run_event_from_row(row) for row in worker_run_event_rows],
     }
 
 
@@ -1534,6 +1646,41 @@ def _worker_run_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "started_at": row["started_at"],
         "completed_at": row["completed_at"],
     }
+
+
+def _worker_run_event_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    detail = _from_json(row["detail_json"])
+    return {
+        "id": row["id"],
+        "worker_run_id": row["worker_run_id"],
+        "session_id": row["session_id"],
+        "task_id": row["task_id"],
+        "layer": row["layer"],
+        "kind": row["kind"],
+        "level": row["level"],
+        "title": row["title"],
+        "detail": detail,
+        "detail_summary": _worker_run_event_detail_summary(detail),
+        "created_at": row["created_at"],
+    }
+
+
+def _worker_run_event_detail_summary(detail: Any) -> str:
+    if not isinstance(detail, dict):
+        return ""
+    parts: list[str] = []
+    for key in ("error_type", "returncode", "retryable", "status", "total_tokens", "usage_source"):
+        if key in detail and detail[key] not in (None, ""):
+            parts.append(f"{key}={detail[key]}")
+    workdir = detail.get("workdir_evidence")
+    if isinstance(workdir, dict):
+        if workdir.get("configured_workdir"):
+            parts.append(f"workdir={workdir['configured_workdir']}")
+        if workdir.get("expected_marker"):
+            parts.append(f"marker={workdir['expected_marker']}")
+    if not parts:
+        return ""
+    return "; ".join(str(part) for part in parts)[:500]
 
 
 def _token_turn_from_row(row: sqlite3.Row) -> dict[str, Any]:

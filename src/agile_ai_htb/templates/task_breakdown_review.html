@@ -27,7 +27,7 @@
         <form method="post" action="/task-breakdowns/{{ breakdown.id }}/retry">
           <button type="submit" class="primary">Retry breakdown</button>
         </form>
-        <a href="/board" class="btn ghost">Cancel</a>
+        <a href="{{ board_path }}" class="btn ghost">Cancel</a>
       </div>
       <form method="post" action="/task-breakdowns/{{ breakdown.id }}/manual" style="display:grid;gap:8px;margin-top:12px">
         <label>Create one manual candidate from the source</label>
@@ -91,7 +91,7 @@
   </div>
   <div class="btn-row">
     <button type="submit" class="primary">Accept selected and estimate</button>
-    <a href="/board" class="btn ghost">Cancel</a>
+    <a href="{{ board_path }}" class="btn ghost">Cancel</a>
   </div>
 </form>
 {% endif %}

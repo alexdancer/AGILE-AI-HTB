@@ -17,12 +17,14 @@ from agile_ai_htb import db
 from agile_ai_htb.auth import require_portal_auth
 from agile_ai_htb.estimation import EstimatorError, estimate_task
 from agile_ai_htb.llm import LLMClientError, calculate_cost, extract_usage, response_to_dict
+from agile_ai_htb.project_context import project_task_metadata, task_project_board_path
 from agile_ai_htb.task_launch import DEFAULT_PROXY_URL, TaskLaunchBlocked, launch_task, refresh_task_from_session
 from agile_ai_htb.task_breakdown import (
     TaskBreakdownError,
     breakdown_task_source,
     validate_breakdown_result,
 )
+from agile_ai_htb.worker_model_allowlist import allowed_worker_model_ids
 
 router = APIRouter()
 templates = Jinja2Templates(directory=Path(__file__).resolve().parents[1] / "templates")
@@ -67,6 +69,7 @@ class TaskLaunchRequest(BaseModel):
     adapter_id: str | None = None
     model: str | None = None
     proxy_url: str | None = None
+    project_id: str | None = None
     estimate_tokens: PositiveStrictInt | None = None
     budget_override: bool = False
     native_budget_acknowledged: bool = False
@@ -74,6 +77,7 @@ class TaskLaunchRequest(BaseModel):
 
 class TaskReviewActionRequest(BaseModel):
     action: str = Field(pattern="^(save_prompt|agent_review|mark_done|block)$")
+    project_id: str | None = None
     review_prompt: str | None = None
     blocked_reason: str | None = None
 
@@ -82,6 +86,8 @@ class TaskReviewActionRequest(BaseModel):
 def create_task(payload: TaskCreateRequest, request: Request) -> dict[str, Any]:
     database_path = request.app.state.settings.database_path
     status, metadata = _initial_task_status_and_metadata(payload, database_path)
+    if status != "Blocked":
+        metadata = _with_single_project_default(database_path, metadata)
     return db.create_task(
         database_path,
         description=payload.description,
@@ -124,6 +130,7 @@ async def launch_task_endpoint(task_id: str, request: Request):
             adapter_id=payload.adapter_id,
             model=payload.model,
             proxy_url=payload.proxy_url or DEFAULT_PROXY_URL,
+            project_id=payload.project_id,
             estimate_tokens=payload.estimate_tokens,
             budget_override=payload.budget_override,
             native_budget_acknowledged=payload.native_budget_acknowledged,
@@ -133,11 +140,12 @@ async def launch_task_endpoint(task_id: str, request: Request):
         raise HTTPException(status_code=404, detail="task not found") from exc
     except TaskLaunchBlocked as exc:
         if wants_html:
+            redirect_path = _board_redirect_for_task(exc.task, payload.project_id)
             if exc.task.get("metadata", {}).get("launch_retryable"):
-                return RedirectResponse("/board", status_code=303)
+                return RedirectResponse(redirect_path, status_code=303)
             from urllib.parse import quote
             error_msg = "; ".join(exc.reasons) if exc.reasons else "Launch failed."
-            return RedirectResponse(f"/board?error={quote(error_msg)}", status_code=303)
+            return RedirectResponse(f"{redirect_path}?error={quote(error_msg)}", status_code=303)
         return JSONResponse(
             status_code=exc.status_code,
             content={
@@ -147,18 +155,19 @@ async def launch_task_endpoint(task_id: str, request: Request):
             },
         )
     if wants_html:
-        return RedirectResponse("/board", status_code=303)
+        return RedirectResponse(_board_redirect_for_task(result.task, payload.project_id), status_code=303)
     return result.as_response()
 
 
 @router.post("/tasks/{task_id}/refresh", dependencies=[Depends(require_portal_auth)])
-def refresh_task_endpoint(task_id: str, request: Request):
+async def refresh_task_endpoint(task_id: str, request: Request):
     try:
         database_path = request.app.state.settings.database_path
         db.mark_stale_worker_runs_interrupted(database_path)
         task = refresh_task_from_session(database_path, task_id)
         if "text/html" in request.headers.get("accept", ""):
-            return RedirectResponse("/board", status_code=303)
+            form = await request.form()
+            return RedirectResponse(_board_redirect_for_task(task, _form_project_id(form)), status_code=303)
         return task
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="task not found") from exc
@@ -187,11 +196,11 @@ async def review_task_endpoint(task_id: str, request: Request):
         if wants_html:
             from urllib.parse import quote
 
-            return RedirectResponse(f"/board?error={quote(str(exc))}", status_code=303)
+            return RedirectResponse(f"{_board_redirect_for_task(task, payload.project_id)}?error={quote(str(exc))}", status_code=303)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     if wants_html:
-        return RedirectResponse("/board", status_code=303)
+        return RedirectResponse(_board_redirect_for_task(updated, payload.project_id), status_code=303)
     return updated
 
 
@@ -281,6 +290,7 @@ async def _estimate_and_create_task(
         **(extra_metadata or {}),
         **model_metadata,
     }
+    metadata = _with_single_project_default(database_path, metadata)
     task = db.create_task(
         database_path,
         description=description,
@@ -311,25 +321,25 @@ def _constrained_recommended_model(
         adapter = next((item for item in adapters if item.get("is_default")), adapters[0] if adapters else None)
     if not adapter:
         return recommended_model, {"worker_model_constraint": {"state": "no_adapter", "original_model": recommended_model}}
-    models = adapter.get("supported_models") or []
+    models = allowed_worker_model_ids(adapter)
     metadata = {
         "worker_model_constraint": {
-            "state": "constrained_by_discovered_models",
+            "state": "constrained_by_allowed_models",
             "adapter_id": adapter["id"],
             "available_models": models,
             "original_model": recommended_model,
         }
     }
     if not models:
-        metadata["worker_model_constraint"]["state"] = "no_discovered_models"
+        metadata["worker_model_constraint"]["state"] = "no_allowed_models"
         return recommended_model, metadata
     if recommended_model in models:
         metadata["worker_model_constraint"]["selected_model"] = recommended_model
         return recommended_model, metadata
     selected_model = _rank_discovered_worker_model(models, estimate_tokens=estimate_tokens, complexity=complexity)
-    reason = "estimator_model_not_discovered"
+    reason = "estimator_model_not_allowed"
     if selected_model != models[0]:
-        reason = "estimator_model_not_discovered_ranked"
+        reason = "estimator_model_not_allowed_ranked"
     metadata["worker_model_constraint"].update({"selected_model": selected_model, "reason": reason})
     return str(selected_model), metadata
 
@@ -367,19 +377,58 @@ async def estimate_form(
     markdown_file: UploadFile | None = File(None),
 ) -> RedirectResponse:
     """HTML form intake: POST plain text or Markdown → estimate → redirect to board."""
+    return await _estimate_form_for_project(request, description=description, markdown_file=markdown_file)
+
+
+@router.post("/projects/{project_id}/tasks/estimate-form", dependencies=[Depends(require_portal_auth)])
+async def project_estimate_form(
+    project_id: str,
+    request: Request,
+    description: str = Form(""),
+    markdown_file: UploadFile | None = File(None),
+) -> RedirectResponse:
+    return await _estimate_form_for_project(
+        request,
+        description=description,
+        markdown_file=markdown_file,
+        project_id=project_id,
+    )
+
+
+async def _estimate_form_for_project(
+    request: Request,
+    *,
+    description: str,
+    markdown_file: UploadFile | None,
+    project_id: str | None = None,
+) -> RedirectResponse:
+    project_metadata: dict[str, Any] = {}
+    board_path = "/board"
+    if project_id:
+        try:
+            project = db.get_connected_project(request.app.state.settings.database_path, project_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="connected project not found") from exc
+        project_metadata = project_task_metadata(project)
+        board_path = f"/projects/{project_id}/board"
     try:
         normalized_description, intake_metadata = await _description_from_intake_form(description, markdown_file)
     except ValueError as exc:
         from urllib.parse import quote
 
-        return RedirectResponse(f"/board?error={quote(str(exc))}", status_code=303)
+        return RedirectResponse(f"{board_path}?error={quote(str(exc))}", status_code=303)
+
+    intake_metadata = _with_single_project_default(
+        request.app.state.settings.database_path,
+        {**intake_metadata, **project_metadata},
+    )
 
     if _requires_task_breakdown_review(normalized_description, intake_metadata):
         breakdown = await _create_task_breakdown_review(request, normalized_description, intake_metadata)
         return RedirectResponse(f"/task-breakdowns/{breakdown['id']}/review", status_code=303)
 
     await _estimate_and_create_task(request, normalized_description, extra_metadata=intake_metadata)
-    return RedirectResponse("/board", status_code=303)
+    return RedirectResponse(board_path, status_code=303)
 
 
 @router.get("/task-breakdowns/{breakdown_id}/review", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
@@ -391,7 +440,7 @@ def task_breakdown_review(breakdown_id: str, request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "task_breakdown_review.html",
-        {"active_page": "board", "breakdown": breakdown},
+        {"active_page": "board", "breakdown": breakdown, "board_path": _breakdown_board_path(breakdown)},
     )
 
 
@@ -403,7 +452,7 @@ async def accept_task_breakdown(breakdown_id: str, request: Request) -> Redirect
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Task breakdown not found") from exc
     if breakdown["status"] == "accepted":
-        return RedirectResponse("/board", status_code=303)
+        return RedirectResponse(_breakdown_board_path(breakdown), status_code=303)
     if breakdown["status"] == "failed":
         return RedirectResponse(f"/task-breakdowns/{breakdown_id}/review", status_code=303)
 
@@ -457,7 +506,7 @@ async def accept_task_breakdown(breakdown_id: str, request: Request) -> Redirect
             "created_task_ids": created_task_ids,
         },
     )
-    return RedirectResponse("/board", status_code=303)
+    return RedirectResponse(_breakdown_board_path(breakdown), status_code=303)
 
 
 @router.post("/task-breakdowns/{breakdown_id}/retry", dependencies=[Depends(require_portal_auth)])
@@ -468,7 +517,7 @@ async def retry_task_breakdown(breakdown_id: str, request: Request) -> RedirectR
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Task breakdown not found") from exc
     if breakdown["status"] == "accepted":
-        return RedirectResponse("/board", status_code=303)
+        return RedirectResponse(_breakdown_board_path(breakdown), status_code=303)
     updates = await _task_breakdown_agent_updates(
         request,
         breakdown["source_text"],
@@ -493,7 +542,7 @@ async def manual_task_breakdown_candidate(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Task breakdown not found") from exc
     if breakdown["status"] == "accepted":
-        return RedirectResponse("/board", status_code=303)
+        return RedirectResponse(_breakdown_board_path(breakdown), status_code=303)
     candidate = {
         "kind": "implementation",
         "title": (title or "Manual task from source").strip(),
@@ -993,6 +1042,37 @@ def _safe_review_value(value: Any, key_hint: str = "") -> Any:
 def _estimation_session_key_hash(description: str) -> str:
     stable_key = f"estimation:v1:{description}"
     return hashlib.sha256(stable_key.encode("utf-8")).hexdigest()
+
+
+def _form_project_id(form: Any) -> str | None:
+    value = form.get("project_id") if hasattr(form, "get") else None
+    return str(value) if value else None
+
+
+def _project_board_path(project_id: str | None) -> str:
+    if project_id:
+        return f"/projects/{project_id}/board"
+    return "/board"
+
+
+def _board_redirect_for_task(task: dict[str, Any], project_id: str | None = None) -> str:
+    task_board_path = task_project_board_path(task)
+    if task_board_path != "/board":
+        return task_board_path
+    return _project_board_path(project_id)
+
+
+def _with_single_project_default(database_path: Path | str, metadata: dict[str, Any]) -> dict[str, Any]:
+    if metadata.get("connected_project_id"):
+        return metadata
+    projects = db.list_connected_projects(database_path)
+    if len(projects) != 1:
+        return metadata
+    return {**project_task_metadata(projects[0]), **metadata}
+
+
+def _breakdown_board_path(breakdown: dict[str, Any]) -> str:
+    return task_project_board_path(breakdown.get("intake_metadata", {}))
 
 
 async def _launch_payload_from_request(request: Request) -> tuple[TaskLaunchRequest, bool]:

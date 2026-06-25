@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from agile_ai_htb import db
+from agile_ai_htb.project_context import project_task_metadata
 from agile_ai_htb.task_launch import TaskLaunchBlocked, abort_worker_session, launch_task
 
 
@@ -21,7 +22,7 @@ def _connect_project(db_path: Path, root: Path) -> dict:
 
 def _verified_budget_task(db_path: Path, tmp_path: Path, *, estimate: int = 50, budget: dict | None = None):
     db.init_db(db_path)
-    _connect_project(db_path, tmp_path)
+    project = _connect_project(db_path, tmp_path)
     db.update_worker_adapter(
         db_path,
         "opencode",
@@ -37,7 +38,10 @@ def _verified_budget_task(db_path: Path, tmp_path: Path, *, estimate: int = 50, 
         status="Estimated",
         estimate_tokens=estimate,
         recommended_model="opencode/gpt-5.1",
-        metadata={"budget": budget or {"daily_used_tokens": 0, "daily_cap_tokens": 100, "session_cap_tokens": 100}},
+        metadata={
+            **project_task_metadata(project),
+            "budget": budget or {"daily_used_tokens": 0, "daily_cap_tokens": 100, "session_cap_tokens": 100},
+        },
     )
 
 
@@ -95,7 +99,9 @@ def test_launch_blocks_when_no_project_is_connected(tmp_path):
         raise AssertionError("launch succeeded without a connected project")
 
     assert blocked["status"] == "Estimated"
-    assert blocked["metadata"]["launch_guardrail_reasons"] == ["Connect a project before launching a Worker task."]
+    assert blocked["metadata"]["launch_guardrail_reasons"] == [
+        "Task is not bound to a connected project. Recreate it from a project board before launch."
+    ]
 
 
 def test_read_only_launch_blocks_metadata_project_when_no_project_is_connected(tmp_path):
@@ -126,7 +132,9 @@ def test_read_only_launch_blocks_metadata_project_when_no_project_is_connected(t
         raise AssertionError("launch succeeded without a connected project")
 
     assert blocked["status"] == "Estimated"
-    assert blocked["metadata"]["launch_guardrail_reasons"] == ["Connect a project before launching a Worker task."]
+    assert blocked["metadata"]["launch_guardrail_reasons"] == [
+        "Task is not bound to a connected project. Recreate it from a project board before launch."
+    ]
 
 
 def test_estimate_within_budget_launches(tmp_path):
@@ -139,10 +147,109 @@ def test_estimate_within_budget_launches(tmp_path):
     assert result.task["metadata"]["budget_check"]["passed"] is True
 
 
+def test_launch_rejects_task_from_different_project_board(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    first_root.mkdir()
+    second_root.mkdir()
+    first = _connect_project(db_path, first_root)
+    second = _connect_project(db_path, second_root)
+    db.update_worker_adapter(
+        db_path,
+        "opencode",
+        workdir=str(first_root),
+        config={"launch_template": ["python", "-c", "print('worker')"]},
+        supported_models=["opencode/gpt-5.1"],
+        is_default=True,
+    )
+    db.mark_worker_adapter_verification(db_path, "opencode", verified=True, evidence={"ok": True})
+    task = db.create_task(
+        db_path,
+        description="Project-bound launch",
+        status="Estimated",
+        estimate_tokens=50,
+        recommended_model="opencode/gpt-5.1",
+        metadata={**project_task_metadata(first), "budget": {"daily_used_tokens": 0, "daily_cap_tokens": 100}},
+    )
+
+    try:
+        launch_task(
+            db_path,
+            task["id"],
+            adapter_id="opencode",
+            model=None,
+            proxy_url=None,
+            project_id=second["id"],
+            runner=lambda plan: None,
+        )
+    except TaskLaunchBlocked as exc:
+        blocked = exc.task
+    else:
+        raise AssertionError("launch succeeded from the wrong project board")
+
+    assert blocked["metadata"]["launch_guardrail_reasons"] == [
+        "Task is not bound to the selected project board."
+    ]
+    assert db.list_worker_runs(db_path, task_id=task["id"]) == []
+
+
+def test_launch_injects_repo_context_brief_and_records_timeline_events(tmp_path):
+    db_path = tmp_path / "harness.db"
+    (tmp_path / "AGENTS.md").write_text(
+        "Use pytest and keep changes small. password=plainpass Authorization: Bearer auth-token-123 sk_live_example",
+        encoding="utf-8",
+    )
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    task = _verified_budget_task(db_path, tmp_path, estimate=50, budget={"daily_used_tokens": 0, "daily_cap_tokens": 100})
+
+    db.update_worker_adapter(
+        db_path,
+        "opencode",
+        config={"launch_template": ["opencode", "run", "--model", "{model}", "--format", "json", "{prompt}"]},
+    )
+    calls = []
+
+    def runner(plan):
+        calls.append(plan)
+        db.record_token_turn(
+            db_path,
+            session_id=plan.metadata["session_id"],
+            usage_kind="task_execution",
+            model="opencode/gpt-5.1",
+            prompt_tokens=10,
+            completion_tokens=0,
+            cost=0,
+            raw_usage={"total_tokens": 10},
+        )
+        return {"returncode": 0, "stdout": "done", "stderr": ""}
+
+    result = launch_task(db_path, task["id"], adapter_id="opencode", model=None, proxy_url=None, runner=runner)
+    completed_run = _wait_for_worker_run(db_path, task["id"], "completed")
+    events = db.list_worker_run_events(db_path, worker_run_id=completed_run["id"])
+
+    assert calls[0].command[-1].startswith("Repo Context Brief")
+    assert "Task instructions:\nBudgeted launch" in calls[0].command[-1]
+    assert "AGENTS.md" in calls[0].command[-1]
+    assert "pytest" in calls[0].command[-1]
+    assert "plainpass" not in calls[0].command[-1]
+    assert "auth-token-123" not in calls[0].command[-1]
+    assert "plainpass" not in completed_run["metadata"]["repo_context_brief"]["text"]
+    assert "auth-token-123" not in completed_run["metadata"]["repo_context_brief"]["text"]
+    assert [event["kind"] for event in events][:4] == ["launch", "guardrail", "context", "command"]
+    assert any(event["kind"] == "token" and event["detail"]["total_tokens"] == 10 for event in events)
+    assert any(event["kind"] == "file" and event["title"] == "Workdir evidence captured" for event in events)
+
+    assert events[-1]["title"] == "Worker Run completed"
+    assert result.worker_run is not None
+    assert result.worker_run["metadata"]["repo_context_brief"]["manifests"] == ["pyproject.toml"]
+
+
 def test_default_adapter_selection_skips_observed_only_adapter(tmp_path):
     db_path = tmp_path / "harness.db"
     db.init_db(db_path)
-    _connect_project(db_path, tmp_path)
+    project = _connect_project(db_path, tmp_path)
     db.update_worker_adapter(
         db_path,
         "opencode",
@@ -171,7 +278,7 @@ def test_default_adapter_selection_skips_observed_only_adapter(tmp_path):
         status="Estimated",
         estimate_tokens=50,
         recommended_model="gpt-5.1-codex",
-        metadata={"budget": {"daily_used_tokens": 0, "daily_cap_tokens": 100}},
+        metadata={**project_task_metadata(project), "budget": {"daily_used_tokens": 0, "daily_cap_tokens": 100}},
     )
 
     result = launch_task(db_path, task["id"], adapter_id=None, model=None, proxy_url=None, runner=_runner_recording(db_path))
@@ -233,7 +340,11 @@ def test_direct_launch_recovers_stale_worker_run_before_duplicate_check(tmp_path
     db.update_task(
         db_path,
         task["id"],
-        {"status": "Running", "session_id": stale_session["id"], "metadata": {"active_worker_run_id": stale_run["id"]}},
+        {
+            "status": "Running",
+            "session_id": stale_session["id"],
+            "metadata": {**task.get("metadata", {}), "active_worker_run_id": stale_run["id"]},
+        },
     )
 
     result = launch_task(db_path, task["id"], adapter_id="opencode", model=None, proxy_url=None, runner=_runner_recording(db_path))
@@ -309,6 +420,11 @@ def test_worker_adapter_launch_failure_preserves_launchable_status_and_records_r
     }
     assert metadata["launch_retryable"] is True
     assert "launch_blocked_reason" not in metadata
+    assert result.worker_run is not None
+    events = db.list_worker_run_events(db_path, worker_run_id=result.worker_run["id"])
+    assert events[-1]["title"] == "Worker Run failed"
+    assert events[-1]["detail"]["error_type"] == "worker_adapter_failure"
+    assert events[-1]["level"] == "error"
 
     relaunched = launch_task(
         db_path,
@@ -346,7 +462,7 @@ def test_opencode_bare_launch_template_is_normalized_to_noninteractive_run_comma
     failed = db.get_task(db_path, task["id"])
 
     assert calls[0].cwd == project_root.resolve()
-    assert calls[0].command == [
+    assert calls[0].command[:-1] == [
         "opencode",
         "run",
         "--dir",
@@ -355,8 +471,9 @@ def test_opencode_bare_launch_template_is_normalized_to_noninteractive_run_comma
         "opencode/gpt-5.1",
         "--format",
         "json",
-        "Budgeted launch",
     ]
+    assert calls[0].command[-1].startswith("Repo Context Brief")
+    assert "Task instructions:\nBudgeted launch" in calls[0].command[-1]
     assert failed["status"] == "Estimated"
     assert failed["metadata"]["last_launch_failure"]["returncode"] == 1
     assert failed["metadata"]["launch_command_plan"]["command"] == calls[0].command
@@ -435,7 +552,7 @@ def test_native_usage_launch_passes_selected_model_and_records_usage_metadata(tm
     with db.connect(db_path) as conn:
         token_turn = conn.execute("select * from token_turns where session_id = ?", (session["id"],)).fetchone()
 
-    assert calls[0].command == [
+    assert calls[0].command[:-1] == [
         "opencode",
         "run",
         "--dir",
@@ -444,8 +561,9 @@ def test_native_usage_launch_passes_selected_model_and_records_usage_metadata(tm
         "opencode/gpt-5.1",
         "--format",
         "json",
-        "Budgeted launch",
     ]
+    assert calls[0].command[-1].startswith("Repo Context Brief")
+    assert "Task instructions:\nBudgeted launch" in calls[0].command[-1]
     assert token_turn is not None
     assert calls[0].env == {}
     assert result.task["metadata"]["tracking_mode"] == "native_usage"

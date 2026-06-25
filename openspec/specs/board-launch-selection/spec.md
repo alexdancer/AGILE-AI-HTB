@@ -19,19 +19,20 @@ The board task card for Estimated tasks SHALL include a dropdown selector listin
 - **THEN** the first adapter in the list is pre-selected
 
 ### Requirement: Model selector filters by selected adapter
-The board launch form SHALL include a model selector populated from the selected adapter's `supported_models`. Changing the adapter selection SHALL update the model dropdown to show only that adapter's models.
+The board launch form SHALL include a model selector populated from the selected adapter's allowed Worker models. Changing the adapter selection SHALL update the model dropdown to show only that adapter's allowed models.
 
-#### Scenario: Adapter has discovered models
-- **WHEN** operator selects an adapter with `supported_models: ["opencode/gpt-5.1", "gpt-5.1-codex"]`
+#### Scenario: Adapter has allowed models
+- **WHEN** operator selects an adapter with allowed models `["opencode/gpt-5.1", "gpt-5.1-codex"]`
 - **THEN** the model dropdown shows those two models
 
-#### Scenario: Adapter has no discovered models
-- **WHEN** operator selects an adapter with empty `supported_models`
-- **THEN** the model dropdown shows a single option: the task's `recommended_model` with a "(no discovered models)" note
+#### Scenario: Adapter has discovered models but no allowed models
+- **WHEN** operator selects an adapter with discovered models but an empty allowed model set
+- **THEN** the model dropdown does not offer an unapproved fallback model
+- **AND** launch guardrails keep the task from launching until at least one model is allowed
 
 #### Scenario: Switching adapter updates model list
 - **WHEN** operator changes adapter selection from OpenCode to Claude Code
-- **THEN** the model dropdown updates to show Claude Code's supported models
+- **THEN** the model dropdown updates to show Claude Code's allowed models
 
 ### Requirement: Launch button always visible for launchable tasks
 The "Launch task" button SHALL render for all tasks in the Estimated column regardless of adapter verification state. The `has_verified_worker_adapter` gate SHALL be removed from the board template. Ready SHALL NOT be a canonical launch column.
@@ -136,27 +137,34 @@ The board SHALL show tracking-mode-specific launch copy for the selected Worker 
 - **THEN** the board keeps Launch guardrail-blocked
 - **AND** the board links the operator to Worker Setup diagnostics instead of launching the Task
 
-### Requirement: Board launch requires active project root
-The system SHALL require a connected project root before launching a normal Worker task from the board.
+### Requirement: Board launch requires task-bound project root
+The system SHALL require a connected project root before launching a normal Worker task from the board, and project-scoped board launches SHALL require the task's project binding to match the selected project board context.
 
-#### Scenario: Launch uses connected project root
-- **WHEN** an authenticated operator launches an Estimated task from the board
-- **AND** at least one connected project exists
-- **THEN** the system SHALL pass the active connected project's root path as the Worker launch workdir
-- **AND** the Worker Run evidence SHALL record the selected project root used for the launch
+#### Scenario: Launch uses selected project task root
+- **WHEN** an authenticated operator launches an Estimated task from `/projects/{project_id}/board`
+- **AND** the task metadata is bound to `{project_id}`
+- **AND** the bound project root matches a connected project record
+- **THEN** the system SHALL pass that task-bound project root path as the Worker launch workdir
+- **AND** the Worker Run evidence SHALL record the selected project id and project root used for the launch
 
 #### Scenario: Launch fails without connected project
-- **WHEN** an authenticated operator launches an Estimated task from the board
+- **WHEN** an authenticated operator launches an Estimated task from a board entry point
 - **AND** no connected project exists
 - **THEN** the system SHALL reject the launch before starting any Worker Adapter process
-- **AND** the board SHALL show a setup error linking the operator to `/projects`
+- **AND** `/board` SHALL redirect the operator to `/projects` to connect a project
+
+#### Scenario: Launch rejects task not bound to selected project
+- **WHEN** an authenticated operator launches an Estimated task from `/projects/{project_id}/board`
+- **AND** the task metadata is missing a project binding or is bound to a different connected project id
+- **THEN** the system SHALL reject the launch before starting any Worker Adapter process
+- **AND** the task SHALL remain eligible for correction or recreation rather than launching against another repository
 
 ### Requirement: Board launch binds OpenCode project directory explicitly
-The system SHALL bind OpenCode Worker launches to the active project root using OpenCode's explicit project-directory option rather than relying only on subprocess cwd.
+The system SHALL bind OpenCode Worker launches to the task-bound connected project root using OpenCode's explicit project-directory option rather than relying only on subprocess cwd.
 
 #### Scenario: OpenCode launch command includes project directory
 - **WHEN** the selected Worker Adapter is OpenCode
-- **AND** the active project root is `/repo/example`
+- **AND** the task-bound connected project root is `/repo/example`
 - **THEN** the launch command plan SHALL include `opencode run --dir /repo/example`
 - **AND** the command plan SHALL NOT rely on cwd alone as evidence of the project boundary
 

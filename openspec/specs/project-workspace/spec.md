@@ -1,7 +1,7 @@
 # project-workspace Specification
 
 ## Purpose
-TBD - created by archiving change project-workspace-entry. Update Purpose after archive.
+Define the project workspace entry points that let authenticated operators connect local repositories, open project overviews, and navigate into project-scoped workflows while preserving access to global harness pages.
 ## Requirements
 ### Requirement: Portal lists project workspaces
 The system SHALL provide a project workspace list page that shows connected local repositories and offers an open/connect repo form.
@@ -42,11 +42,12 @@ The system SHALL route authenticated operators into a project workspace by defau
 - **THEN** the system SHALL redirect to `/projects`
 
 ### Requirement: Project overview links to existing workflows
-The project overview SHALL link to existing portal workflows instead of duplicating board, session, Worker adapter, or project settings controls.
+The project overview SHALL link to portal workflows in the context of the selected project when that workflow is project-scoped. Global settings and governance workflows SHALL remain reachable without duplicating their controls on the overview.
 
 #### Scenario: Existing workflow links are available
 - **WHEN** an authenticated operator opens a project overview
-- **THEN** the overview SHALL link to the existing task board, sessions list, Worker adapter settings, and project settings pages
+- **THEN** the overview SHALL link to the selected project's task board at `/projects/{project_id}/board`
+- **AND** the overview SHALL link to the existing sessions list, Worker adapter settings, and project settings pages
 
 ### Requirement: Global harness pages remain available
 The system SHALL keep existing global harness pages reachable after adding project workspace entry.

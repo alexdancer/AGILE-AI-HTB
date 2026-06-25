@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from agile_ai_htb import db
 from agile_ai_htb.app import create_app
+from agile_ai_htb.project_context import project_task_metadata
 from agile_ai_htb.settings import Settings
 from agile_ai_htb.task_launch import refresh_task_from_session
 
@@ -172,7 +173,17 @@ def _client_with_llm(tmp_path, llm):
         estimator_model="openai/gpt-4.1-mini",
     )
     app = create_app(settings)
+    db.init_db(settings.database_path)
     app.state.llm_client = llm
+    project_root = tmp_path / "connected-project"
+    project_root.mkdir(exist_ok=True)
+    db.upsert_connected_project(
+        settings.database_path,
+        name=project_root.name,
+        root_path=str(project_root.resolve()),
+        profile={"name": project_root.name, "root_path": str(project_root.resolve()), "test_command": "pytest"},
+        capability={"state": "launch_ready", "can_launch": True},
+    )
     return TestClient(app)
 
 
@@ -217,6 +228,37 @@ def test_create_task_with_estimate_defaults_to_estimated(tmp_path):
 
     assert created.status_code == 200
     assert created.json()["status"] == "Estimated"
+
+
+def test_project_estimate_form_stamps_connected_project_metadata(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM()
+    database_path = tmp_path / "harness.db"
+    db.init_db(database_path)
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    project = db.upsert_connected_project(
+        database_path,
+        name="Project",
+        root_path=str(project_root.resolve()),
+        profile={"name": "Project", "root_path": str(project_root.resolve()), "test_command": "pytest"},
+        capability={"state": "launch_ready", "can_launch": True},
+    )
+
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            f"/projects/{project['id']}/tasks/estimate-form",
+            data={"description": "Add project-scoped task"},
+            headers={**_auth_headers(), "accept": "text/html"},
+            follow_redirects=False,
+        )
+
+    tasks = db.list_tasks(database_path)
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/projects/{project['id']}/board"
+    assert len(tasks) == 1
+    assert tasks[0]["metadata"]["connected_project_id"] == project["id"]
+    assert tasks[0]["metadata"]["project_root_path"] == project_task_metadata(project)["project_root_path"]
 
 
 def test_create_task_rejects_noncanonical_status_as_blocked(tmp_path):
@@ -264,10 +306,9 @@ def test_update_task_rejects_noncanonical_status_as_blocked(tmp_path):
 
     assert updated.status_code == 200
     assert updated.json()["status"] == "Blocked"
-    assert updated.json()["metadata"] == {
-        "blocked_reason": "Unsupported task status: Backlog",
-        "original_status": "Backlog",
-    }
+    metadata = updated.json()["metadata"]
+    assert metadata["blocked_reason"] == "Unsupported task status: Backlog"
+    assert metadata["original_status"] == "Backlog"
 
 
 def test_direct_create_running_is_blocked_and_points_to_launch(tmp_path):
@@ -402,7 +443,7 @@ def test_estimate_uses_configured_estimator_model_when_distinct_from_control_pla
     assert token_turn["model"] == "openai/gpt-4.1-estimator"
 
 
-def test_estimate_constrains_recommended_model_to_selected_adapter_discovered_models(tmp_path, monkeypatch):
+def test_estimate_constrains_recommended_model_to_selected_adapter_allowed_models(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     llm = FakeEstimatorLLM()
     with _client_with_llm(tmp_path, llm) as client:
@@ -424,12 +465,12 @@ def test_estimate_constrains_recommended_model_to_selected_adapter_discovered_mo
     assert response.status_code == 200
     assert task["recommended_model"] == "opencode/gpt-5.1"
     assert task["metadata"]["worker_model_constraint"] == {
-        "state": "constrained_by_discovered_models",
+        "state": "constrained_by_allowed_models",
         "adapter_id": "opencode",
         "available_models": ["opencode/gpt-5.1", "opencode/other"],
         "original_model": "claude-3-5-sonnet-20240620",
         "selected_model": "opencode/gpt-5.1",
-        "reason": "estimator_model_not_discovered",
+        "reason": "estimator_model_not_allowed",
     }
 
 
@@ -462,7 +503,7 @@ def test_estimate_constrained_model_avoids_heavy_first_discovered_model_for_simp
     assert response.status_code == 200
     assert task["recommended_model"] == "opencode/claude-haiku-4-5"
     assert task["metadata"]["worker_model_constraint"]["selected_model"] == "opencode/claude-haiku-4-5"
-    assert task["metadata"]["worker_model_constraint"]["reason"] == "estimator_model_not_discovered_ranked"
+    assert task["metadata"]["worker_model_constraint"]["reason"] == "estimator_model_not_allowed_ranked"
 
 
 def test_estimate_requires_portal_auth_before_llm_call(tmp_path, monkeypatch):
@@ -548,8 +589,10 @@ def test_estimate_form_accepts_pasted_markdown_task(tmp_path, monkeypatch):
 
     assert "Add parser" in review.text
     assert "constraint, not a task" in review.text
+    assert f'href="/projects/{breakdown["intake_metadata"]["connected_project_id"]}/board"' in review.text
     assert accept.status_code == 303
-    assert accept.headers["location"] == "/board"
+    assert accept.headers["location"].startswith("/projects/")
+    assert accept.headers["location"].endswith("/board")
     assert len(tasks) == 3
     assert len(llm.requests) == 4
     assert tasks[0]["metadata"]["task_breakdown_id"] == breakdown_id
@@ -606,7 +649,8 @@ def test_manual_recovery_cannot_reopen_accepted_breakdown(tmp_path, monkeypatch)
     assert accept.status_code == 303
     assert accepted["status"] == "accepted"
     assert stale_manual.status_code == 303
-    assert stale_manual.headers["location"] == "/board"
+    assert stale_manual.headers["location"].startswith("/projects/")
+    assert stale_manual.headers["location"].endswith("/board")
     assert after_stale_manual["status"] == "accepted"
     assert after_stale_manual["candidates"] == accepted["candidates"]
     assert after_stale_manual["created_task_ids"] == accepted["created_task_ids"]
@@ -1161,7 +1205,7 @@ def test_board_form_launch_uses_default_proxy_for_verified_default_adapter(tmp_p
         refreshed = db.get_task(tmp_path / "harness.db", task["id"])
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/board"
+    assert response.headers["location"] == f"/projects/{task['metadata']['connected_project_id']}/board"
     assert refreshed["status"] == "Review"
     assert len(runner_calls) == 1
     assert runner_calls[0].env["OPENAI_BASE_URL"] == "http://127.0.0.1:8000/v1"
@@ -1206,7 +1250,7 @@ def test_board_form_recoverable_launch_error_stays_on_task_card_with_launch_form
         board = client.get("/board", headers=_auth_headers())
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/board"
+    assert response.headers["location"] == f"/projects/{task['metadata']['connected_project_id']}/board"
     assert refreshed["status"] == "Estimated"
     assert refreshed["metadata"]["launch_retryable"] is True
     assert "Launch error:" in board.text
@@ -1336,6 +1380,63 @@ def test_launch_second_call_after_running_claim_is_rejected_without_second_runne
     assert second.status_code == 200
     assert len(db.list_worker_runs(tmp_path / "harness.db", task_id=task["id"])) == 1
     assert second.json()["launch_guardrails"].get("duplicate_active_run") is True
+
+
+def test_duplicate_launch_rejects_mismatched_project_before_active_run_reuse(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    runner_calls = []
+
+    def fake_runner(plan):
+        runner_calls.append(plan)
+        time.sleep(0.1)
+        return {"returncode": 0, "stdout": "started", "stderr": ""}
+
+    with _client(tmp_path) as client:
+        client.app.state.task_launch_runner = fake_runner
+        task = client.post(
+            "/tasks",
+            json={
+                "description": "Launch only from bound board",
+                "estimate_tokens": 8000,
+                "recommended_model": "gpt-5.1-codex",
+            },
+        ).json()
+        project_a = db.get_connected_project(tmp_path / "harness.db", task["metadata"]["connected_project_id"])
+        project_b_root = tmp_path / "other-project"
+        project_b_root.mkdir()
+        project_b = db.upsert_connected_project(
+            tmp_path / "harness.db",
+            name="Other Project",
+            root_path=str(project_b_root.resolve()),
+            profile={"name": "Other Project", "root_path": str(project_b_root.resolve()), "test_command": "pytest"},
+            capability={"state": "launch_ready", "can_launch": True},
+        )
+        db.update_worker_adapter(
+            tmp_path / "harness.db",
+            "codex",
+            workdir=str(tmp_path),
+            config={"command": "codex"},
+            supported_models=["gpt-5.1-codex"],
+            is_default=True,
+        )
+        db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
+
+        first = client.post(
+            f"/tasks/{task['id']}/launch",
+            headers=_auth_headers(),
+            json={"adapter_id": "codex", "proxy_url": "http://127.0.0.1:8000/v1", "project_id": project_a["id"]},
+        )
+        second = client.post(
+            f"/tasks/{task['id']}/launch",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={"adapter_id": "codex", "proxy_url": "http://127.0.0.1:8000/v1", "project_id": project_b["id"]},
+            follow_redirects=False,
+        )
+
+    assert first.status_code == 200
+    assert second.status_code == 303
+    assert second.headers["location"].startswith(f"/projects/{project_a['id']}/board?error=")
+    assert len(runner_calls) == 1
 
 
 @pytest.mark.parametrize("estimate_tokens", [True, 0, -1])
@@ -1765,6 +1866,7 @@ def test_review_action_agent_review_failure_is_stored_and_task_remains_review(tm
             estimate_tokens=8000,
             recommended_model="gpt-5.1-codex",
             session_id=session["id"],
+            metadata=project_task_metadata(db.list_connected_projects(database_path)[0]),
         )
 
         response = client.post(

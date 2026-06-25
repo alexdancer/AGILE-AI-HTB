@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from agile_ai_htb import db
 from agile_ai_htb.app import create_app
+from agile_ai_htb.project_context import project_task_metadata
 from agile_ai_htb.settings import Settings
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,6 +57,10 @@ def _connect_project(database_path: Path, root: Path) -> dict:
         profile={"name": root.name, "root_path": str(root.resolve()), "test_command": "pytest"},
         capability={"state": "launch_ready", "can_launch": True},
     )
+
+
+def _project_metadata(database_path: Path, root: Path) -> dict:
+    return project_task_metadata(_connect_project(database_path, root))
 
 
 def test_portal_routes_require_operator_bearer_token(tmp_path, monkeypatch):
@@ -147,23 +152,68 @@ def test_portal_login_rejects_wrong_token(tmp_path, monkeypatch):
 
 def test_board_shows_blocked_manual_estimate_state(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    db.init_db(tmp_path / "harness.db")
+    project = _connect_project(tmp_path / "harness.db", tmp_path / "project")
     with _client(tmp_path) as client:
         client.post(
             "/tasks",
             json={
                 "description": "Needs operator sizing",
                 "metadata": {
+                    **project_task_metadata(project),
                     "blocked_reason": "Estimator unavailable: timeout",
                     "requires_manual_estimate": True,
                 },
             },
         )
-        response = client.get("/board", headers=_portal_headers())
+        response = client.get(f"/projects/{project['id']}/board", headers=_portal_headers())
 
     assert response.status_code == 200
     assert "Needs operator sizing" in response.text
     assert "Estimator unavailable: timeout" in response.text
     assert "Manual estimate required" in response.text
+
+
+def test_project_board_filters_tasks_and_global_board_redirects_to_recent_project(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    db.init_db(database_path)
+    first = _connect_project(database_path, tmp_path / "first")
+    second = _connect_project(database_path, tmp_path / "second")
+    db.create_task(
+        database_path,
+        description="First project task",
+        status="Blocked",
+        metadata={**project_task_metadata(first), "blocked_reason": "manual"},
+    )
+    db.create_task(
+        database_path,
+        description="Second project task",
+        status="Blocked",
+        metadata={**project_task_metadata(second), "blocked_reason": "manual"},
+    )
+    db.create_task(database_path, description="Legacy global task", status="Blocked")
+
+    with _client(tmp_path) as client:
+        first_board = client.get(f"/projects/{first['id']}/board", headers=_portal_headers())
+        global_board = client.get("/board", headers=_portal_headers(), follow_redirects=False)
+
+    assert first_board.status_code == 200
+    assert "First project task" in first_board.text
+    assert "Second project task" not in first_board.text
+    assert "Legacy global task" not in first_board.text
+    assert global_board.status_code == 303
+    assert global_board.headers["location"] == f"/projects/{second['id']}/board"
+
+
+def test_global_board_redirects_to_projects_when_none_connected(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+
+    with _client(tmp_path) as client:
+        response = client.get("/board", headers=_portal_headers(), follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/projects"
 
 
 def test_dashboard_renders_budget_alarm_and_navigation_sections(tmp_path, monkeypatch):
@@ -366,6 +416,7 @@ def test_board_renders_columns_and_task_cards(tmp_path, monkeypatch):
                 "estimate_tokens": 25000,
                 "recommended_model": "claude-sonnet",
                 "actual_tokens": 12000,
+                "metadata": _project_metadata(tmp_path / "harness.db", tmp_path / "connected-project"),
             },
         ).json()
         response = client.get("/board", headers=_portal_headers())
@@ -452,6 +503,53 @@ def test_worker_model_discovery_route_uses_native_harness_and_updates_portal(tmp
     assert "anthropic/claude-sonnet-4" in page.text
     assert "CLI Worker" in page.text
     assert "native_usage, observed_only" in page.text
+
+
+def test_worker_allowed_models_route_saves_only_discovered_models(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        db.update_worker_adapter(
+            database_path,
+            "opencode",
+            config={"model_discovery": {"models": ["openai/gpt-5.1", "opencode/big-pickle"]}},
+            supported_models=["openai/gpt-5.1"],
+        )
+        response = client.post(
+            "/settings/workers/opencode/allowed-models",
+            headers=_portal_headers(),
+            data={"allowed_models": "opencode/big-pickle"},
+            follow_redirects=False,
+        )
+        rejected = client.post(
+            "/settings/workers/opencode/allowed-models",
+            headers=_portal_headers(),
+            data={"allowed_models": "undiscovered/model"},
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
+    assert db.get_worker_adapter(database_path, "opencode")["supported_models"] == ["opencode/big-pickle"]
+    assert rejected.status_code == 422
+
+
+def test_workers_page_shows_allowed_model_checkboxes_after_discovery(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        db.update_worker_adapter(
+            database_path,
+            "opencode",
+            config={"model_discovery": {"models": ["openai/gpt-5.1", "opencode/big-pickle"]}},
+            supported_models=["openai/gpt-5.1"],
+            is_default=True,
+        )
+        response = client.get("/settings/workers", headers=_portal_headers())
+
+    assert response.status_code == 200
+    assert "/settings/workers/opencode/allowed-models" in response.text
+    assert 'name="allowed_models" value="openai/gpt-5.1" checked' in response.text
+    assert 'name="allowed_models" value="opencode/big-pickle"' in response.text
 
 
 def test_worker_verify_template_error_is_not_reported_as_missing_adapter(tmp_path, monkeypatch):
@@ -543,6 +641,7 @@ def test_board_uses_verified_worker_adapter_status(tmp_path, monkeypatch):
                 "status": "Estimated",
                 "estimate_tokens": 25000,
                 "recommended_model": "gpt-5.1-codex",
+                "metadata": _project_metadata(tmp_path / "harness.db", tmp_path / "connected-project"),
             },
         )
         db.update_worker_adapter(
@@ -564,7 +663,14 @@ def test_board_uses_verified_worker_adapter_status(tmp_path, monkeypatch):
 def test_board_renders_unexpected_statuses_as_blocked(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     with _client(tmp_path) as client:
-        client.post("/tasks", json={"description": "Odd status task", "status": "Legacy Backlog"})
+        client.post(
+            "/tasks",
+            json={
+                "description": "Odd status task",
+                "status": "Legacy Backlog",
+                "metadata": _project_metadata(tmp_path / "harness.db", tmp_path / "connected-project"),
+            },
+        )
         response = client.get("/board", headers=_portal_headers())
 
     assert response.status_code == 200
@@ -677,6 +783,44 @@ def test_session_report_renders_totals_alarm_checkpoint_without_internal_artifac
             session_id=session_id,
             checkpoint={"name": "budget_health", "passed": False, "details": {"reason": "over budget"}},
         )
+        task = db.create_task(
+            tmp_path / "harness.db",
+            description="Audit session",
+            status="Running",
+            session_id=session_id,
+        )
+        worker_run = db.create_worker_run(
+            tmp_path / "harness.db",
+            task_id=task["id"],
+            session_id=session_id,
+            adapter_id="opencode",
+            model="claude-haiku",
+            tracking_mode="proxy_governed",
+            command_plan={"command": ["opencode"], "env": {}, "metadata": {}},
+            metadata={
+                "repo_context_brief": {
+                    "documents": [{"path": "AGENTS.md", "excerpt": "Use pytest."}],
+                    "manifests": ["pyproject.toml"],
+                    "text": "Project root: /tmp/demo\n\nRepo instructions/docs:\n- AGENTS.md:\nUse pytest.",
+                }
+            },
+        )
+        db.record_worker_run_event(
+            tmp_path / "harness.db",
+            worker_run_id=worker_run["id"],
+            session_id=session_id,
+            task_id=task["id"],
+            kind="guardrail",
+            title="Worker Run failed",
+            level="error",
+            detail={
+                "api_key": "***",
+                "documents": ["AGENTS.md"],
+                "error_type": "workdir_mismatch",
+                "returncode": 124,
+                "retryable": True,
+            },
+        )
 
         response = client.get(f"/sessions/{session_id}", headers=_portal_headers())
 
@@ -691,6 +835,16 @@ def test_session_report_renders_totals_alarm_checkpoint_without_internal_artifac
     assert f"/session/{session_id}/artifact" not in html
     assert "session_key_hash" not in html
     assert "guardrail_overrides" not in html
+    assert "Worker Run timeline" in html
+    assert "Worker Run failed" in html
+    assert "error_type=workdir_mismatch" in html
+    assert "returncode=124" in html
+    assert "retryable=True" in html
+    assert "control_plane" in html
+    assert "Repo Context Brief" in html
+    assert "AGENTS.md" in html
+    assert "pyproject.toml" in html
+    assert "sk_secret_123" not in html
 
 
 def test_session_report_missing_session_returns_404(tmp_path, monkeypatch):
@@ -759,12 +913,39 @@ def test_board_shows_adapter_and_model_selectors(tmp_path, monkeypatch):
             status="Estimated",
             estimate_tokens=1000,
             recommended_model="gpt-5.1-codex",
+            metadata=_project_metadata(database_path, tmp_path / "connected-project"),
         )
         response = client.get("/board", headers=_portal_headers())
     assert response.status_code == 200
     html = response.text
     assert "adapter_id" in html
     assert 'name="model"' in html
+
+
+def test_board_does_not_offer_recommended_model_when_adapter_has_no_allowed_models(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        db.create_task(
+            database_path,
+            description="No allowed model task",
+            status="Estimated",
+            estimate_tokens=1000,
+            recommended_model="gpt-5.1-codex",
+            metadata=_project_metadata(database_path, tmp_path / "connected-project"),
+        )
+        db.update_worker_adapter(
+            database_path,
+            "codex",
+            config={"model_discovery": {"models": ["gpt-5.1-codex"]}},
+            supported_models=[],
+            is_default=True,
+        )
+        response = client.get("/board", headers=_portal_headers())
+
+    assert response.status_code == 200
+    assert '<option value="">(no allowed models)</option>' in response.text
+    assert "gpt-5.1-codex (no discovered models)" not in response.text
 
 
 def test_board_launch_button_visible_without_verified_adapter(tmp_path, monkeypatch):
@@ -777,6 +958,7 @@ def test_board_launch_button_visible_without_verified_adapter(tmp_path, monkeypa
             status="Estimated",
             estimate_tokens=500,
             recommended_model="claude-sonnet",
+            metadata=_project_metadata(database_path, tmp_path / "connected-project"),
         )
         response = client.get("/board", headers=_portal_headers())
     assert response.status_code == 200
@@ -803,6 +985,7 @@ def test_board_review_card_shows_disposition_actions_prompt_and_agent_review(tmp
             recommended_model="gpt-5.1-codex",
             session_id=session["id"],
             metadata={
+                **_project_metadata(database_path, tmp_path / "connected-project"),
                 "review_prompt": "DEMO focus note 2099",
                 "launch_stdout": "DEMO worker stdout 2099",
                 "agent_review": {
@@ -823,7 +1006,7 @@ def test_board_review_card_shows_disposition_actions_prompt_and_agent_review(tmp
 
     assert response.status_code == 200
     assert validation.status_code == 303
-    assert validation.headers["location"].startswith("/board?error=")
+    assert validation.headers["location"].startswith(f"/projects/{task['metadata']['connected_project_id']}/board?error=")
     html = response.text
     assert f'action="/tasks/{task["id"]}/review"' in html
     assert "Agent Review" in html
@@ -846,6 +1029,7 @@ def test_board_review_card_hides_actions_without_completed_evidence(tmp_path, mo
             status="Review",
             estimate_tokens=8000,
             recommended_model="gpt-5.1-codex",
+            metadata=_project_metadata(database_path, tmp_path / "connected-project"),
         )
         response = client.get("/board", headers=_portal_headers())
 
@@ -866,6 +1050,7 @@ def test_launch_unverified_adapter_shows_error_banner(tmp_path, monkeypatch):
             status="Estimated",
             estimate_tokens=500,
             recommended_model="gpt-5.1-codex",
+            metadata=_project_metadata(database_path, tmp_path / "connected-project"),
         )
         response = client.post(
             f"/tasks/{task['id']}/launch",
@@ -876,8 +1061,11 @@ def test_launch_unverified_adapter_shows_error_banner(tmp_path, monkeypatch):
     assert response.status_code == 303
     location = response.headers["location"]
     assert "error=" in location
-    assert response.headers["location"].startswith("/board?error=")
-    board = client.get("/board?error=Worker%20adapter%20is%20not%20configured.", headers=_portal_headers())
+    assert response.headers["location"].startswith(f"/projects/{task['metadata']['connected_project_id']}/board?error=")
+    board = client.get(
+        f"/projects/{task['metadata']['connected_project_id']}/board?error=Worker%20adapter%20is%20not%20configured.",
+        headers=_portal_headers(),
+    )
     assert "Open Worker Setup" in board.text
     assert "/settings/workers" in board.text
 
@@ -956,12 +1144,14 @@ def test_saved_budget_gates_launch_and_is_carried_to_session(tmp_path, monkeypat
             is_default=True,
         )
         db.mark_worker_adapter_verification(database_path, "codex", verified=True, evidence={"ok": True})
+        project_metadata = _project_metadata(database_path, tmp_path / "connected-project")
         blocked = db.create_task(
             database_path,
             description="Too large for saved budget",
             status="Estimated",
             estimate_tokens=1200,
             recommended_model="gpt-5.1-codex",
+            metadata=project_metadata,
         )
         ok = db.create_task(
             database_path,
@@ -969,6 +1159,7 @@ def test_saved_budget_gates_launch_and_is_carried_to_session(tmp_path, monkeypat
             status="Estimated",
             estimate_tokens=500,
             recommended_model="gpt-5.1-codex",
+            metadata=project_metadata,
         )
         blocked_response = client.post(
             f"/tasks/{blocked['id']}/launch",

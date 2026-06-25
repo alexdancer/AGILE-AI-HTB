@@ -13,6 +13,7 @@ from typing import Any, Callable, Protocol
 
 from agile_ai_htb import db
 from agile_ai_htb.tracking_modes import NATIVE_USAGE, OBSERVED_ONLY, PROXY_GOVERNED
+from agile_ai_htb.worker_model_allowlist import allowed_worker_model_ids
 
 SENTINEL_RESPONSE = "AGILE_AI_HTB_ADAPTER_OK"
 SENTINEL_PROMPT = (
@@ -465,8 +466,13 @@ def discover_worker_models(
     }
     if models:
         config = {**(adapter.get("config") or {}), "model_discovery": evidence}
-        db.update_worker_adapter(database_path, adapter_id, config=config, supported_models=models)
+        db.update_worker_adapter(database_path, adapter_id, config=config)
     return ModelDiscoveryResult(not reasons, adapter_id, models, reasons, evidence)
+
+
+def discovered_worker_model_ids(adapter: dict[str, Any]) -> list[str]:
+    discovery = (adapter.get("config") or {}).get("model_discovery") or {}
+    return [str(model) for model in discovery.get("models") or []]
 
 
 def _adapter_command_name(adapter: dict[str, Any]) -> str | None:

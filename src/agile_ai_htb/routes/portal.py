@@ -24,9 +24,16 @@ from agile_ai_htb.auth import (
 from agile_ai_htb.execution_backend import LocalExecutionBackend
 from agile_ai_htb.guardrails import get_budget_zone
 from agile_ai_htb.llm import extract_usage, response_to_dict
+from agile_ai_htb.project_context import project_bound_tasks
 from agile_ai_htb.task_launch import DEFAULT_PROXY_URL, TaskLaunchBlocked, launch_task
 from agile_ai_htb.tracking_modes import NATIVE_USAGE, OBSERVED_ONLY, PROXY_GOVERNED, tracking_mode_view
-from agile_ai_htb.worker_adapters import detect_worker_adapter, discover_worker_models, verify_worker_adapter
+from agile_ai_htb.worker_model_allowlist import allowed_worker_model_ids
+from agile_ai_htb.worker_adapters import (
+    detect_worker_adapter,
+    discover_worker_models,
+    discovered_worker_model_ids,
+    verify_worker_adapter,
+)
 
 
 router = APIRouter()
@@ -325,14 +332,38 @@ async def save_budget_settings(request: Request):
 
 @router.get("/board", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def board(request: Request):
+    projects = db.list_connected_projects(request.app.state.settings.database_path)
+    if projects:
+        return RedirectResponse(f"/projects/{projects[0]['id']}/board", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse("/projects", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/projects/{project_id}/board", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
+def project_board(project_id: str, request: Request):
+    database_path = request.app.state.settings.database_path
+    try:
+        project = db.get_connected_project(database_path, project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="connected project not found") from exc
+    return _render_board(request, active_project=_project_view_model(request, project))
+
+
+def _render_board(request: Request, *, active_project: dict[str, Any] | None = None):
     database_path = request.app.state.settings.database_path
     db.mark_stale_worker_runs_interrupted(database_path)
     tasks = db.list_tasks(database_path)
+    if active_project is not None:
+        tasks = project_bound_tasks(tasks, str(active_project["id"]))
     grouped = {column: [] for column in BOARD_COLUMNS}
     for task in tasks:
         task = dict(task)
         metadata = dict(task.get("metadata", {}))
         metadata["review_actions_available"] = _review_actions_available(database_path, task)
+        if metadata.get("active_worker_run_id"):
+            metadata["worker_run_events"] = db.list_worker_run_events(
+                database_path,
+                worker_run_id=str(metadata["active_worker_run_id"]),
+            )[-6:]
         task["metadata"] = metadata
         status = "Estimated" if task["status"] == "Ready" else task["status"] if task["status"] in grouped else "Blocked"
         if status == "Blocked" and task["status"] not in grouped:
@@ -350,6 +381,7 @@ def board(request: Request):
         "board.html",
         {
             "active_page": "board",
+            "active_project": active_project,
             "columns": BOARD_COLUMNS,
             "tasks_by_status": grouped,
             "has_demo_tasks": has_demo_tasks,
@@ -405,6 +437,26 @@ async def configure_worker_adapter(adapter_id: str, request: Request):
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="worker adapter not found") from exc
     return RedirectResponse("/settings/workers", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/settings/workers/{adapter_id}/allowed-models", dependencies=[Depends(require_portal_auth)])
+async def configure_worker_allowed_models(adapter_id: str, request: Request):
+    database_path = request.app.state.settings.database_path
+    try:
+        adapter = db.get_worker_adapter(database_path, adapter_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="worker adapter not found") from exc
+
+    form = await request.form()
+    allowed_models = [str(model) for model in form.getlist("allowed_models")]
+    discovered_models = discovered_worker_model_ids(adapter)
+    invalid = [model for model in allowed_models if model not in discovered_models]
+    if invalid:
+        raise HTTPException(status_code=422, detail=f"Allowed models must be discovered first: {', '.join(invalid)}")
+
+    config = {**(adapter.get("config") or {}), "allowed_models_configured": True}
+    db.update_worker_adapter(database_path, adapter_id, config=config, supported_models=allowed_models)
+    return RedirectResponse(f"/settings/workers?adapter_id={adapter_id}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/settings/workers/{adapter_id}/refresh-diagnostics", dependencies=[Depends(require_portal_auth)])
@@ -821,9 +873,11 @@ def _worker_adapter_view_models(database_path: Path | str) -> list[dict[str, Any
         adapters.append(
             {
                 **adapter,
+                "supported_models": allowed_worker_model_ids(adapter),
                 "verification_evidence": _safe_worker_evidence(evidence),
                 "diagnostics": diag,
                 "launchable": readiness.ui_launchable,
+                "discovered_models": discovered_worker_model_ids(adapter),
                 "model_discovery": config.get("model_discovery"),
                 "tracking_modes": available_tracking_modes,
                 "tracking_mode_options": [tracking_mode_view(mode) for mode in available_tracking_modes],

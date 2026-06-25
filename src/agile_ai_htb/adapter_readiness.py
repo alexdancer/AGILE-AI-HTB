@@ -13,6 +13,7 @@ from agile_ai_htb.tracking_modes import (
     tracking_mode_presentation,
     tracking_mode_view,
 )
+from agile_ai_htb.worker_model_allowlist import allowed_worker_model_ids
 
 
 @dataclass(frozen=True)
@@ -68,11 +69,11 @@ def evaluate_adapter_readiness(
     if workdir and not workdir_ready:
         reasons.append("Worker launch project root does not exist.")
 
-    supported_models = adapter.get("supported_models") or []
+    supported_models = allowed_worker_model_ids(adapter)
     models_ready = bool(supported_models)
     selected_model_supported = model is None or bool(supported_models and model in supported_models)
     if not models_ready:
-        reasons.append("No discovered Worker models are available for this adapter.")
+        reasons.append("No allowed Worker models are available for this adapter.")
     elif model is not None and model not in supported_models:
         reasons.append("Selected model is not supported by this adapter.")
 

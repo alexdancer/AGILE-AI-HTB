@@ -4,6 +4,7 @@ import time
 
 from agile_ai_htb import db
 from agile_ai_htb.execution_backend import LocalExecutionBackend, detect_project_profile, validate_local_project_path
+from agile_ai_htb.project_context import project_task_metadata
 from agile_ai_htb.task_launch import TaskLaunchBlocked, launch_task
 
 
@@ -116,6 +117,11 @@ def test_project_capability_is_launch_ready_with_online_backend_and_verified_ada
     db_path = tmp_path / "harness.db"
     db.init_db(db_path)
     root = _project_root(tmp_path)
+    db.update_worker_adapter(
+        db_path,
+        "opencode",
+        supported_models=["opencode/gpt-5.1"],
+    )
     db.mark_worker_adapter_verification(db_path, "opencode", verified=True, evidence={"ok": True})
 
     result = LocalExecutionBackend(db_path).connect_project(root)
@@ -131,6 +137,11 @@ def test_read_only_proof_task_launches_in_connected_repo_and_persists_report(tmp
     db_path = tmp_path / "harness.db"
     db.init_db(db_path)
     root = _project_root(tmp_path)
+    db.update_worker_adapter(
+        db_path,
+        "opencode",
+        supported_models=["opencode/gpt-5.1"],
+    )
     db.mark_worker_adapter_verification(db_path, "opencode", verified=True, evidence={"ok": True})
     backend = LocalExecutionBackend(db_path)
     project = backend.connect_project(root).project
@@ -176,6 +187,11 @@ def test_read_only_proof_blocks_when_no_worker_model_call_observed(tmp_path):
     db_path = tmp_path / "harness.db"
     db.init_db(db_path)
     root = _project_root(tmp_path)
+    db.update_worker_adapter(
+        db_path,
+        "opencode",
+        supported_models=["opencode/gpt-5.1"],
+    )
     db.mark_worker_adapter_verification(db_path, "opencode", verified=True, evidence={"ok": True})
     backend = LocalExecutionBackend(db_path)
     project = backend.connect_project(root).project
@@ -214,6 +230,11 @@ def test_read_only_proof_blocks_when_worker_modifies_files(tmp_path):
         cwd=root,
         check=True,
         capture_output=True,
+    )
+    db.update_worker_adapter(
+        db_path,
+        "opencode",
+        supported_models=["opencode/gpt-5.1"],
     )
     db.mark_worker_adapter_verification(db_path, "opencode", verified=True, evidence={"ok": True})
     backend = LocalExecutionBackend(db_path)
@@ -264,12 +285,14 @@ def _native_usage_stdout(model: str, *, extra_path: str | None = None) -> str:
 
 
 def _estimated_task(db_path: Path) -> dict:
+    project = db.list_connected_projects(db_path)[0]
     return db.create_task(
         db_path,
         description="Implement DEMO_2099 incident ledger task.",
         status="Estimated",
         estimate_tokens=1_000,
         recommended_model="openai/gpt-5.5",
+        metadata=project_task_metadata(project),
     )
 
 

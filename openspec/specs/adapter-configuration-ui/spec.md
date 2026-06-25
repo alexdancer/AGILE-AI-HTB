@@ -2,22 +2,23 @@
 
 ## Purpose
 
-Enable operators to configure Worker Adapter presets through the portal UI — designating default adapters, viewing installation diagnostics for all adapter kinds, refreshing diagnostics on demand, and keeping project root selection in the connected project workspace.
+Enable operators to configure Worker Adapter presets through the portal UI — designating default adapters, viewing installation diagnostics for all adapter kinds, refreshing diagnostics on demand, and keeping project root selection in connected project records that tasks bind to at launch time.
 
 ## Requirements
 
 ### Requirement: Worker Setup does not own project workdir
-The Workers settings page SHALL NOT present adapter workdir as the normal project root selection mechanism. Project root selection SHALL come from connected project workspace state, while Worker Adapter setup SHALL remain focused on CLI/tracking readiness and default adapter selection.
+The Workers settings page SHALL NOT present adapter workdir as the normal project root selection mechanism. Project root selection SHALL come from connected project records and task project binding, while Worker Adapter setup SHALL remain focused on CLI/tracking readiness and default adapter selection.
 
 #### Scenario: Saving adapter settings ignores legacy workdir input
 - **WHEN** operator submits `/settings/workers/{adapter_id}/configure` with a legacy `workdir` form field
 - **THEN** the adapter's workdir is not changed
 - **AND** the adapter default selection is still applied when requested
-- **AND** the Workers page explains that project root is managed by the connected project workspace
+- **AND** the Workers page explains that project root is managed by connected projects rather than adapter configuration
 
-#### Scenario: Connected project supplies launch root
+#### Scenario: Task-bound connected project supplies launch root
 - **WHEN** operator connects a project through the project workspace flow
-- **THEN** the connected project root is persisted as project workspace state
+- **AND** creates or opens a task from that project's board
+- **THEN** the connected project root is persisted on the project record and used through the task's project binding at launch time
 - **AND** Worker Adapter settings do not duplicate that root into adapter configuration
 
 ### Requirement: Operator can set default adapter

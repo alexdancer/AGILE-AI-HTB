@@ -141,7 +141,7 @@ def test_launch_guardrails_require_discovered_worker_model(tmp_path):
     )
 
     assert result.passed is False
-    assert "No discovered Worker models are available for this adapter." in result.reasons
+    assert "No allowed Worker models are available for this adapter." in result.reasons
 
 
 def test_launch_guardrails_require_budget_authoritative_tracking(tmp_path):

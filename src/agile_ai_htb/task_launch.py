@@ -13,6 +13,8 @@ from typing import Any
 from agile_ai_htb import db
 from agile_ai_htb.adapter_readiness import evaluate_adapter_readiness
 from agile_ai_htb.launch_guardrails import evaluate_launch_guardrails
+from agile_ai_htb.project_context import project_task_metadata, resolve_task_project
+from agile_ai_htb.repo_context import build_repo_context_brief, repo_context_prompt
 from agile_ai_htb.tracking_modes import NATIVE_USAGE, PROXY_GOVERNED
 from agile_ai_htb.worker_adapters import (
     Runner,
@@ -67,6 +69,7 @@ def launch_task(
     adapter_id: str | None,
     model: str | None,
     proxy_url: str | None,
+    project_id: str | None = None,
     estimate_tokens: int | None = None,
     budget_override: bool = False,
     native_budget_acknowledged: bool = False,
@@ -79,6 +82,7 @@ def launch_task(
             adapter_id=adapter_id,
             model=model,
             proxy_url=proxy_url,
+            project_id=project_id,
             estimate_tokens=estimate_tokens,
             budget_override=budget_override,
             native_budget_acknowledged=native_budget_acknowledged,
@@ -93,6 +97,7 @@ def _launch_task_unlocked(
     adapter_id: str | None,
     model: str | None,
     proxy_url: str | None,
+    project_id: str | None = None,
     estimate_tokens: int | None = None,
     budget_override: bool = False,
     native_budget_acknowledged: bool = False,
@@ -101,6 +106,12 @@ def _launch_task_unlocked(
     db.mark_stale_worker_runs_interrupted(database_path)
     task = db.get_task(database_path, task_id)
     manual_estimate_requested = estimate_tokens is not None and bool(model)
+
+    if project_id:
+        _, project_reasons = resolve_task_project(database_path, task, expected_project_id=project_id)
+        if project_reasons:
+            blocked = _mark_launch_status_blocked(database_path, task, project_reasons)
+            raise TaskLaunchBlocked(blocked, project_reasons)
 
     active_run = db.get_active_worker_run_for_task(database_path, task_id)
     if active_run is not None:
@@ -160,11 +171,12 @@ def _launch_task_unlocked(
         blocked = _mark_launch_blocked(database_path, task, ["No worker adapter is configured for launch."])
         raise TaskLaunchBlocked(blocked, ["No worker adapter is configured for launch."])
 
-    project_root = _resolve_launch_project_root(database_path, task, read_only=read_only, write_capable=write_capable)
-    if not project_root:
-        reason = "Connect a project before launching a Worker task."
-        blocked = _mark_launch_blocked(database_path, task, [reason])
-        raise TaskLaunchBlocked(blocked, [reason])
+    project, project_reasons = resolve_task_project(database_path, task, expected_project_id=project_id)
+    if not project:
+        blocked = _mark_launch_blocked(database_path, task, project_reasons)
+        raise TaskLaunchBlocked(blocked, project_reasons)
+    project_root = str(project["root_path"])
+    project_metadata = project_task_metadata(project)
 
     guardrails = evaluate_launch_guardrails(
         database_path,
@@ -196,6 +208,8 @@ def _launch_task_unlocked(
         raise TaskLaunchBlocked(blocked, ["Native usage budget override requires acknowledgement that runtime request throttling is not available."])
 
     before_tree = _git_porcelain(project_root) if project_root else None
+    repo_context = build_repo_context_brief(project_root)
+    task_prompt = repo_context_prompt(task["description"], repo_context)
     task_branch = None
     if write_capable:
         cleanliness_reasons = _write_cleanliness_failures(project_root)
@@ -226,13 +240,13 @@ def _launch_task_unlocked(
     if tracking_mode == NATIVE_USAGE:
         plan = builder.build_native_launch_command(
             model=selected_model,
-            task_prompt=task["description"],
+            task_prompt=task_prompt,
             project_root=project_root,
         )
     else:
         plan = builder.build_launch_command(
             model=selected_model,
-            task_prompt=task["description"],
+            task_prompt=task_prompt,
             proxy_url=selected_proxy_url,
             session_api_key=session_api_key,
             project_root=project_root,
@@ -257,11 +271,13 @@ def _launch_task_unlocked(
             "metadata": _clear_recoverable_launch_failure_metadata(
                 {
                     **task.get("metadata", {}),
+                    **project_metadata,
                     "launch_adapter_id": selected_adapter_id,
                     "launch_model": selected_model,
                     "tracking_mode": tracking_mode,
                     "usage_source": usage_source,
                     "launch_command_plan": command_plan,
+                    "repo_context_brief": repo_context,
                     "launch_project_root": project_root,
                     "launch_mode": "write_capable" if write_capable else "read_only" if read_only else "standard",
                     "budget_check": budget_check,
@@ -284,8 +300,43 @@ def _launch_task_unlocked(
             "usage_source": usage_source,
             "launch_mode": "write_capable" if write_capable else "read_only" if read_only else "standard",
             "launch_project_root": project_root,
+            "connected_project_id": project["id"],
+            "project_profile": project.get("profile") or {},
+            "repo_context_brief": repo_context,
             **({"task_branch": task_branch} if task_branch else {}),
         },
+    )
+    _record_worker_event(
+        database_path,
+        worker_run,
+        kind="launch",
+        title="Launch requested",
+        detail={"adapter_id": selected_adapter_id, "model": selected_model, "tracking_mode": tracking_mode},
+    )
+    _record_worker_event(
+        database_path,
+        worker_run,
+        kind="guardrail",
+        title="Launch guardrails passed",
+        detail={"adapter_id": selected_adapter_id, "model": selected_model, "tracking_mode": tracking_mode},
+    )
+    _record_worker_event(
+        database_path,
+        worker_run,
+        kind="context",
+        title="Repo Context Brief built",
+        detail={
+            "documents": [doc["path"] for doc in repo_context.get("documents", [])],
+            "manifests": repo_context.get("manifests", []),
+            "test_commands": repo_context.get("test_commands", []),
+        },
+    )
+    _record_worker_event(
+        database_path,
+        worker_run,
+        kind="command",
+        title="Worker command planned",
+        detail={"command_plan": command_plan},
     )
     claimed = db.update_task(
         database_path,
@@ -321,23 +372,26 @@ def _launch_task_unlocked(
     )
 
 
-def _resolve_launch_project_root(
+def _record_worker_event(
     database_path: Path | str,
-    task: dict[str, Any],
+    worker_run: dict[str, Any],
     *,
-    read_only: bool,
-    write_capable: bool,
-) -> str | None:
-    metadata = task.get("metadata") or {}
-    task_project_root = metadata.get("project_root_path")
-    projects = db.list_connected_projects(database_path)
-    if not projects:
-        return None
-    connected_roots = {str(Path(str(project["root_path"])).expanduser().resolve()) for project in projects}
-    if (read_only or write_capable) and task_project_root:
-        resolved_task_root = str(Path(str(task_project_root)).expanduser().resolve())
-        return resolved_task_root if resolved_task_root in connected_roots else None
-    return str(Path(str(projects[0]["root_path"])).expanduser().resolve())
+    kind: str,
+    title: str,
+    level: str = "info",
+    detail: dict[str, Any] | None = None,
+) -> None:
+    db.record_worker_run_event(
+        database_path,
+        worker_run_id=worker_run["id"],
+        session_id=worker_run["session_id"],
+        task_id=worker_run["task_id"],
+        kind=kind,
+        layer="worker_harness" if kind in {"adapter", "token", "file"} else "control_plane",
+        level=level,
+        title=title,
+        detail=detail,
+    )
 
 
 def _start_background_worker_run(
@@ -463,7 +517,14 @@ def _execute_worker_run(
     write_capable: bool,
     runner: Runner | None,
 ) -> None:
-    db.mark_worker_run_running(database_path, worker_run_id)
+    worker_run = db.mark_worker_run_running(database_path, worker_run_id)
+    _record_worker_event(
+        database_path,
+        worker_run,
+        kind="adapter",
+        title="Worker adapter started",
+        detail={"adapter_id": selected_adapter_id, "model": selected_model, "tracking_mode": tracking_mode},
+    )
     try:
         completed = (runner or subprocess_runner)(plan)
     except Exception as exc:
@@ -541,6 +602,13 @@ def _execute_worker_run(
             cost=native_evidence.cost,
             raw_usage={**native_evidence.raw_usage, "usage_source": usage_source, "tracking_mode": tracking_mode},
         )
+        _record_worker_event(
+            database_path,
+            worker_run,
+            kind="token",
+            title="Native usage evidence recorded",
+            detail={"total_tokens": native_evidence.total_tokens, "usage_source": usage_source},
+        )
 
     if tracking_mode == "proxy_governed" and not _session_has_worker_token_usage(database_path, session["id"]):
         reason = "No Worker model call was observed through the Harness Proxy."
@@ -570,7 +638,23 @@ def _execute_worker_run(
         )
         return
 
+    if tracking_mode == "proxy_governed":
+        _record_worker_event(
+            database_path,
+            worker_run,
+            kind="token",
+            title="Proxy usage evidence observed",
+            detail={"total_tokens": db.session_token_usage(database_path, session["id"]), "usage_source": usage_source},
+        )
+
     workdir_evidence = _workdir_run_evidence(plan, stdout=stdout, stderr=stderr)
+    _record_worker_event(
+        database_path,
+        worker_run,
+        kind="file",
+        title="Workdir evidence captured",
+        detail={"workdir_evidence": workdir_evidence},
+    )
     workdir_mismatch = _workdir_mismatch_failure(workdir_evidence)
     if workdir_mismatch is not None:
         db.update_session_status(database_path, session["id"], "failed")
@@ -702,6 +786,11 @@ def _apply_manual_estimate(
 ) -> dict[str, Any]:
     if estimate_tokens is None:
         return task
+    metadata = {**task.get("metadata", {})}
+    if not metadata.get("connected_project_id"):
+        projects = db.list_connected_projects(database_path)
+        if len(projects) == 1:
+            metadata = {**project_task_metadata(projects[0]), **metadata}
     return db.update_task(
         database_path,
         task["id"],
@@ -709,7 +798,7 @@ def _apply_manual_estimate(
             "status": "Estimated",
             "estimate_tokens": estimate_tokens,
             "recommended_model": model,
-            "metadata": {**task.get("metadata", {}), "estimation_source": "manual"},
+            "metadata": {**metadata, "estimation_source": "manual"},
         },
     )
 
@@ -1053,7 +1142,8 @@ def _finalize_write_capable_launch(
     returncode: int,
     stdout: str,
 ) -> dict[str, Any]:
-    profile = (task.get("metadata") or {}).get("project_profile") or {}
+    project, _ = resolve_task_project(database_path, claimed)
+    profile = (project or {}).get("profile") or {}
     test_command = profile.get("test_command")
     diff_summary = _git_diff_summary(project_root)
     _record_budget_overrun_if_needed(database_path, session["id"])

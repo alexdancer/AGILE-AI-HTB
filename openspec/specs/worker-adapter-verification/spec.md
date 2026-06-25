@@ -98,14 +98,14 @@ The system SHALL keep normal task project root selection in the project workspac
 - **THEN** verification SHALL prove the adapter's CLI path and tracking mode evidence
 - **AND** verification SHALL NOT be treated as selecting or configuring the project workspace for normal launches
 
-### Requirement: Launch readiness combines adapter tracking and project availability
-The system SHALL treat normal Worker launch readiness as the combination of a launchable Worker Adapter and an available connected project root.
+### Requirement: Launch readiness combines adapter tracking and task project binding
+The system SHALL treat normal Worker launch readiness as the combination of a launchable Worker Adapter and a valid task-bound connected project root.
 
 #### Scenario: Verified adapter without project is not enough to launch
 - **WHEN** a Worker Adapter has budget-authoritative verification
-- **AND** no connected project root is available
+- **AND** the selected task has no valid connected project binding
 - **THEN** the adapter remains verified
-- **BUT** normal board launch SHALL be rejected until a project is opened
+- **BUT** normal board launch SHALL be rejected until the task is created from or bound to a connected project board
 
 #### Scenario: Project without verified adapter is not enough to launch
 - **WHEN** a connected project exists

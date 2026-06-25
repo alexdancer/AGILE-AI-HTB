@@ -367,8 +367,58 @@ def test_discover_worker_models_updates_adapter_from_native_json_without_proxy_e
     assert plans[0].command == ["opencode", "models"]
     assert plans[0].metadata["purpose"] == "native_model_discovery"
     adapter = db.get_worker_adapter(db_path, "opencode")
-    assert adapter["supported_models"] == ["anthropic/claude-sonnet-4", "openai/gpt-5.1"]
+    assert adapter["supported_models"] == []
     assert adapter["config"]["model_discovery"]["tracking_mode"] == "native"
+
+
+def test_discover_worker_models_preserves_curated_allowed_models(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(
+        db_path,
+        "opencode",
+        workdir=str(tmp_path),
+        supported_models=["openai/gpt-5.1"],
+    )
+
+    def fake_runner(plan):
+        return subprocess.CompletedProcess(
+            plan.command,
+            0,
+            stdout='{"models":[{"id":"openai/gpt-5.1"},{"id":"opencode/big-pickle"}]}',
+            stderr="",
+        )
+
+    result = discover_worker_models(db_path, "opencode", runner=fake_runner)
+
+    assert result.models == ["openai/gpt-5.1", "opencode/big-pickle"]
+    adapter = db.get_worker_adapter(db_path, "opencode")
+    assert adapter["config"]["model_discovery"]["models"] == ["openai/gpt-5.1", "opencode/big-pickle"]
+    assert adapter["supported_models"] == ["openai/gpt-5.1"]
+
+
+def test_discover_worker_models_preserves_empty_curated_allowed_models(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(
+        db_path,
+        "opencode",
+        workdir=str(tmp_path),
+        config={"allowed_models_configured": True},
+        supported_models=[],
+    )
+
+    def fake_runner(plan):
+        return subprocess.CompletedProcess(
+            plan.command,
+            0,
+            stdout='{"models":[{"id":"openai/gpt-5.1"},{"id":"opencode/big-pickle"}]}',
+            stderr="",
+        )
+
+    discover_worker_models(db_path, "opencode", runner=fake_runner)
+
+    assert db.get_worker_adapter(db_path, "opencode")["supported_models"] == []
 
 
 def test_discover_worker_models_reports_failure_without_overwriting_models(tmp_path):

@@ -67,15 +67,21 @@ The system SHALL preserve evidence when Worker execution cannot complete success
 - **THEN** the Task moves to Blocked and the system preserves logs, token ledger entries when present, failure reason, tracking mode, branch name, and any uncommitted diff without automatic retry
 
 ### Requirement: Worker launch model selection
-The system SHALL launch Worker Sessions with a model selected from the verified adapter's discovered model inventory unless the User explicitly supplies a compatible override.
+The system SHALL launch Worker Sessions with a model selected from the verified adapter's operator-approved allowed model subset. A model that is discovered but not allowed SHALL NOT be launchable from the normal AGILE Board.
 
-#### Scenario: User selects discovered Worker model
-- **WHEN** the User launches a task with a model discovered for the selected verified Worker Adapter
+#### Scenario: User selects allowed Worker model
+- **WHEN** the User launches a task with a model allowed for the selected verified Worker Adapter
 - **THEN** the Local Runner passes that model to the Worker Harness launch command and records it on the Worker session
 
 #### Scenario: Selected model is unavailable
-- **WHEN** the selected model is not in the selected adapter's discovered model inventory and no explicit compatible override is approved
+- **WHEN** the selected model is not in the selected adapter's allowed model subset
 - **THEN** the system blocks launch and shows the model compatibility reason
+
+#### Scenario: Discovered but disallowed model is rejected
+- **WHEN** a Worker Adapter has discovered model `opencode/experimental-large`
+- **AND** the operator has not included it in the allowed model subset
+- **AND** a launch request names `opencode/experimental-large`
+- **THEN** the system rejects the launch before starting any Worker Adapter process
 
 ### Requirement: Worker Adapter tracking modes govern launchability
 The system SHALL treat Worker Adapters as local coding-agent CLI integrations and SHALL separately verify how token usage is proven for each adapter launch.
@@ -147,25 +153,49 @@ The system SHALL transition successful governed Worker execution into Review ins
 - **AND** the task retains its session association and run evidence
 
 ### Requirement: OpenCode launch uses non-interactive run command
-The system SHALL launch OpenCode Worker Sessions through a non-interactive command that includes the `run` subcommand, the configured OpenCode project directory when present, the selected Worker model, JSON output mode, and the scoped task prompt.
+The system SHALL launch OpenCode Worker Sessions through a non-interactive command that includes the `run` subcommand, the task-bound connected project directory, the selected Worker model, JSON output mode, and the scoped task prompt.
 
-#### Scenario: OpenCode launch command includes workdir, model, and prompt
+#### Scenario: OpenCode launch command includes project root, model, and prompt
 - **WHEN** an Estimated task passes Launch Guardrails for the OpenCode Worker Adapter
-- **AND** the selected adapter has a configured workdir
+- **AND** the task is bound to a connected project root
 - **THEN** the Local Runner command plan invokes `opencode run`
-- **AND** the command plan includes `--dir` with the configured adapter workdir
-- **AND** the command plan cwd is the configured adapter workdir
-- **AND** the command plan includes `--model` with the selected discovered Worker model
+- **AND** the command plan includes `--dir` with the task-bound connected project root
+- **AND** the command plan cwd is the task-bound connected project root
+- **AND** the command plan includes `--model` with the selected allowed Worker model
 - **AND** the command plan includes the scoped task prompt
 - **AND** the command plan is recorded with secrets redacted
 
 #### Scenario: Bare OpenCode template is normalized or rejected
 - **WHEN** an existing OpenCode adapter configuration contains a bare launch template equivalent to `opencode`
 - **THEN** the system does not launch that bare command for a task run
-- **AND** the system either normalizes it to the supported non-interactive run command with the configured workdir or blocks launch with a clear compatibility reason
+- **AND** the system either normalizes it to the supported non-interactive run command with the task-bound connected project root or blocks launch with a clear compatibility reason
 
 #### Scenario: Nonzero OpenCode exit preserves useful evidence
 - **WHEN** OpenCode exits nonzero after the command plan is launched
 - **THEN** the Worker Run is marked failed
 - **AND** the task returns to Estimated with retryable launch evidence
-- **AND** the task metadata preserves sanitized return code, stdout, stderr, selected adapter, selected model, configured workdir, and command plan
+- **AND** the task metadata preserves sanitized return code, stdout, stderr, selected adapter, selected model, project root/workdir, and command plan
+
+### Requirement: Governed Worker launch includes Repo Context Brief
+The system SHALL include the Repo Context Brief in the Worker launch prompt for connected-project governed Worker Runs before task-specific instructions.
+
+#### Scenario: Launch prompt includes repo context
+- **WHEN** an Estimated task for a connected project passes Launch Guardrails
+- **AND** the system builds a Repo Context Brief
+- **THEN** the Worker Adapter command prompt includes the brief before the task description
+- **AND** the prompt tells the Worker to inspect existing relevant files before editing
+
+### Requirement: Governed Worker launch records repo-context event
+The system SHALL record Worker Run timeline events for Repo Context Brief creation during governed Worker launch.
+
+#### Scenario: Repo context event is recorded
+- **WHEN** the system builds and injects a Repo Context Brief for a governed Worker Run
+- **THEN** the Worker Run timeline records a repo-context event with sanitized source names and bounded detail
+
+### Requirement: Governed Worker launch preserves model-layer separation in events
+The system SHALL label launch events so operators can distinguish control-plane/orchestrator decisions from Worker/coding harness execution.
+
+#### Scenario: Operator reads launch timeline
+- **WHEN** an operator views a governed Worker Run timeline
+- **THEN** guardrail, repo-context, and prompt-construction events are labeled as control-plane/orchestrator activity
+- **AND** adapter subprocess, native/proxy usage, and file evidence events are labeled as Worker/coding harness activity

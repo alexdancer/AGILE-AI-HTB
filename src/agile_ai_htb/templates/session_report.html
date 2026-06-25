@@ -57,6 +57,48 @@
   </div>
 </section>
 
+<section class="panel">
+  <div class="panel-header"><h3>Worker Run timeline</h3></div>
+  <div class="panel-body tight">
+    <table>
+      <thead><tr><th>time</th><th>level</th><th>layer</th><th>kind</th><th>event</th></tr></thead>
+      <tbody>
+        {% for event in artifact.worker_run_events %}
+        <tr>
+          <td class="mono">{{ event.created_at }}</td>
+          <td><span class="pill {% if event.level == 'error' %}red{% elif event.level == 'warn' %}yellow{% else %}blue{% endif %}">{{ event.level }}</span></td>
+          <td class="mono">{{ event.layer }}</td>
+          <td class="mono">{{ event.kind }}</td>
+          <td>{{ event.title }}{% if event.detail_summary %}<div class="muted mono">{{ event.detail_summary }}</div>{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="muted">No Worker Run timeline events.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-header"><h3>Repo Context Brief</h3></div>
+  <div class="panel-body">
+    {% for run in artifact.worker_runs %}
+      {% if run.metadata.repo_context_brief %}
+      <div style="margin-bottom:12px">
+        <p class="muted mono" style="margin:0 0 6px">Worker Run: {{ run.id }}</p>
+        <p class="muted"><strong>Sources:</strong>
+          {% for doc in run.metadata.repo_context_brief.documents %}<span class="mono">{{ doc.path }}</span>{% if not loop.last %}, {% endif %}{% endfor %}
+          {% for manifest in run.metadata.repo_context_brief.manifests %}{% if run.metadata.repo_context_brief.documents or not loop.first %}, {% endif %}<span class="mono">{{ manifest }}</span>{% endfor %}
+        </p>
+        <pre class="mono" style="white-space:pre-wrap;max-height:260px;overflow:auto;background:rgba(0,0,0,0.18);padding:10px;border-radius:4px">{{ run.metadata.repo_context_brief.text }}</pre>
+      </div>
+      {% endif %}
+    {% else %}
+    <div class="muted">No Worker Run evidence.</div>
+    {% endfor %}
+  </div>
+</section>
+
 <section class="grid cols-2">
   <article class="panel">
     <div class="panel-header"><h3>Alarms</h3></div>

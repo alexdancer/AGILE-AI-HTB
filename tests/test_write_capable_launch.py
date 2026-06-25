@@ -5,6 +5,7 @@ from pathlib import Path
 import time
 
 from agile_ai_htb import db
+from agile_ai_htb.project_context import project_task_metadata
 from agile_ai_htb.task_launch import TaskLaunchBlocked, detect_pr_capability, launch_task
 
 
@@ -45,7 +46,7 @@ def _git_project(tmp_path: Path, *, test_command: str | None = "python -m pytest
 
 def _verified_task(db_path: Path, root: Path, *, test_command: str | None = "python -m pytest"):
     db.init_db(db_path)
-    db.upsert_connected_project(
+    project = db.upsert_connected_project(
         db_path,
         name="Write Project",
         root_path=str(root),
@@ -68,10 +69,8 @@ def _verified_task(db_path: Path, root: Path, *, test_command: str | None = "pyt
         estimate_tokens=1000,
         recommended_model="opencode/gpt-5.1",
         metadata={
+            **project_task_metadata(project),
             "launch_mode": "write_capable",
-            "connected_project_id": "proj_demo_2099",
-            "project_root_path": str(root),
-            "project_profile": {"test_command": test_command, "root_path": str(root)},
         },
     )
 
@@ -136,6 +135,38 @@ def test_write_capable_launch_creates_task_branch_runs_tests_and_commits(tmp_pat
     assert metadata["harness_commit"]["sha"]
     assert task["id"] in commit_message
     assert porcelain == ""
+
+
+def test_write_capable_verification_uses_current_connected_project_profile(tmp_path):
+    db_path = tmp_path / "harness.db"
+    root = _git_project(tmp_path)
+    task = _verified_task(db_path, root, test_command="python -m pytest")
+    db.update_task(
+        db_path,
+        task["id"],
+        {
+            "metadata": {
+                **task["metadata"],
+                "project_profile": {
+                    **task["metadata"]["project_profile"],
+                    "test_command": "python -c 'raise SystemExit(1)'",
+                },
+            }
+        },
+    )
+
+    def runner(plan):
+        _record_worker_usage(db_path, plan)
+        (root / "feature.py").write_text("VALUE_2099 = 'DEMO'\n")
+        return {"returncode": 0, "stdout": "changed", "stderr": ""}
+
+    launch_task(db_path, task["id"], adapter_id="opencode", model=None, proxy_url=None, runner=runner)
+    _wait_for_worker_run(db_path, task["id"], "completed")
+    launched = db.get_task(db_path, task["id"])
+
+    assert launched["status"] == "Review"
+    assert launched["metadata"]["post_run_verification"]["passed"] is True
+    assert launched["metadata"]["post_run_verification"]["command"] == "python -m pytest"
 
 
 def test_write_capable_missing_test_command_requires_manual_approval_before_commit(tmp_path):

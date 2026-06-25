@@ -2,20 +2,20 @@
 {% block title %}Task board | AGILE-AI-HTB{% endblock %}
 {% block banner %}{% if has_demo_tasks %}<div class="demo-banner">DEMO — synthetic task data loaded · all DEMO_TASK_2099_* values fabricated</div>{% endif %}{% endblock %}
 {% block content %}
-<h1 class="page-title">Task board</h1>
-<p class="page-sub">estimate task · launch worker · running work · review gates · done · blocked</p>
+<h1 class="page-title">{% if active_project %}{{ active_project.name }} · {% endif %}Task board</h1>
+<p class="page-sub">{% if active_project %}{{ active_project.root_path }} · {% endif %}estimate task · launch worker · running work · review gates · done · blocked</p>
 
 {% if error %}
 <div class="demo-banner" style="background:var(--danger);color:white;padding:10px 16px;border-radius:4px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:12px">
   <span>{{ error }}</span>
   <span class="btn-row">
     {% if 'adapter' in error|lower or 'tracking' in error|lower or 'worker' in error|lower %}<a href="/settings/workers" style="color:white;text-decoration:underline;font-weight:bold">Open Worker Setup</a>{% endif %}
-    <a href="/board" style="color:white;text-decoration:none;font-weight:bold">&times;</a>
+    <a href="{% if active_project %}/projects/{{ active_project.id }}/board{% else %}/board{% endif %}" style="color:white;text-decoration:none;font-weight:bold">&times;</a>
   </span>
 </div>
 {% endif %}
 
-<form method="post" action="/tasks/estimate-form" enctype="multipart/form-data" style="margin-bottom:24px;display:flex;gap:10px;align-items:flex-end">
+<form method="post" action="{% if active_project %}/projects/{{ active_project.id }}/tasks/estimate-form{% else %}/tasks/estimate-form{% endif %}" enctype="multipart/form-data" style="margin-bottom:24px;display:flex;gap:10px;align-items:flex-end">
   <div style="flex:1">
     <label for="intake-description">Describe a coding task or paste Markdown</label>
     <textarea id="intake-description" name="description" placeholder="e.g. Add a save command to the CLI\n\n- [ ] Update route\n- [ ] Add tests" rows="4" style="width:100%"></textarea>
@@ -39,6 +39,7 @@
       {% if column == 'Estimated' and adapters %}
       <form method="post" action="/tasks/{{ task.id }}/launch" style="margin-top:8px">
         <input type="hidden" name="proxy_url" value="{{ default_proxy_url }}">
+        {% if active_project %}<input type="hidden" name="project_id" value="{{ active_project.id }}">{% endif %}
         {% if adapters|length > 0 %}
         <label class="mono" style="font-size:11px">Adapter</label>
         <select name="adapter_id" onchange="updateModels(this, 'models-{{ task.id }}')" style="width:100%;margin-bottom:4px">
@@ -53,7 +54,7 @@
           <option value="{{ m }}" {% if m == task.recommended_model %}selected{% endif %}>{{ m }}</option>
           {% endfor %}
           {% if not default_adapter.supported_models %}
-          <option value="{{ task.recommended_model }}">{{ task.recommended_model }} (no discovered models)</option>
+          <option value="">(no allowed models)</option>
           {% endif %}
         </select>
         {% endif %}
@@ -71,8 +72,19 @@
       {% if column == 'Running' %}
       <p class="muted mono">Worker Run: {{ task.metadata.active_worker_run_id or 'active' }}</p>
       <form method="post" action="/tasks/{{ task.id }}/refresh">
+        {% if active_project %}<input type="hidden" name="project_id" value="{{ active_project.id }}">{% endif %}
         <button type="submit">Refresh status</button>
       </form>
+      {% endif %}
+      {% if task.metadata.worker_run_events %}
+      <div style="margin-top:8px;padding:8px;border-left:3px solid var(--border);background:rgba(255,255,255,0.03)">
+        <p class="muted mono" style="margin:0 0 4px">Worker timeline</p>
+        <ul class="muted" style="margin:0;padding-left:18px">
+          {% for event in task.metadata.worker_run_events %}
+          <li><span class="mono">{{ event.kind }}</span> · {{ event.title }}{% if event.detail_summary %}<br><span class="mono">{{ event.detail_summary }}</span>{% endif %}</li>
+          {% endfor %}
+        </ul>
+      </div>
       {% endif %}
       {% if task.metadata.launch_error %}
       <div class="launch-error" style="margin-top:8px;padding:8px;border-left:3px solid var(--danger);background:rgba(255,0,0,0.08)">
@@ -110,6 +122,7 @@
         </div>
         {% endif %}
         <form method="post" action="/tasks/{{ task.id }}/review" style="display:grid;gap:6px">
+          {% if active_project %}<input type="hidden" name="project_id" value="{{ active_project.id }}">{% endif %}
           <input type="hidden" name="action" value="save_prompt">
           <label class="mono" style="font-size:11px">Review prompt / focus</label>
           <textarea name="review_prompt" rows="2" placeholder="Tell the reviewer what to focus on..." style="width:100%">{{ task.metadata.review_prompt or '' }}</textarea>
@@ -117,16 +130,19 @@
         </form>
         <div class="btn-row" style="display:flex;gap:6px;flex-wrap:wrap">
           <form method="post" action="/tasks/{{ task.id }}/review">
+            {% if active_project %}<input type="hidden" name="project_id" value="{{ active_project.id }}">{% endif %}
             <input type="hidden" name="action" value="agent_review">
             <input type="hidden" name="review_prompt" value="{{ task.metadata.review_prompt or '' }}">
             <button type="submit">Agent Review</button>
           </form>
           <form method="post" action="/tasks/{{ task.id }}/review">
+            {% if active_project %}<input type="hidden" name="project_id" value="{{ active_project.id }}">{% endif %}
             <input type="hidden" name="action" value="mark_done">
             <button type="submit" class="primary">Mark Done</button>
           </form>
         </div>
         <form method="post" action="/tasks/{{ task.id }}/review" style="display:grid;gap:6px">
+          {% if active_project %}<input type="hidden" name="project_id" value="{{ active_project.id }}">{% endif %}
           <input type="hidden" name="action" value="block">
           <input name="blocked_reason" placeholder="Block reason" required>
           <button type="submit">Block</button>
@@ -161,7 +177,7 @@ function updateModels(adapterSelect, modelSelectId) {
   } else {
     var opt = document.createElement('option');
     opt.value = '';
-    opt.textContent = '(no discovered models)';
+    opt.textContent = '(no allowed models)';
     modelSelect.appendChild(opt);
   }
 }

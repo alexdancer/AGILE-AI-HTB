@@ -203,6 +203,11 @@ def test_project_read_only_proof_route_launches_when_launch_ready(tmp_path, monk
             or {"returncode": 0, "stdout": "report", "stderr": ""}
         )
         project = client.post("/settings/project/connect", headers=_headers(), json={"root_path": str(root)}).json()["project"]
+        db.update_worker_adapter(
+            tmp_path / "harness.db",
+            "opencode",
+            supported_models=["opencode/gpt-5.1"],
+        )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "opencode", verified=True, evidence={"ok": True})
         response = client.post(f"/settings/project/{project['id']}/read-only-proof", headers=_headers())
 
