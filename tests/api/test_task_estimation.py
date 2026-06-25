@@ -1,0 +1,828 @@
+import json
+import time
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from agile_ai_htb import db
+from agile_ai_htb.app import create_app
+from agile_ai_htb.project_context import project_task_metadata
+from agile_ai_htb.settings import Settings
+from agile_ai_htb.task_launch import refresh_task_from_session
+
+
+ROOT = Path(__file__).resolve().parents[2]
+PORTAL_TOKEN = "test-portal-token"
+
+
+def _auth_headers():
+    return {"Authorization": f"Bearer {PORTAL_TOKEN}"}
+
+
+def _wait_for_worker_run(db_path: Path, task_id: str, status: str | None = None):
+    deadline = time.time() + 2
+    while time.time() < deadline:
+        runs = db.list_worker_runs(db_path, task_id=task_id)
+        if runs and (status is None or runs[-1]["status"] == status):
+            return runs[-1]
+        time.sleep(0.01)
+    raise AssertionError("worker run did not reach expected status")
+
+
+def _client(tmp_path):
+    settings = Settings(database_path=tmp_path / "harness.db", guardrails_path=ROOT / "guardrails.yaml")
+    db.init_db(settings.database_path)
+    app = create_app(settings)
+    project_root = tmp_path / "connected-project"
+    project_root.mkdir(exist_ok=True)
+    db.upsert_connected_project(
+        settings.database_path,
+        name=project_root.name,
+        root_path=str(project_root.resolve()),
+        profile={"name": project_root.name, "root_path": str(project_root.resolve()), "test_command": "pytest"},
+        capability={"state": "launch_ready", "can_launch": True},
+    )
+    return TestClient(app)
+
+
+
+
+class FakeSequentialLLM:
+    def __init__(self, contents):
+        self.contents = list(contents)
+        self.requests = []
+        self.usage = {"prompt_tokens": 111, "completion_tokens": 22, "total_tokens": 133}
+
+    async def acompletion(self, request):
+        self.requests.append(request)
+        if not self.contents:
+            raise AssertionError("unexpected LLM request")
+        return {
+            "choices": [{"message": {"content": json.dumps(self.contents.pop(0))}}],
+            "usage": self.usage,
+        }
+
+
+def _breakdown_content(*titles):
+    candidates = [
+        {
+            "kind": "implementation",
+            "title": title,
+            "prompt": f"Implement {title}",
+            "acceptance_criteria": f"{title} is covered by tests.",
+            "constraints": [],
+            "human_in_loop": True,
+        }
+        for title in titles
+    ]
+    return {
+        "decision": "proposed_task_breakdown" if len(candidates) > 1 else "single_task",
+        "candidates": candidates,
+        "rejected_items": [
+            {"text": "Do not add network dependencies.", "reason": "constraint, not a task"}
+        ],
+        "global_contract_summary": "Accepted slices must preserve the DEMO_TASK_2099 contract end-to-end.",
+        "global_constraints": ["Do not add network dependencies."],
+        "verification": ["Run pytest."],
+        "non_goals": [],
+        "recommended_sequence": list(titles),
+        "confidence": 0.86,
+        "rationale": "Markdown contains multiple vertical slices plus constraints.",
+        "source": "llm",
+    }
+
+
+def _integrated_artifact_breakdown():
+    return {
+        "decision": "proposed_task_breakdown",
+        "candidates": [
+            {
+                "kind": "implementation",
+                "title": "Build DEMO_CLI_2099 parser",
+                "prompt": "Implement the parser slice for DEMO_CLI_2099.",
+                "acceptance_criteria": "Parser tests pass.",
+                "constraints": ["Preserve DEMO_ID_999 values."],
+                "human_in_loop": True,
+            },
+            {
+                "kind": "implementation",
+                "title": "Render DEMO_REPORT_2099 output",
+                "prompt": "Implement the report rendering slice for DEMO_REPORT_2099.",
+                "acceptance_criteria": "Report shape is covered.",
+                "constraints": [],
+                "human_in_loop": True,
+            },
+            {
+                "kind": "acceptance_verification",
+                "title": "Acceptance Verification for DEMO_CLI_2099",
+                "prompt": "Verify the combined CLI/report artifact against the source contract.",
+                "acceptance_criteria": "Executable smoke proof and findings are recorded.",
+                "constraints": ["Do not rebuild the CLI."],
+                "human_in_loop": True,
+            },
+        ],
+        "rejected_items": [],
+        "global_contract_summary": "DEMO_CLI_2099 must parse input and emit DEMO_REPORT_2099 with 999-style IDs.",
+        "global_constraints": ["Use only synthetic DEMO_2099 data."],
+        "verification": ["Run a CLI smoke check."],
+        "non_goals": [],
+        "recommended_sequence": [
+            "Build DEMO_CLI_2099 parser",
+            "Render DEMO_REPORT_2099 output",
+            "Acceptance Verification for DEMO_CLI_2099",
+        ],
+        "confidence": 0.9,
+        "rationale": "Two implementation slices create one integrated artifact requiring final proof.",
+        "source": "llm",
+    }
+
+
+class FakeEstimatorLLM:
+    def __init__(self, content=None, *, exc=None, usage=None):
+        self.content = content or {
+            "token_estimate": 12_345,
+            "complexity": "modest",
+            "recommended_model": "claude-3-5-sonnet-20240620",
+            "confidence": 0.82,
+            "rationale": "Endpoint plus tests is a modest task.",
+            "assumptions": ["No schema migration is needed."],
+            "risk_flags": ["integration tests may expand scope"],
+            "spike_recommendation": "No spike needed.",
+            "budget_note": "Within normal daily budget.",
+            "source": "llm",
+        }
+        self.exc = exc
+        self.usage = usage or {"prompt_tokens": 111, "completion_tokens": 22, "total_tokens": 133}
+        self.requests = []
+
+    async def acompletion(self, request):
+        self.requests.append(request)
+        if self.exc:
+            raise self.exc
+        return {
+            "choices": [{"message": {"content": json.dumps(self.content)}}],
+            "usage": self.usage,
+        }
+
+
+def _client_with_llm(tmp_path, llm):
+    settings = Settings(
+        database_path=tmp_path / "harness.db",
+        guardrails_path=ROOT / "guardrails.yaml",
+        estimator_model="openai/gpt-4.1-mini",
+    )
+    app = create_app(settings)
+    db.init_db(settings.database_path)
+    app.state.llm_client = llm
+    project_root = tmp_path / "connected-project"
+    project_root.mkdir(exist_ok=True)
+    db.upsert_connected_project(
+        settings.database_path,
+        name=project_root.name,
+        root_path=str(project_root.resolve()),
+        profile={"name": project_root.name, "root_path": str(project_root.resolve()), "test_command": "pytest"},
+        capability={"state": "launch_ready", "can_launch": True},
+    )
+    return TestClient(app)
+
+def test_create_task_with_estimate_defaults_to_estimated(tmp_path):
+    with _client(tmp_path) as client:
+        created = client.post(
+            "/tasks",
+            json={
+                "description": "Add list command",
+                "estimate_tokens": 8_000,
+                "recommended_model": "claude-haiku",
+            },
+        )
+
+    assert created.status_code == 200
+    assert created.json()["status"] == "Estimated"
+
+def test_project_estimate_form_stamps_connected_project_metadata(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM()
+    database_path = tmp_path / "harness.db"
+    db.init_db(database_path)
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    project = db.upsert_connected_project(
+        database_path,
+        name="Project",
+        root_path=str(project_root.resolve()),
+        profile={"name": "Project", "root_path": str(project_root.resolve()), "test_command": "pytest"},
+        capability={"state": "launch_ready", "can_launch": True},
+    )
+
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            f"/projects/{project['id']}/tasks/estimate-form",
+            data={"description": "Add project-scoped task"},
+            headers={**_auth_headers(), "accept": "text/html"},
+            follow_redirects=False,
+        )
+
+    tasks = db.list_tasks(database_path)
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/projects/{project['id']}/board"
+    assert len(tasks) == 1
+    assert tasks[0]["metadata"]["connected_project_id"] == project["id"]
+    assert tasks[0]["metadata"]["project_root_path"] == project_task_metadata(project)["project_root_path"]
+
+def test_create_task_blocks_explicit_estimated_without_estimate(tmp_path):
+    with _client(tmp_path) as client:
+        created = client.post(
+            "/tasks",
+            json={"description": "Missing estimate", "status": "Estimated"},
+        )
+
+    assert created.status_code == 200
+    assert created.json()["status"] == "Blocked"
+    assert created.json()["metadata"] == {
+        "blocked_reason": "Estimate task before launch.",
+        "requires_manual_estimate": True,
+        "requested_status": "Estimated",
+    }
+
+def test_estimate_uses_llm_structured_json_creates_estimated_task_and_tracks_usage(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM()
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/estimate",
+            headers=_auth_headers(),
+            json={
+                "description": "Add an endpoint and tests for sessions",
+                "remaining_daily_tokens": 100_000,
+                "daily_cap_tokens": 1_000_000,
+            },
+        )
+        task = response.json()
+        dashboard = client.get("/dashboard", headers=_auth_headers())
+        with db.connect(tmp_path / "harness.db") as conn:
+            token_turn = conn.execute("select * from token_turns").fetchone()
+            estimation_session = conn.execute("select * from sessions").fetchone()
+
+    assert response.status_code == 200
+    assert task["status"] == "Estimated"
+    assert task["estimate_tokens"] == 12_345
+    assert task["recommended_model"] == "claude-3-5-sonnet-20240620"
+    assert task["actual_tokens"] is None
+    assert task["metadata"]["estimation_source"] == "llm"
+    assert task["metadata"]["confidence"] == 0.82
+    assert task["metadata"]["assumptions"] == ["No schema migration is needed."]
+    assert task["metadata"]["risk_flags"] == ["integration tests may expand scope"]
+    assert task["metadata"]["spike_recommendation"] == "No spike needed."
+    assert task["metadata"]["budget_note"] == "Within normal daily budget."
+    assert llm.requests[0]["model"] == "openai/gpt-4.1-mini"
+    assert "Return ONLY valid JSON" in llm.requests[0]["messages"][0]["content"]
+    assert "Add an endpoint and tests for sessions" in llm.requests[0]["messages"][1]["content"]
+    assert token_turn["usage_kind"] == "estimation"
+    assert token_turn["prompt_tokens"] == 111
+    assert token_turn["completion_tokens"] == 22
+    assert token_turn["total_tokens"] == 133
+    assert estimation_session["status"] == "completed"
+    assert estimation_session["session_key_hash"] != "estimation:Add an endpoint and tests for sessions"
+    assert len(estimation_session["session_key_hash"]) == 64
+    assert all(char in "0123456789abcdef" for char in estimation_session["session_key_hash"])
+    assert "133" in dashboard.text
+
+def test_estimate_uses_configured_estimator_model_when_distinct_from_control_plane(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM()
+    settings = Settings(
+        database_path=tmp_path / "harness.db",
+        guardrails_path=ROOT / "guardrails.yaml",
+        control_plane_model="openai/gpt-4.1-control",
+        estimator_model="openai/gpt-4.1-estimator",
+    )
+    app = create_app(settings)
+    app.state.llm_client = llm
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/estimate",
+            headers=_auth_headers(),
+            json={"description": "Use distinct estimator model"},
+        )
+        with db.connect(tmp_path / "harness.db") as conn:
+            token_turn = conn.execute("select * from token_turns").fetchone()
+            estimation_session = conn.execute("select * from sessions").fetchone()
+
+    assert response.status_code == 200
+    assert llm.requests[0]["model"] == "openai/gpt-4.1-estimator"
+    assert estimation_session["model"] == "openai/gpt-4.1-estimator"
+    assert token_turn["model"] == "openai/gpt-4.1-estimator"
+
+def test_estimate_constrains_recommended_model_to_selected_adapter_allowed_models(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM()
+    with _client_with_llm(tmp_path, llm) as client:
+        db.update_worker_adapter(
+            tmp_path / "harness.db",
+            "opencode",
+            workdir=str(tmp_path),
+            config={"command": "opencode"},
+            supported_models=["opencode/gpt-5.1", "opencode/other"],
+            is_default=True,
+        )
+        response = client.post(
+            "/estimate",
+            headers=_auth_headers(),
+            json={"description": "Add endpoint", "adapter_id": "opencode"},
+        )
+
+    task = response.json()
+    assert response.status_code == 200
+    assert task["recommended_model"] == "opencode/gpt-5.1"
+    assert task["metadata"]["worker_model_constraint"] == {
+        "state": "constrained_by_allowed_models",
+        "adapter_id": "opencode",
+        "available_models": ["opencode/gpt-5.1", "opencode/other"],
+        "original_model": "claude-3-5-sonnet-20240620",
+        "selected_model": "opencode/gpt-5.1",
+        "reason": "estimator_model_not_allowed",
+    }
+
+def test_estimate_constrained_model_avoids_heavy_first_discovered_model_for_simple_task(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM(
+        content={
+            **FakeEstimatorLLM().content,
+            "token_estimate": 2_000,
+            "complexity": "simple",
+            "recommended_model": "claude-3-haiku-20240307",
+        }
+    )
+    with _client_with_llm(tmp_path, llm) as client:
+        db.update_worker_adapter(
+            tmp_path / "harness.db",
+            "opencode",
+            workdir=str(tmp_path),
+            config={"command": "opencode"},
+            supported_models=["opencode/big-pickle", "opencode/claude-haiku-4-5", "opencode/gpt-5.4-mini"],
+            is_default=True,
+        )
+        response = client.post(
+            "/estimate",
+            headers=_auth_headers(),
+            json={"description": "Fix a small DEMO_TASK_2099 typo", "adapter_id": "opencode"},
+        )
+
+    task = response.json()
+    assert response.status_code == 200
+    assert task["recommended_model"] == "opencode/claude-haiku-4-5"
+    assert task["metadata"]["worker_model_constraint"]["selected_model"] == "opencode/claude-haiku-4-5"
+    assert task["metadata"]["worker_model_constraint"]["reason"] == "estimator_model_not_allowed_ranked"
+
+def test_estimate_requires_portal_auth_before_llm_call(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM()
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post("/estimate", json={"description": "Do not spend tokens"})
+
+    assert response.status_code == 401
+    assert llm.requests == []
+
+def test_estimate_invalid_llm_result_creates_blocked_manual_task_without_heuristic_fallback(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM(content={"complexity": "simple"})
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post("/estimate", headers=_auth_headers(), json={"description": "Fix typo"})
+
+    task = response.json()
+    assert response.status_code == 200
+    assert task["status"] == "Blocked"
+    assert task["estimate_tokens"] is None
+    assert task["recommended_model"] is None
+    assert task["metadata"]["requires_manual_estimate"] is True
+    assert task["metadata"]["estimator_failure_type"] == "EstimatorValidationError"
+    assert task["metadata"]["estimation_source"] == "manual_required"
+
+def test_estimate_form_accepts_pasted_markdown_task(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeSequentialLLM([
+        _breakdown_content("Add parser", "Add tests", "Update docs"),
+        FakeEstimatorLLM().content,
+        FakeEstimatorLLM().content,
+        FakeEstimatorLLM().content,
+    ])
+    markdown = "# DEMO_TASK_2099 Markdown intake\n\n- [ ] Add parser\n- [ ] Add tests\n- [ ] Update docs\n- [ ] Do not add network dependencies."
+
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={"description": markdown},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert response.headers["location"].startswith("/task-breakdowns/")
+        assert response.headers["location"].endswith("/review")
+        assert db.list_tasks(tmp_path / "harness.db") == []
+        breakdown_id = response.headers["location"].split("/")[2]
+        review = client.get(response.headers["location"], headers=_auth_headers())
+        accept = client.post(
+            f"/task-breakdowns/{breakdown_id}/accept",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={
+                "accept_0": "1",
+                "accept_1": "1",
+                "accept_2": "1",
+                "kind_0": "implementation",
+                "title_0": "Add parser",
+                "prompt_0": "Implement Add parser",
+                "acceptance_criteria_0": "Parser is tested.",
+                "constraints_0": "",
+                "kind_1": "implementation",
+                "title_1": "Add tests",
+                "prompt_1": "Implement Add tests",
+                "acceptance_criteria_1": "Tests pass.",
+                "constraints_1": "",
+                "kind_2": "implementation",
+                "title_2": "Update docs",
+                "prompt_2": "Implement Update docs",
+                "acceptance_criteria_2": "Docs are updated.",
+                "constraints_2": "",
+                "global_contract_summary": "Edited DEMO_TASK_2099 contract summary.",
+                "global_constraints": "Do not add network dependencies.",
+                "verification": "Run pytest.",
+            },
+            follow_redirects=False,
+        )
+        tasks = db.list_tasks(tmp_path / "harness.db")
+        board = client.get("/board", headers=_auth_headers())
+        breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
+
+    assert "Add parser" in review.text
+    assert "constraint, not a task" in review.text
+    assert f'href="/projects/{breakdown["intake_metadata"]["connected_project_id"]}/board"' in review.text
+    assert accept.status_code == 303
+    assert accept.headers["location"].startswith("/projects/")
+    assert accept.headers["location"].endswith("/board")
+    assert len(tasks) == 3
+    assert len(llm.requests) == 4
+    assert tasks[0]["metadata"]["task_breakdown_id"] == breakdown_id
+    assert tasks[0]["metadata"]["task_breakdown_kind"] == "implementation"
+    assert tasks[0]["metadata"]["task_breakdown_global_contract_summary"] == "Edited DEMO_TASK_2099 contract summary."
+    assert tasks[0]["metadata"]["task_breakdown_global_constraints"] == ["Do not add network dependencies."]
+    assert tasks[0]["metadata"]["task_breakdown_verification"] == ["Run pytest."]
+    assert breakdown["status"] == "accepted"
+    assert breakdown["created_task_ids"] == [task["id"] for task in tasks]
+    assert "Add parser" in board.text
+
+def test_manual_recovery_cannot_reopen_accepted_breakdown(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeSequentialLLM([_breakdown_content("Accepted candidate"), FakeEstimatorLLM().content])
+    markdown = "# DEMO_TASK_2099 accepted stale recovery\n\n- [ ] Accepted candidate"
+
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={"description": markdown},
+            follow_redirects=False,
+        )
+        breakdown_id = response.headers["location"].split("/")[2]
+        accept = client.post(
+            f"/task-breakdowns/{breakdown_id}/accept",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={
+                "accept_0": "1",
+                "title_0": "Accepted candidate",
+                "prompt_0": "Implement accepted candidate",
+                "acceptance_criteria_0": "Accepted candidate is tested.",
+                "constraints_0": "",
+                "global_constraints": "",
+                "verification": "Run pytest.",
+            },
+            follow_redirects=False,
+        )
+        accepted = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
+        stale_manual = client.post(
+            f"/task-breakdowns/{breakdown_id}/manual",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={
+                "title": "Stale manual mutation",
+                "prompt": "This should not replace accepted candidates.",
+                "acceptance_criteria": "Should not apply.",
+            },
+            follow_redirects=False,
+        )
+        after_stale_manual = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
+        tasks = db.list_tasks(tmp_path / "harness.db")
+
+    assert accept.status_code == 303
+    assert accepted["status"] == "accepted"
+    assert stale_manual.status_code == 303
+    assert stale_manual.headers["location"].startswith("/projects/")
+    assert stale_manual.headers["location"].endswith("/board")
+    assert after_stale_manual["status"] == "accepted"
+    assert after_stale_manual["candidates"] == accepted["candidates"]
+    assert after_stale_manual["created_task_ids"] == accepted["created_task_ids"]
+    assert len(tasks) == 1
+
+def test_acceptance_verification_candidate_carries_full_source_contract(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeSequentialLLM(
+        [
+            _integrated_artifact_breakdown(),
+            FakeEstimatorLLM().content,
+            FakeEstimatorLLM().content,
+            FakeEstimatorLLM().content,
+        ]
+    )
+    markdown = """# DEMO_TASK_2099 integrated CLI
+
+Build DEMO_CLI_2099 so it parses DEMO_INPUT_999 and emits DEMO_REPORT_2099 with DEMO_ID_999 fields.
+The final artifact must be verified with a CLI smoke check and must never use real customer data.
+""".strip()
+
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={"description": markdown},
+            follow_redirects=False,
+        )
+        breakdown_id = response.headers["location"].split("/")[2]
+        review = client.get(response.headers["location"], headers=_auth_headers())
+        accept = client.post(
+            f"/task-breakdowns/{breakdown_id}/accept",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={
+                "accept_0": "1",
+                "accept_1": "1",
+                "accept_2": "1",
+                "kind_0": "implementation",
+                "title_0": "Build DEMO_CLI_2099 parser",
+                "prompt_0": "Implement only parser behavior.",
+                "acceptance_criteria_0": "Parser tests pass.",
+                "constraints_0": "Preserve DEMO_ID_999 values.",
+                "kind_1": "implementation",
+                "title_1": "Render DEMO_REPORT_2099 output",
+                "prompt_1": "Implement only report rendering.",
+                "acceptance_criteria_1": "Report tests pass.",
+                "constraints_1": "",
+                "kind_2": "acceptance_verification",
+                "title_2": "Acceptance Verification for DEMO_CLI_2099",
+                "prompt_2": "Verify the combined artifact.",
+                "acceptance_criteria_2": "Smoke proof and findings are recorded.",
+                "constraints_2": "Do not rebuild the CLI.",
+                "global_contract_summary": "Edited summary: DEMO_CLI_2099 parses DEMO_INPUT_999 and emits DEMO_REPORT_2099.",
+                "global_constraints": "Use only synthetic DEMO_2099 data.",
+                "verification": "Run a CLI smoke check.",
+            },
+            follow_redirects=False,
+        )
+        tasks = db.list_tasks(tmp_path / "harness.db")
+        breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
+
+    assert response.status_code == 303
+    assert "Global contract summary" in review.text
+    assert "acceptance_verification" in review.text
+    assert accept.status_code == 303
+    assert [task["metadata"]["task_breakdown_kind"] for task in tasks] == [
+        "implementation",
+        "implementation",
+        "acceptance_verification",
+    ]
+    implementation_description = tasks[0]["description"]
+    verification_description = tasks[2]["description"]
+    assert "Edited summary: DEMO_CLI_2099 parses DEMO_INPUT_999" in implementation_description
+    assert "Original source contract:" not in implementation_description
+    assert "Original source contract:" in verification_description
+    assert "Build DEMO_CLI_2099 so it parses DEMO_INPUT_999" in verification_description
+    assert "Do not reimplement the whole source task" in verification_description
+    assert tasks[2]["metadata"]["task_breakdown_recommended_last"] is True
+    assert breakdown["global_contract_summary"] == (
+        "Edited summary: DEMO_CLI_2099 parses DEMO_INPUT_999 and emits DEMO_REPORT_2099."
+    )
+    assert breakdown["candidates"][2]["kind"] == "acceptance_verification"
+
+def test_estimate_form_markdown_file_overrides_pasted_text(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeSequentialLLM([_breakdown_content("Use file contents", "Ignore pasted contents")])
+    markdown = b"# DEMO_TASK_2099 Uploaded task\n\n- [ ] Use file contents\n- [ ] Ignore pasted contents"
+
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={"description": "ignored pasted task"},
+            files={"markdown_file": ("DEMO_TASK_2099.md", markdown, "text/markdown")},
+            follow_redirects=False,
+        )
+        breakdown_id = response.headers["location"].split("/")[2]
+        breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/task-breakdowns/")
+    assert db.list_tasks(tmp_path / "harness.db") == []
+    assert breakdown["intake_metadata"]["intake_source"] == "markdown_upload"
+    assert breakdown["intake_metadata"]["intake_filename"] == "DEMO_TASK_2099.md"
+    assert "ignored pasted task" not in breakdown["source_text"]
+    assert [candidate["title"] for candidate in breakdown["candidates"]] == ["Use file contents", "Ignore pasted contents"]
+
+def test_estimate_form_single_task_markdown_still_routes_to_breakdown_review(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeSequentialLLM([_breakdown_content("Fix DEMO_TASK_2099 login copy")])
+    markdown = "# DEMO_TASK_2099 small task\n\nFix the login copy and run pytest."
+
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={"description": markdown},
+            follow_redirects=False,
+        )
+        breakdown_id = response.headers["location"].split("/")[2]
+        breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/task-breakdowns/")
+    assert db.list_tasks(tmp_path / "harness.db") == []
+    assert breakdown["decision"] == "single_task"
+    assert breakdown["candidates"][0]["title"] == "Fix DEMO_TASK_2099 login copy"
+
+def test_estimate_form_invalid_breakdown_output_creates_manual_recovery_review(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeSequentialLLM([{"not": "a valid breakdown"}, _breakdown_content("Retry succeeded")])
+    markdown = "# DEMO_TASK_2099 invalid output recovery\n\n- [ ] Add route\n- [ ] Do not add network dependencies."
+
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={"description": markdown},
+            follow_redirects=False,
+        )
+        breakdown_id = response.headers["location"].split("/")[2]
+        breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
+        review = client.get(response.headers["location"], headers=_auth_headers())
+        retry = client.post(
+            f"/task-breakdowns/{breakdown_id}/retry",
+            headers={**_auth_headers(), "accept": "text/html"},
+            follow_redirects=False,
+        )
+        retried = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/task-breakdowns/")
+    assert db.list_tasks(tmp_path / "harness.db") == []
+    assert breakdown["status"] == "failed"
+    assert breakdown["failure_type"] == "TaskBreakdownValidationError"
+    assert "Breakdown failed" in review.text
+    assert "Retry breakdown" in review.text
+    assert "Create one manual candidate" in review.text
+    assert "Cancel" in review.text
+    assert retry.status_code == 303
+    assert retry.headers["location"] == f"/task-breakdowns/{breakdown_id}/review"
+    assert retried["status"] == "proposed"
+    assert retried["decision"] == "single_task"
+    assert retried["failure_type"] is None
+    assert retried["failure_message"] is None
+    assert retried["candidates"][0]["title"] == "Retry succeeded"
+
+def test_estimate_form_rejects_non_markdown_upload_without_creating_task(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM()
+
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "text/html"},
+            files={"markdown_file": ("tasks.txt", b"not markdown", "text/plain")},
+            follow_redirects=False,
+        )
+        tasks = db.list_tasks(tmp_path / "harness.db")
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/board?error=")
+    assert tasks == []
+
+def test_estimate_provider_exception_is_sanitized_and_creates_no_usage_session(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    raw_error = "provider secret outage raw detail"
+    llm = FakeEstimatorLLM(exc=RuntimeError(raw_error))
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/estimate",
+            headers=_auth_headers(),
+            json={"description": "Needs provider call"},
+        )
+        with db.connect(tmp_path / "harness.db") as conn:
+            sessions = conn.execute("select * from sessions").fetchall()
+            token_turns = conn.execute("select * from token_turns").fetchall()
+
+    task = response.json()
+    assert response.status_code == 200
+    assert task["status"] == "Blocked"
+    assert task["metadata"]["blocked_reason"] == "Estimator unavailable or invalid; manual estimate required."
+    assert raw_error not in json.dumps(task)
+    assert task["metadata"]["estimator_failure_type"] == "EstimatorUnavailableError"
+    assert sessions == []
+    assert token_turns == []
+
+def test_estimate_rejects_non_llm_source(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM(content={**FakeEstimatorLLM().content, "source": "heuristic"})
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post("/estimate", headers=_auth_headers(), json={"description": "Fix source"})
+
+    task = response.json()
+    assert response.status_code == 200
+    assert task["status"] == "Blocked"
+    assert task["metadata"]["estimator_failure_type"] == "EstimatorValidationError"
+
+def test_estimate_rejects_unapproved_recommended_model(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM(
+        content={**FakeEstimatorLLM().content, "recommended_model": "unapproved-frontier-model"}
+    )
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/estimate",
+            headers=_auth_headers(),
+            json={"description": "Reject arbitrary model recommendation"},
+        )
+
+    task = response.json()
+    assert response.status_code == 200
+    assert task["status"] == "Blocked"
+    assert task["recommended_model"] is None
+    assert task["metadata"]["estimator_failure_type"] == "EstimatorValidationError"
+
+def test_estimate_rejects_bool_numeric_fields(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    for field in ["token_estimate", "confidence"]:
+        content = {**FakeEstimatorLLM().content, field: True}
+        llm = FakeEstimatorLLM(content=content)
+        with _client_with_llm(tmp_path / field, llm) as client:
+            response = client.post(
+                "/estimate",
+                headers=_auth_headers(),
+                json={"description": f"Reject bool {field}"},
+            )
+
+        task = response.json()
+        assert response.status_code == 200
+        assert task["status"] == "Blocked"
+        assert task["metadata"]["estimator_failure_type"] == "EstimatorValidationError"
+
+@pytest.mark.parametrize(
+    ("payload", "field"),
+    [
+        ({"remaining_daily_tokens": True}, "remaining_daily_tokens"),
+        ({"remaining_daily_tokens": -1}, "remaining_daily_tokens"),
+        ({"daily_cap_tokens": True}, "daily_cap_tokens"),
+        ({"daily_cap_tokens": -1}, "daily_cap_tokens"),
+    ],
+)
+def test_estimate_rejects_bool_and_negative_numeric_request_fields(
+    tmp_path, monkeypatch, payload, field
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM()
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/estimate",
+            headers=_auth_headers(),
+            json={"description": "Bad estimate request numeric", **payload},
+        )
+
+    assert response.status_code == 422
+    assert field in response.text
+    assert llm.requests == []
+
+def test_manual_update_with_estimate_marks_estimation_source_manual(tmp_path):
+    with _client(tmp_path) as client:
+        created = client.post("/tasks", json={"description": "Needs manual estimate"}).json()
+        updated = client.put(
+            f"/tasks/{created['id']}",
+            json={"estimate_tokens": 9000, "recommended_model": "claude-haiku"},
+        )
+
+    assert updated.status_code == 200
+    assert updated.json()["metadata"]["estimation_source"] == "manual"
+
+def test_manual_update_after_estimator_failure_marks_estimation_source_manual(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM(content={"complexity": "simple"})
+    with _client_with_llm(tmp_path, llm) as client:
+        created = client.post("/estimate", headers=_auth_headers(), json={"description": "Fix typo"})
+        task = created.json()
+        updated = client.put(
+            f"/tasks/{task['id']}",
+            json={"estimate_tokens": 9000, "recommended_model": "claude-haiku"},
+        )
+
+    assert created.status_code == 200
+    assert task["status"] == "Blocked"
+    assert task["metadata"]["estimation_source"] == "manual_required"
+    assert updated.status_code == 200
+    assert updated.json()["estimate_tokens"] == 9000
+    assert updated.json()["recommended_model"] == "claude-haiku"
+    assert updated.json()["metadata"]["estimation_source"] == "manual"
+

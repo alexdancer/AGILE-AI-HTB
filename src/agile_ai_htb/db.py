@@ -5,6 +5,7 @@ import os
 import re
 import sqlite3
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -758,6 +759,30 @@ def update_task(path: Path | str, task_id: str, updates: dict[str, Any]) -> dict
     return get_task(path, task_id)
 
 
+def claim_task_agent_review(path: Path | str, task_id: str, claim: dict[str, Any]) -> dict[str, Any] | None:
+    """Atomically set an in-progress Agent Review marker if none exists.
+
+    Returns the claimed task, or None when another request already claimed or
+    completed review metadata for the task.
+    """
+    with connect(path) as conn:
+        row = conn.execute("select * from tasks where id = ?", (task_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"task not found: {task_id}")
+        task = _task_from_row(row)
+        metadata = {**task.get("metadata", {})}
+        if metadata.get("agent_review"):
+            return None
+        metadata["agent_review"] = _sanitize_evidence(claim)
+        cursor = conn.execute(
+            "update tasks set metadata_json = ? where id = ? and status = 'Review' and metadata_json = ?",
+            (_to_json(metadata), task_id, row["metadata_json"]),
+        )
+        if cursor.rowcount == 0:
+            return None
+    return get_task(path, task_id)
+
+
 def mark_stale_worker_runs_interrupted(path: Path | str) -> list[dict[str, Any]]:
     now = _now_iso()
     interrupted: list[dict[str, Any]] = []
@@ -856,6 +881,23 @@ def get_worker_run(path: Path | str, run_id: str) -> dict[str, Any]:
     if row is None:
         raise KeyError(f"worker run not found: {run_id}")
     return _worker_run_from_row(row)
+
+
+def update_worker_run_metadata(
+    path: Path | str,
+    run_id: str,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    existing = get_worker_run(path, run_id)
+    merged_metadata = {**existing.get("metadata", {}), **metadata}
+    with connect(path) as conn:
+        cursor = conn.execute(
+            "update worker_runs set metadata_json = ? where id = ?",
+            (_to_json(_sanitize_evidence(merged_metadata)), run_id),
+        )
+        if cursor.rowcount == 0:
+            raise KeyError(f"worker run not found: {run_id}")
+    return get_worker_run(path, run_id)
 
 
 def get_active_worker_run_for_task(path: Path | str, task_id: str) -> dict[str, Any] | None:
@@ -1303,6 +1345,32 @@ def set_portal_setting(path: Path | str, key: str, value: dict[str, Any]) -> dic
     return get_portal_setting(path, key)
 
 
+def update_portal_setting(
+    path: Path | str,
+    key: str,
+    default: dict[str, Any] | None,
+    updater: Callable[[dict[str, Any]], dict[str, Any]],
+) -> dict[str, Any]:
+    now = _now_iso()
+    with connect(path) as conn:
+        conn.execute("begin immediate")
+        row = conn.execute("select value_json from portal_settings where key = ?", (key,)).fetchone()
+        current = _from_json(row["value_json"]) if row is not None else dict(default or {})
+        updated = updater(current)
+        conn.execute(
+            """
+            insert into portal_settings (key, value_json, updated_at)
+            values (?, ?, ?)
+            on conflict(key) do update set
+                value_json = excluded.value_json,
+                updated_at = excluded.updated_at
+            """,
+            (key, _to_json(updated), now),
+        )
+        row = conn.execute("select value_json from portal_settings where key = ?", (key,)).fetchone()
+    return _from_json(row["value_json"])
+
+
 def get_token_budget_settings(path: Path | str) -> dict[str, Any]:
     return get_portal_setting(path, "token_budget", {})
 
@@ -1475,6 +1543,44 @@ def total_token_usage(path: Path | str, *, since: str | None = None) -> int:
                 (since,),
             ).fetchone()
     return int(row["total"])
+
+
+def estimation_accuracy(path: Path | str) -> dict[str, Any]:
+    """Compute estimation accuracy from completed tasks.
+
+    Returns completed_count, median_error_ratio, within_2x_pct.
+    All values null when no completed tasks with both estimate and actual exist.
+    Error ratio = actual_tokens / estimate_tokens.
+    """
+    with connect(path) as conn:
+        rows = conn.execute(
+            """
+            select estimate_tokens, actual_tokens
+            from tasks
+            where status = 'Done'
+              and estimate_tokens is not null
+              and actual_tokens is not null
+              and actual_tokens > 0
+            """
+        ).fetchall()
+    if not rows:
+        return {
+            "completed_count": None,
+            "median_error_ratio": None,
+            "within_2x_pct": None,
+        }
+    ratios = sorted(row["actual_tokens"] / row["estimate_tokens"] for row in rows)
+    n = len(ratios)
+    if n % 2 == 0:
+        median = (ratios[n // 2 - 1] + ratios[n // 2]) / 2
+    else:
+        median = ratios[n // 2]
+    within_2x = sum(1 for r in ratios if 0.5 <= r <= 2.0) / n * 100
+    return {
+        "completed_count": n,
+        "median_error_ratio": round(median, 2),
+        "within_2x_pct": round(within_2x, 1),
+    }
 
 
 def token_usage_breakdown(path: Path | str, *, since: str | None = None) -> dict[str, Any]:

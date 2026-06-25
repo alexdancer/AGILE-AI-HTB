@@ -45,6 +45,17 @@ def write_default_operator_config(path: Path | str = DEFAULT_CONFIG_PATH) -> dic
     return config
 
 
+def update_operator_config(path: Path | str = DEFAULT_CONFIG_PATH, **updates: Any) -> dict[str, Any]:
+    config_path = Path(path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config = dict(DEFAULT_LOCAL_CONFIG)
+    config.update(load_operator_config(config_path))
+    config.update({key: value for key, value in updates.items() if value is not None})
+    _sanitize_env_name_fields(config)
+    config_path.write_text(_render_config(config), encoding="utf-8")
+    return config
+
+
 def write_default_secrets_env(
     config: dict[str, Any], path: Path | str = DEFAULT_SECRETS_PATH
 ) -> dict[str, str]:
@@ -55,6 +66,15 @@ def write_default_secrets_env(
     values = dict(existing)
     values.setdefault(portal_token_env, f"htb-{secrets.token_urlsafe(18)}")
     values.setdefault(control_key_env, CONTROL_API_KEY_PLACEHOLDER)
+    secrets_path.write_text(_render_secrets_env(values), encoding="utf-8")
+    return values
+
+
+def ensure_secret_placeholder(env_name: str, path: Path | str = DEFAULT_SECRETS_PATH) -> dict[str, str]:
+    secrets_path = Path(path)
+    secrets_path.parent.mkdir(parents=True, exist_ok=True)
+    values = _parse_env_file(secrets_path) if secrets_path.exists() else {}
+    values.setdefault(env_name, CONTROL_API_KEY_PLACEHOLDER)
     secrets_path.write_text(_render_secrets_env(values), encoding="utf-8")
     return values
 

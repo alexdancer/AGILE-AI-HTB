@@ -16,9 +16,16 @@
     </div>
   </div>
   <div class="panel-body">
+    <div class="evidence-summary" style="margin-bottom:16px">
+      <div class="item"><p class="section-label">Task / project</p><p class="mono muted">{{ evidence_summary.task }} · {{ evidence_summary.selected_project }}</p></div>
+      <div class="item"><p class="section-label">Worker launch</p><p class="mono muted">{{ evidence_summary.adapter_id }} · {{ evidence_summary.worker_model }} · {{ evidence_summary.tracking_mode }}</p><p class="mono muted">target: {{ evidence_summary.launch_target }}</p></div>
+      <div class="item"><p class="section-label">Status / result</p><span class="pill {% if evidence_summary.requires_review %}yellow{% else %}green{% endif %}">{% if evidence_summary.requires_review %}review needed{% else %}clear{% endif %}</span><p class="mono muted">{{ evidence_summary.status }} · {{ evidence_summary.result }}</p></div>
+      <div class="item"><p class="section-label">Usage / guardrails</p><p class="mono muted">{{ "{:,}".format(evidence_summary.token_totals.total_tokens) }} tokens · {{ evidence_summary.alarms }} alarms · {{ evidence_summary.failed_checkpoints }} failed checks</p></div>
+      <div class="item"><p class="section-label">Evidence coverage</p><p class="mono muted">{{ evidence_summary.worker_runs }} runs · {{ evidence_summary.worker_events }} timeline events · {{ evidence_summary.error_events }} errors</p>{% if evidence_summary.missing_labels %}<p class="mono muted">{{ evidence_summary.missing_labels|join(' · ') }}</p>{% endif %}</div>
+    </div>
     <div class="grid cols-2">
       <div>
-        <h3 class="mono muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin:0 0 8px">Token totals</h3>
+        <h3 class="section-label">Token totals</h3>
         <div class="kv">
           <div class="k">prompt_tokens</div><div class="v">{{ "{:,}".format(token_totals.prompt_tokens) }}</div>
           <div class="k">completion_tokens</div><div class="v">{{ "{:,}".format(token_totals.completion_tokens) }}</div>
@@ -28,20 +35,22 @@
           <div class="k">adapter_verification</div><div class="v">{{ "{:,}".format(token_breakdown.by_category.adapter_verification) }}</div>
           <div class="k">reporting_summary</div><div class="v">{{ "{:,}".format(token_breakdown.by_category.reporting_summary) }}</div>
         </div>
-        <h3 class="mono muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin:16px 0 8px">Token log</h3>
-        <table>
-          <thead><tr><th>kind</th><th>model</th><th>tokens</th></tr></thead>
-          <tbody>
-            {% for turn in artifact.token_log %}
-            <tr><td class="mono">{{ turn.usage_kind }}</td><td class="mono">{{ turn.model }}</td><td class="mono">{{ "{:,}".format(turn.total_tokens) }}</td></tr>
-            {% else %}
-            <tr><td colspan="3" class="muted">No token rows.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
+        <details style="margin-top:16px">
+          <summary class="section-label">Token log</summary>
+          <table>
+            <thead><tr><th>kind</th><th>model</th><th>tokens</th></tr></thead>
+            <tbody>
+              {% for turn in artifact.token_log %}
+              <tr><td class="mono">{{ turn.usage_kind }}</td><td class="mono">{{ turn.model }}</td><td class="mono">{{ "{:,}".format(turn.total_tokens) }}</td></tr>
+              {% else %}
+              <tr><td colspan="3" class="muted">No token rows.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </details>
       </div>
       <div>
-        <h3 class="mono muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin:0 0 8px">Zone timeline</h3>
+        <h3 class="section-label">Zone timeline</h3>
         <table>
           <thead><tr><th>zone</th><th>max tokens</th></tr></thead>
           <tbody>
@@ -57,9 +66,9 @@
   </div>
 </section>
 
-<section class="panel">
-  <div class="panel-header"><h3>Worker Run timeline</h3></div>
-  <div class="panel-body tight">
+<details class="panel">
+  <summary class="panel-header"><h3>Worker Run timeline</h3><span class="mono muted">raw timeline evidence</span></summary>
+  <div class="panel-body tight table-wrap">
     <table>
       <thead><tr><th>time</th><th>level</th><th>layer</th><th>kind</th><th>event</th></tr></thead>
       <tbody>
@@ -77,10 +86,10 @@
       </tbody>
     </table>
   </div>
-</section>
+</details>
 
-<section class="panel">
-  <div class="panel-header"><h3>Repo Context Brief</h3></div>
+<details class="panel">
+  <summary class="panel-header"><h3>Repo Context Brief</h3><span class="mono muted">raw prompt context evidence</span></summary>
   <div class="panel-body">
     {% for run in artifact.worker_runs %}
       {% if run.metadata.repo_context_brief %}
@@ -97,7 +106,7 @@
     <div class="muted">No Worker Run evidence.</div>
     {% endfor %}
   </div>
-</section>
+</details>
 
 <section class="grid cols-2">
   <article class="panel">

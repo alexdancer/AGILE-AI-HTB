@@ -101,6 +101,8 @@ All env vars read by `Settings()`:
 | `TOKEN_TRACKER_PORTAL_COOKIE_SECURE` | `false` | Set `true` for HTTPS (Render behind TLS) |
 | `TOKEN_TRACKER_PROVIDER_API_KEY_ENV` | `PROVIDER_API_KEY` | Legacy control-plane API key env fallback |
 
+Local operator runs can change the control-plane provider/model at `/settings/control-plane` without restarting. Save writes non-secret fields to `.htb/config.toml`, keeps API key values in `.htb/secrets.env` or environment, and changes the setup state to `needs test` until the connection test passes.
+
 ## Hot tips
 
 ### SQLite persistence

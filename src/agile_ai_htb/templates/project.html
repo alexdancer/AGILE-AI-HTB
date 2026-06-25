@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}Connected project | AGILE-AI-HTB{% endblock %}
+{% block title %}Projects | AGILE-AI-HTB{% endblock %}
 {% block content %}
-<h1 class="page-title">Connected project</h1>
+<h1 class="page-title">Projects</h1>
 <p class="page-sub">connect local repo · detect project profile · show local runner capability</p>
 
 {% if error %}
@@ -25,12 +25,12 @@
 </section>
 
 <section class="panel">
-  <div class="panel-header"><h3>Connect local repo</h3></div>
+  <div class="panel-header"><h3>Open local repo</h3></div>
   <div class="panel-body">
     <form method="post" action="/settings/project/connect">
       <label class="mono" for="root-path">Local repository path</label>
       <input id="root-path" name="root_path" placeholder="/Users/alex/path/to/repo" required>
-      <button type="submit" class="primary" style="margin-top:10px">Connect project</button>
+      <button type="submit" class="primary" style="margin-top:10px">Open project</button>
     </form>
   </div>
 </section>
@@ -68,7 +68,7 @@
       {% endif %}
     </article>
     {% else %}
-    <p class="muted">No connected project yet.</p>
+    <p class="muted">No projects yet.</p>
     {% endfor %}
   </div>
 </section>

@@ -10,9 +10,13 @@ from pydantic import BaseModel
 
 from agile_ai_htb import db
 from agile_ai_htb.auth import require_portal_auth
+from agile_ai_htb.template_context import portal_template_context
 
 router = APIRouter()
-templates = Jinja2Templates(directory=Path(__file__).resolve().parents[1] / "templates")
+templates = Jinja2Templates(
+    directory=Path(__file__).resolve().parents[1] / "templates",
+    context_processors=[portal_template_context],
+)
 
 AlarmAction = Literal["continue", "abort_session", "raise_budget", "adjust_guardrail"]
 

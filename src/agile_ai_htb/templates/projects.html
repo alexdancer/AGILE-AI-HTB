@@ -20,7 +20,7 @@
 </section>
 
 <section class="panel">
-  <div class="panel-header"><h3>Connected projects</h3></div>
+  <div class="panel-header"><h3>Projects</h3></div>
   <div class="panel-body">
     <div class="grid cols-3">
       {% for project in projects %}
@@ -30,7 +30,7 @@
         <p class="muted mono" style="margin:0">{{ project.root_path }}</p>
       </a>
       {% else %}
-      <p class="muted">No connected projects yet.</p>
+      <p class="muted">No projects yet.</p>
       {% endfor %}
     </div>
   </div>

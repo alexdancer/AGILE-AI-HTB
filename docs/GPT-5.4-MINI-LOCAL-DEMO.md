@@ -510,25 +510,13 @@ This proves the demo shell is not relying on generic provider-key fan-out.
 
 ## 16. Optional: OpenAI-compatible provider path
 
-Stop the server, then update `.htb/config.toml` for an OpenAI-compatible endpoint:
+Use the live portal editor instead of restarting for model/provider experiments:
 
-```bash
-uv run htb init
-# In .htb/config.toml, set:
-# database_path = ".demo/compatible-harness.db"
-# control_plane_provider = "openai-compatible"
-# control_plane_model = "gpt-5.4-mini"
-# control_plane_base_url = "<your-compatible-provider-base-url>"
-# In .htb/secrets.env, set AGILE_AI_HTB_CONTROL_API_KEY to the compatible provider key.
-
-uv run htb serve
-```
-
-Then seed the demo adapter:
-
-```bash
-uv run htb seed-demo
-```
+1. Open `/settings/control-plane`.
+2. Choose `OpenAI-compatible`.
+3. Set the model and base URL.
+4. Set the API key env name, then put the actual key value in `.htb/secrets.env`.
+5. Save, then rerun the control-plane connection test. The setup page should show `needs test` until this passes.
 
 Repeat steps 7 through 15.
 
@@ -536,20 +524,7 @@ Repeat steps 7 through 15.
 
 ## 17. Optional: Anthropic direct-provider path
 
-Anthropic does not serve `gpt-5.4-mini`. Use an Anthropic model to test the Anthropic direct client.
-
-Stop the server, then update `.htb/config.toml` for Anthropic:
-
-```bash
-uv run htb init
-# In .htb/config.toml, set:
-# database_path = ".demo/anthropic-harness.db"
-# control_plane_provider = "anthropic"
-# control_plane_model = "claude-3-5-sonnet-20241022"
-# In .htb/secrets.env, set AGILE_AI_HTB_CONTROL_API_KEY to the Anthropic key.
-
-uv run htb serve
-```
+Anthropic does not serve `gpt-5.4-mini`. Use the live portal editor to choose Anthropic and `claude-haiku-4-5`, set the API key env name, put the actual key value in `.htb/secrets.env`, save, then rerun the connection test.
 
 Test:
 

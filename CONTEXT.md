@@ -1,5 +1,10 @@
 # Context
 
+## Repository Agent Context
+**Definition**: The repo-level operating guidance for coding agents working on AGILE-AI-HTB.
+**Properties**: `AGENTS.md` is the entrypoint for agent workflow instructions, OpenSpec usage, issue-tracker assumptions, triage label vocabulary, and verification commands. `CONTEXT.md` is the single domain glossary for product, architecture, workflow, and terminology changes. Agents should read `CONTEXT.md` before changing Harness behavior, Portal copy, OpenSpec artifacts, tests, demo data, or docs that use product language.
+**Relationships**: Guides Worker and human-assisted implementation work. Complements OpenSpec artifacts under `openspec/`; OpenSpec change instructions still control planning and task artifact paths, while this glossary controls canonical domain language.
+
 ## Harness
 **Definition**: The governing framework that wraps a coding agent, providing guardrails, checkpoints, material handling, and alarms.
 **Also known as**: AGILE-AI-HTB, Token-Tracker Harness.
@@ -172,6 +177,21 @@
 **Definition**: The user-facing Kanban-style orchestration surface where the User enters or imports coding work, reviews harness estimates, selects a Worker, launches governed work, and tracks completion.
 **Properties**: Columns represent orchestration state: Estimated (token/model recommendation produced and launchable once guardrails pass), Running (Worker Session active), Review (Session ended and awaits human review), Done (accepted), and Blocked (estimation failed or task needs human change before launch or continuation). There is no full Scrum/Jira workflow and no normal unestimated Backlog because task intake exists to break down, estimate, and budget token spend. A task with a valid estimate but no verified Worker Adapter remains Estimated with Launch available but guardrail-blocked rather than becoming Blocked. Each task card shows estimated vs. actual tokens, model recommendation, default Worker Adapter with per-task override, and linked Session results. Global budget state is visible while planning and dispatching work.
 **Relationships**: Part of Material Handling. Contains Tasks. Produces estimates and Model Recommendations. Dispatches Estimated Tasks to a Worker through a Session. Returns Session Reports to the User. Accepts work through manual single-task entry, Markdown plan import with task breakdown, or long-task decomposition into multiple smaller Tasks. Current product docs, demo data, and tests should use the canonical board states; old Backlog language belongs only in clearly historical implementation plans.
+
+## Board Run Queue
+**Definition**: A project-scoped AGILE Board automation mode that launches eligible Estimated Tasks one at a time from `/projects/{project_id}/board`.
+**Properties**: Requires an explicit Connected Project, uses the existing Task Launch path and Launch Guardrails, records queue source/status/stop reasons as automation evidence, and never falls back to a global or most-recent project. It launches the next eligible Task only after the active Worker Run reaches a terminal state. It stops on no eligible Tasks, operator stop, launch guardrail failure, budget override requirement, native usage acknowledgement requirement, retryable Worker failure, or hard blocker. It does not auto-approve budgets, auto-mark Done, create repair Tasks, or run cross-project autopilot.
+**Relationships**: Operates on the AGILE Board, Tasks, Worker Runs, Launch Guardrails, Token Budget, and Review Disposition. It is Level 3 automation, not Level 4 autonomous execution.
+
+## Run Automation Policy
+**Definition**: The explicit project-board policy recorded with board automation events and queued launches.
+**Properties**: Default policy is project-scoped, one active Worker Run at a time, no automatic budget override, no automatic Review disposition, and human-required final disposition. It may enable optional Auto Agent Review, but review output remains advisory evidence. Policy and source metadata are persisted on queue state and launched Tasks so operators can audit whether a launch came from `Run next task` or the Board Run Queue.
+**Relationships**: Configures Board Run Queue behavior. Consumed by Worker Run lifecycle refresh and displayed in the Portal run automation panel.
+
+## Auto Review
+**Definition**: Optional queue policy that automatically runs Agent Review after a queued Worker Run successfully moves a Task into Review.
+**Properties**: Uses the existing Agent Review logic and control-plane/orchestrator model. Stores review success or failure as task review evidence and automation timeline evidence. It never changes Review Disposition, never marks Done, never blocks the Task, and never starts autonomous repair work.
+**Relationships**: A policy option for Board Run Queue. Produces Agent Review metadata for Review Disposition while preserving human-only final acceptance or blocking.
 
 ## Review Disposition
 **Definition**: The operator-controlled workflow for deciding what happens after a successful Worker Run moves a Task into Review.

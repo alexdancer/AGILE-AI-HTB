@@ -600,7 +600,12 @@ def _execute_worker_run(
             prompt_tokens=native_evidence.prompt_tokens,
             completion_tokens=native_evidence.completion_tokens,
             cost=native_evidence.cost,
-            raw_usage={**native_evidence.raw_usage, "usage_source": usage_source, "tracking_mode": tracking_mode},
+            raw_usage={
+                **native_evidence.raw_usage,
+                "total_tokens": native_evidence.total_tokens,
+                "usage_source": usage_source,
+                "tracking_mode": tracking_mode,
+            },
         )
         _record_worker_event(
             database_path,

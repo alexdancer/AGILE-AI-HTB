@@ -24,10 +24,14 @@ from agile_ai_htb.task_breakdown import (
     breakdown_task_source,
     validate_breakdown_result,
 )
+from agile_ai_htb.template_context import portal_template_context
 from agile_ai_htb.worker_model_allowlist import allowed_worker_model_ids
 
 router = APIRouter()
-templates = Jinja2Templates(directory=Path(__file__).resolve().parents[1] / "templates")
+templates = Jinja2Templates(
+    directory=Path(__file__).resolve().parents[1] / "templates",
+    context_processors=[portal_template_context],
+)
 CANONICAL_TASK_STATUSES = {"Estimated", "Running", "Review", "Done", "Blocked"}
 PositiveStrictInt = Annotated[int, Field(strict=True, gt=0)]
 NonNegativeStrictInt = Annotated[int, Field(strict=True, ge=0)]
@@ -228,6 +232,7 @@ async def _estimate_and_create_task(
     settings = request.app.state.settings
     estimator_model = settings.estimator_model
     try:
+        project_root = (extra_metadata or {}).get("project_root_path")
         result, llm_response = await estimate_task(
             description,
             request.app.state.guardrails,
@@ -235,6 +240,7 @@ async def _estimate_and_create_task(
             estimator_model=estimator_model,
             remaining_daily_tokens=remaining_daily_tokens,
             daily_cap_tokens=daily_cap_tokens,
+            project_root=project_root,
         )
     except EstimatorError as exc:
         return db.create_task(

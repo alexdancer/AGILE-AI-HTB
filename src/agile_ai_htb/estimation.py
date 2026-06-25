@@ -6,6 +6,7 @@ from typing import Any
 
 from agile_ai_htb.guardrails import GuardrailConfig
 from agile_ai_htb.llm import response_to_dict
+from agile_ai_htb.repo_context import build_repo_context_brief
 
 
 @dataclass(frozen=True)
@@ -56,21 +57,23 @@ async def estimate_task(
     estimator_model: str,
     remaining_daily_tokens: int | None = None,
     daily_cap_tokens: int | None = None,
+    project_root: str | None = None,
 ) -> tuple[EstimateResult, Any]:
+    project_context = _build_project_context(project_root)
+    user_payload: dict[str, Any] = {
+        "task_description": description,
+        "remaining_daily_tokens": remaining_daily_tokens,
+        "daily_cap_tokens": daily_cap_tokens,
+    }
+    if project_context:
+        user_payload["project_context"] = project_context
     request = {
         "model": estimator_model,
         "messages": [
-            {"role": "system", "content": _system_prompt(config)},
+            {"role": "system", "content": _system_prompt(config, project_context)},
             {
                 "role": "user",
-                "content": json.dumps(
-                    {
-                        "task_description": description,
-                        "remaining_daily_tokens": remaining_daily_tokens,
-                        "daily_cap_tokens": daily_cap_tokens,
-                    },
-                    sort_keys=True,
-                ),
+                "content": json.dumps(user_payload, sort_keys=True),
             },
         ],
         "temperature": 0,
@@ -83,7 +86,23 @@ async def estimate_task(
     return _parse_response(response, config), response
 
 
-def _system_prompt(config: GuardrailConfig) -> str:
+def _build_project_context(project_root: str | None) -> str:
+    """Build a compact project context brief for the estimator.
+
+    Returns empty string when project_root is None, missing, or unreadable
+    — the estimator is designed to work without context.
+    """
+    if not project_root:
+        return ""
+    try:
+        brief = build_repo_context_brief(project_root)
+    except (OSError, ValueError):
+        return ""
+    text = str(brief.get("text") or "").strip()
+    return text[:8_000]
+
+
+def _system_prompt(config: GuardrailConfig, project_context: str = "") -> str:
     routing = {
         name: {
             "description": route.description,
@@ -92,7 +111,7 @@ def _system_prompt(config: GuardrailConfig) -> str:
         for name, route in config.model_routing.task_complexity.items()
     }
     clamp = config.model_routing.budget_aware_clamp
-    return (
+    prompt = (
         "You estimate software task implementation token budgets. Return ONLY valid JSON "
         "with exactly these fields: token_estimate (positive integer), complexity "
         "(simple|modest|complex), recommended_model (string), confidence (number 0-1), "
@@ -103,6 +122,12 @@ def _system_prompt(config: GuardrailConfig) -> str:
         f"enabled={clamp.enabled}, remaining_daily_threshold={clamp.remaining_daily_threshold}, "
         f"note_template={clamp.note!r}."
     )
+    if project_context:
+        prompt += (
+            "\n\nProject context (use to ground your estimate in real project surface):\n"
+            f"{project_context}"
+        )
+    return prompt
 
 
 def _parse_response(response: Any, config: GuardrailConfig) -> EstimateResult:

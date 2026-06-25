@@ -83,6 +83,8 @@ Launch Guardrails distinguish read-only from write-capable sessions. Read-only r
 
 Worker failure handling separates operational launch failures from hard blockers. If OpenCode crashes, exits non-zero, times out, or produces no budget-authoritative usage after a launchable Task has started, the Worker Run fails, the Task returns to **Estimated**, and the Harness preserves sanitized launch-error evidence for retry. Hard safety/workflow failures, such as read-only project mutation or write-capable verification failure requiring manual intervention, move or keep the Task **Blocked** with preserved logs, token ledger entries when present, failure reason, branch name, and any uncommitted diff.
 
+Project boards support bounded Level 1-3 run automation. `/projects/{project_id}/board` shows a compact Run automation panel with live refresh, `Run next task`, and an explicit one-at-a-time `Run queue`. The queue uses the same Task Launch path and Launch Guardrails as manual launches, records automation policy/source/stop evidence, and stops on no eligible Tasks, operator stop, guardrail failure, budget override requirement, native usage acknowledgement requirement, retryable Worker failure, or hard blocker. Auto Agent Review may be enabled for queued successful Worker Runs, but it only stores advisory review evidence; the operator still chooses Mark Done or Block. There is no cross-project autopilot, auto-budget override, auto-Done, or autonomous repair loop.
+
 ### Local run modes
 
 The first local implementation should be **all-in-one local mode**:

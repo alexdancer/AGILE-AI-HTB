@@ -1,5 +1,25 @@
 # Agent Instructions
 
+## Agent skills
+
+### Issue tracker
+
+This repo tracks work in GitHub Issues for `alexdancer/AI-Harness-Token-Tracker`. Use the `gh` CLI when creating or updating issues.
+
+### Triage labels
+
+Use the default triage vocabulary unless repo labels say otherwise:
+
+- `needs-triage` — maintainer needs to evaluate
+- `needs-info` — waiting on reporter
+- `ready-for-agent` — fully specified and ready for an AFK agent
+- `ready-for-human` — needs human implementation or decision
+- `wontfix` — will not be actioned
+
+### Domain docs
+
+This is a single-context repo. Read `CONTEXT.md` before making product, architecture, workflow, or terminology changes. Treat it as the source of truth for Harness, Control Plane, Worker Adapter, AGILE Board, budget governance, and demo vocabulary.
+
 ## OpenSpec workflow
 
 This repo uses OpenSpec for spec-driven planning. OpenSpec is initialized under `openspec/` and the CLI is available as `openspec`.
@@ -25,4 +45,4 @@ For implementation work, keep changes minimal, run targeted tests, then mark com
 
 ## Project verification
 
-Use `pytest` for the Python test suite.
+Use `uv run pytest` for the Python test suite when using the repo-managed uv environment. If the environment is already active and dependencies are installed, `pytest` is acceptable.

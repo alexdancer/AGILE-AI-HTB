@@ -4,6 +4,14 @@
 <h1 class="page-title">First-run setup</h1>
 <p class="page-sub">connect control plane · confirm token budget · verify Worker token tracking · launch from board</p>
 
+<section class="status-toolbar">
+  <div class="status-group">
+    <span class="pill {% if ready_to_launch %}green{% else %}yellow{% endif %}">{% if ready_to_launch %}ready{% else %}next missing action{% endif %}</span>
+    <span class="status-item">{{ next_step.detail }}</span>
+  </div>
+  <a class="btn primary" href="{{ next_step.href }}">{{ next_step.label }}</a>
+</section>
+
 <section class="grid cols-4">
   {% for step in steps %}
   <article class="kpi">

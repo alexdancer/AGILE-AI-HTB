@@ -9,10 +9,10 @@
   <div class="panel-body">
     <div class="grid cols-4">
       {% for action in next_actions %}
-      <a class="card" href="{{ action.href }}" style="display:block;margin-bottom:0;color:var(--fg-0)">
+      <a class="card surface-link action-card" href="{{ action.href }}">
         <span class="pill {{ action.tone }}">Action</span>
-        <h3 style="margin:10px 0 4px">{{ action.label }}</h3>
-        <p class="muted" style="margin:0">{{ action.detail }}</p>
+        <h3>{{ action.label }}</h3>
+        <p class="muted">{{ action.detail }}</p>
       </a>
       {% endfor %}
     </div>
@@ -62,7 +62,7 @@
           <td><span class="pill blue">{{ session.status }}</span></td>
         </tr>
         {% else %}
-        <tr><td colspan="4" class="muted">No active sessions.</td></tr>
+        <tr><td colspan="4"><div class="empty-state">No active sessions.</div></td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -86,8 +86,39 @@
       <div class="reco">→ {{ alarm.recommended_action }}</div>
     </div>
     {% else %}
-    <div class="muted">No alarms yet.</div>
+    <div class="empty-state">No alarms yet.</div>
     {% endfor %}
   </div>
 </section>
+
+{% if estimation_accuracy.completed_count is not none %}
+<section class="panel">
+  <div class="panel-header"><h3>Estimation accuracy</h3></div>
+  <div class="panel-body">
+    {% if estimation_accuracy.completed_count >= 3 %}
+    <div class="grid cols-3">
+      <article class="kpi">
+        <div class="label">Completed tasks tracked</div>
+        <div class="value mono">{{ estimation_accuracy.completed_count }}</div>
+        <div class="sub">with both estimate and actual tokens</div>
+      </article>
+      <article class="kpi">
+        <div class="label">Median error ratio</div>
+        <div class="value mono">{{ "%.2f"|format(estimation_accuracy.median_error_ratio) }}×</div>
+        <div class="sub">
+          {% if estimation_accuracy.median_error_ratio > 1.05 %}estimates are optimistic{% elif estimation_accuracy.median_error_ratio < 0.95 %}estimates are conservative{% else %}estimates are accurate{% endif %}
+        </div>
+      </article>
+      <article class="kpi">
+        <div class="label">Within 2× estimate</div>
+        <div class="value mono">{{ "%.0f"|format(estimation_accuracy.within_2x_pct) }}%</div>
+        <div class="sub">tasks where 0.5× ≤ actual ≤ 2.0×</div>
+      </article>
+    </div>
+    {% else %}
+    <div class="empty-state">Not enough completed tasks for accuracy tracking ({{ estimation_accuracy.completed_count }} of 3 needed).</div>
+    {% endif %}
+  </div>
+</section>
+{% endif %}
 {% endblock %}

@@ -164,6 +164,8 @@ Full runbook: [`docs/DEPLOY.md`](docs/DEPLOY.md)
 | `TOKEN_TRACKER_PROVIDER_API_KEY_ENV` | `PROVIDER_API_KEY` | Legacy control-plane provider-key env var name |
 | `PROVIDER_API_KEY` | — | Compatibility alias; not required for native OpenCode Worker mode |
 
+For local operator runs, use `/settings/control-plane` to change provider, model, base URL, or API key env name live. The portal saves non-secrets to `.htb/config.toml`, leaves key values in `.htb/secrets.env`/environment, and marks the connection as `needs test` until you rerun the control-plane test.
+
 ## Tests
 
 ```bash

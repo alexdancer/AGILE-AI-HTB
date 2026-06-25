@@ -2,25 +2,45 @@
 {% block title %}{{ project.name }} | AGILE-AI-HTB{% endblock %}
 {% block content %}
 <h1 class="page-title">{{ project.name }}</h1>
-<p class="page-sub">{{ project.root_path }}</p>
+<p class="page-sub">workspace · task board · sessions · Worker setup</p>
+
+<section class="status-toolbar">
+  <div class="status-group">
+    <span class="pill {% if summary.launch_ready %}green{% else %}yellow{% endif %}">{% if summary.launch_ready %}launch ready{% else %}setup needed{% endif %}</span>
+    <span class="status-item">{{ summary.total_tasks }} tasks</span>
+    <span class="status-item">{{ summary.counts.Estimated }} estimated</span>
+    <span class="status-item">{{ summary.counts.Review }} review</span>
+  </div>
+  <div class="status-item">profile={{ summary.capability_state }}{% if summary.test_command %} · test={{ summary.test_command }}{% endif %}</div>
+</section>
+
+<section class="grid cols-3" style="margin-bottom:20px">
+  {% for action in summary.next_actions %}
+  <a class="card surface-link action-card" href="{{ action.href }}">
+    <span class="pill {{ action.tone }}">next</span>
+    <h3>{{ action.label }}</h3>
+    <p class="muted">{{ action.detail }}</p>
+  </a>
+  {% endfor %}
+</section>
 
 <section class="grid cols-4" style="margin-bottom:20px">
-  <a class="kpi" href="/projects/{{ project.id }}/board" style="display:block;color:var(--fg-0)">
+  <a class="kpi surface-link" href="/projects/{{ project.id }}/board">
     <div class="label">Task board</div>
     <div class="value mono">Open</div>
     <div class="sub">estimate, launch, review</div>
   </a>
-  <a class="kpi" href="/sessions" style="display:block;color:var(--fg-0)">
+  <a class="kpi surface-link" href="/sessions">
     <div class="label">Sessions</div>
     <div class="value mono">Open</div>
     <div class="sub">run evidence and reports</div>
   </a>
-  <a class="kpi" href="/settings/workers" style="display:block;color:var(--fg-0)">
+  <a class="kpi surface-link" href="/settings/workers">
     <div class="label">Worker adapters</div>
     <div class="value mono">Setup</div>
     <div class="sub">CLI harness readiness</div>
   </a>
-  <a class="kpi" href="/settings/project" style="display:block;color:var(--fg-0)">
+  <a class="kpi surface-link" href="/settings/project">
     <div class="label">Project settings</div>
     <div class="value mono">Manage</div>
     <div class="sub">connected repos</div>

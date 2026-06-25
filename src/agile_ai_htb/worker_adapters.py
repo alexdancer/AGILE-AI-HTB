@@ -114,7 +114,15 @@ class WorkerAdapterBuilder:
             "native_verification_template",
             self.config.get("native_verification_template") or self._default_native_verification_template(),
         )
-        command = [str(part).format(model=model, prompt=prompt, workdir=workdir or "") for part in template]
+        command = [
+            str(part).format(
+                model=model,
+                prompt=prompt,
+                workdir=workdir or "",
+                max_budget_usd=self._native_budget_cap("verification_max_budget_usd", default="0.10"),
+            )
+            for part in template
+        ]
         return CommandPlan(
             command=command,
             cwd=Path(workdir) if workdir else None,
@@ -145,7 +153,15 @@ class WorkerAdapterBuilder:
             "native_launch_template",
             self.config.get("native_launch_template") or self._default_native_launch_template(),
         )
-        command = [str(part).format(model=model, prompt=task_prompt, workdir=workdir or "") for part in template]
+        command = [
+            str(part).format(
+                model=model,
+                prompt=task_prompt,
+                workdir=workdir or "",
+                max_budget_usd=self._native_budget_cap("launch_max_budget_usd", default="1.00"),
+            )
+            for part in template
+        ]
         return CommandPlan(
             command=command,
             cwd=Path(workdir) if workdir else None,
@@ -248,10 +264,35 @@ class WorkerAdapterBuilder:
             return {}
         return {"timeout_seconds": seconds} if seconds > 0 else {}
 
+    def _native_budget_cap(self, key: str, *, default: str) -> str:
+        value = self.config.get(key, self.config.get("max_budget_usd", default))
+        try:
+            cap = float(value)
+        except (TypeError, ValueError):
+            return default
+        return f"{cap:.2f}" if cap > 0 else default
+
 
 class ClaudeCodeAdapterBuilder(WorkerAdapterBuilder):
     api_key_env = "ANTHROPIC_API_KEY"
     base_url_env = "ANTHROPIC_BASE_URL"
+
+    def _default_native_verification_template(self) -> list[str]:
+        return [
+            "claude",
+            "-p",
+            "--model",
+            "{model}",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--max-budget-usd",
+            "{max_budget_usd}",
+            "{prompt}",
+        ]
+
+    def _default_native_launch_template(self) -> list[str]:
+        return self._default_native_verification_template()
 
 
 class CodexAdapterBuilder(WorkerAdapterBuilder):
@@ -451,7 +492,7 @@ def discover_worker_models(
     stdout = str(_result_field(completed, "stdout", "") or "")
     stderr = str(_result_field(completed, "stderr", "") or "")
     returncode = int(_result_field(completed, "returncode", 0) or 0)
-    models = _parse_discovered_models(stdout)
+    models = [] if returncode != 0 else _parse_discovered_models(stdout)
     if returncode != 0:
         reasons.append("Model discovery command failed.")
     if not models:
@@ -464,15 +505,19 @@ def discover_worker_models(
         "command_plan": redact_command_plan(plan),
         "tracking_mode": "native",
     }
-    if models:
-        config = {**(adapter.get("config") or {}), "model_discovery": evidence}
-        db.update_worker_adapter(database_path, adapter_id, config=config)
+    config = {**(adapter.get("config") or {}), "model_discovery": evidence}
+    db.update_worker_adapter(database_path, adapter_id, config=config)
     return ModelDiscoveryResult(not reasons, adapter_id, models, reasons, evidence)
 
 
 def discovered_worker_model_ids(adapter: dict[str, Any]) -> list[str]:
     discovery = (adapter.get("config") or {}).get("model_discovery") or {}
-    return [str(model) for model in discovery.get("models") or []]
+    models = [str(model) for model in discovery.get("models") or []]
+    if models:
+        return models
+    if adapter.get("kind") == "claude_code":
+        return [str(model) for model in adapter.get("supported_models") or []]
+    return []
 
 
 def _adapter_command_name(adapter: dict[str, Any]) -> str | None:
@@ -683,37 +728,84 @@ def _parse_native_usage_evidence(stdout: str, *, model: str, returncode: int = 0
         usage = _usage_payload(item)
         if not usage:
             continue
-        usage_model = _usage_model(item, usage) or model
-        if usage_model != model:
+        explicit_model = _usage_model(item, usage)
+        if explicit_model and explicit_model != model:
+            continue
+        model_usage_map = item.get("modelUsage") or item.get("model_usage")
+        if not explicit_model and (not isinstance(model_usage_map, dict) or _matching_model_usage(model_usage_map, model=model) is None):
             continue
         run_binding = _usage_run_binding(item, usage)
         if run_binding is None:
             continue
-        prompt_tokens = _int_from_any(
-            usage.get("prompt_tokens")
-            or usage.get("input_tokens")
-            or usage.get("input")
-            or usage.get("tokens_in")
-        )
-        completion_tokens = _int_from_any(
-            usage.get("completion_tokens")
-            or usage.get("output_tokens")
-            or usage.get("output")
-            or usage.get("tokens_out")
-        )
+        prompt_tokens = _prompt_token_count(usage)
+        completion_tokens = _completion_token_count(usage)
         total_tokens = _int_from_any(usage.get("total_tokens") or usage.get("total"))
         if total_tokens <= 0:
             total_tokens = prompt_tokens + completion_tokens
-        if total_tokens <= 0:
+        cost = _native_usage_cost(item, usage, model=model)
+        if total_tokens <= 0 or cost is None:
             continue
         return NativeUsageEvidence(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
-            cost=_float_from_any(usage.get("cost") or usage.get("cost_usd") or usage.get("usd") or item.get("cost")),
-            raw_usage={"model": usage_model, "usage": usage, "run_binding": run_binding},
+            cost=cost,
+            raw_usage={
+                "model": explicit_model or model,
+                "usage": usage,
+                "run_binding": run_binding,
+                "source": item,
+            },
         )
     return None
+
+
+def _prompt_token_count(usage: dict[str, Any]) -> int:
+    base_prompt_tokens = _int_from_any(
+        usage.get("prompt_tokens") or usage.get("input_tokens") or usage.get("input") or usage.get("tokens_in")
+    )
+    return (
+        base_prompt_tokens
+        + _int_from_any(usage.get("cache_read_input_tokens") or usage.get("cacheReadInputTokens"))
+        + _int_from_any(usage.get("cache_creation_input_tokens") or usage.get("cacheCreationInputTokens"))
+    )
+
+
+def _completion_token_count(usage: dict[str, Any]) -> int:
+    return _int_from_any(
+        usage.get("completion_tokens") or usage.get("output_tokens") or usage.get("output") or usage.get("tokens_out")
+    )
+
+
+def _native_usage_cost(item: dict[str, Any], usage: dict[str, Any], *, model: str) -> float | None:
+    model_usage = item.get("modelUsage") or item.get("model_usage")
+    if isinstance(model_usage, dict):
+        matching_details = _matching_model_usage(model_usage, model=model)
+        if matching_details is not None and matching_details.get("costUSD") is not None:
+            return _float_from_any(matching_details.get("costUSD"))
+        return None
+    for value in (item.get("total_cost_usd"), usage.get("cost"), usage.get("cost_usd"), usage.get("usd"), item.get("cost")):
+        if value is not None:
+            return _float_from_any(value)
+    return None
+
+
+def _matching_model_usage(model_usage: dict[str, Any], *, model: str) -> dict[str, Any] | None:
+    for usage_model, details in model_usage.items():
+        if not isinstance(details, dict):
+            continue
+        if _model_usage_matches(str(usage_model), selected_model=model):
+            return details
+    return None
+
+
+def _model_usage_matches(usage_model: str, *, selected_model: str) -> bool:
+    normalized_usage = usage_model.lower().replace("_", "-")
+    normalized_selected = selected_model.lower().replace("_", "-")
+    if normalized_usage == normalized_selected:
+        return True
+    alias_terms = {"sonnet", "haiku", "opus"}
+    return normalized_selected in alias_terms and normalized_selected in normalized_usage
 
 
 def _parse_json_stream(text: str) -> list[Any]:

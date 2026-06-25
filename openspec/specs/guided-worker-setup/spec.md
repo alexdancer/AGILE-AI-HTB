@@ -7,7 +7,7 @@ Define the simplified Worker Setup experience that guides operators through conf
 ## Requirements
 
 ### Requirement: Worker Setup presents one active adapter workflow
-The Worker Setup page SHALL present a guided setup workflow for one active Worker Adapter at a time while still exposing all supported adapter presets as selectable options. The workflow SHALL let the operator choose which discovered Worker models are allowed for governed AGILE recommendations and board launches.
+The Worker Setup page SHALL present a guided setup workflow for one active Worker Adapter at a time while still exposing all supported adapter presets as selectable options. The workflow SHALL let the operator choose which discovered Worker models are allowed for governed AGILE recommendations and board launches, and SHALL provide filtering and visible bulk selection controls when the discovered model list is shown.
 
 #### Scenario: Default adapter exists
 - **WHEN** an operator opens `/settings/workers`
@@ -30,6 +30,24 @@ The Worker Setup page SHALL present a guided setup workflow for one active Worke
 - **WHEN** model discovery has returned models for the active Worker Adapter
 - **THEN** the setup workflow shows the discovered models as selectable allowed-model options
 - **AND** saving the selection persists the subset used by estimates, board dropdowns, and launch guardrails
+
+#### Scenario: Operator filters discovered model options
+- **WHEN** model discovery has returned a long model list for the active Worker Adapter
+- **AND** the operator enters a filter term in the discovered model selector
+- **THEN** the setup workflow shows only discovered model options whose model id matches the filter term
+- **AND** already-selected hidden options remain selected unless the operator changes them
+
+#### Scenario: Operator checks visible discovered models
+- **WHEN** the operator has filtered the discovered model selector
+- **AND** clicks `Check visible`
+- **THEN** every currently visible discovered model option is selected
+- **AND** non-visible discovered model options are not changed
+
+#### Scenario: Operator unchecks visible discovered models
+- **WHEN** the operator has filtered the discovered model selector
+- **AND** clicks `Uncheck visible`
+- **THEN** every currently visible discovered model option is deselected
+- **AND** non-visible discovered model options are not changed
 
 ### Requirement: Worker Setup shows launch readiness and next action
 The Worker Setup page SHALL show a single user-facing readiness summary for the active adapter that explains whether it is launch-ready and what action is required next.
@@ -77,3 +95,26 @@ The Worker Setup page SHALL configure Worker/coding harness adapters and SHALL N
 - **WHEN** an operator selects OpenCode on the Worker Setup page
 - **THEN** the page asks for Worker Adapter setup inputs such as project folder, model discovery/selection, and token-tracking verification
 - **AND** the page does not ask for a generic `PROVIDER_API_KEY` as if it were required for native Worker setup
+
+### Requirement: Setup pages show the next missing setup action
+Setup and Worker Adapter pages SHALL identify the next missing action needed to make the Portal launch-ready.
+
+#### Scenario: Worker setup highlights next missing action
+- **WHEN** an authenticated operator opens Worker Adapter setup and the active adapter is not launchable
+- **THEN** the page SHALL show the next missing setup action such as select default adapter, discover models, allow models, verify tracking, or connect/open a project when that context is missing
+- **AND** the page SHALL link or focus the existing control that completes that action
+
+#### Scenario: Launch-ready setup shows board action
+- **WHEN** required setup is complete for launching governed tasks
+- **THEN** the setup surface SHALL show a launch-ready state and link to the appropriate project board or project selection surface
+
+### Requirement: Advanced diagnostics are secondary
+Worker/setup diagnostics SHALL remain available without overwhelming the first setup path.
+
+#### Scenario: Diagnostic detail remains available
+- **WHEN** adapter diagnostics, verification evidence, tracking details, or model discovery evidence exist
+- **THEN** the page SHALL keep that evidence available behind native disclosure or an advanced details section
+
+#### Scenario: Primary setup path is readable
+- **WHEN** an operator is completing setup for the first time
+- **THEN** advanced diagnostics SHALL NOT be required reading before the next missing action is visible

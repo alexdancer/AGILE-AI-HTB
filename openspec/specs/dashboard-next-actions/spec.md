@@ -1,7 +1,8 @@
 # dashboard-next-actions Specification
 
 ## Purpose
-TBD - created by archiving change improve-dashboard-next-actions. Update Purpose after archive.
+Define the dashboard next-action contract so operators see concise, workflow-linked actions derived from setup, task, and alarm state before lower-level KPI details.
+
 ## Requirements
 ### Requirement: Dashboard shows operator next actions
 The dashboard SHALL show an operator next-actions panel above the existing KPI cards. The panel SHALL summarize workflow actions derived from existing setup, task, and alarm state.
@@ -54,4 +55,16 @@ The next-actions panel SHALL include a fallback action to open the task board so
 #### Scenario: No urgent actions exist
 - **WHEN** there are no setup, launch, review, or alarm actions to highlight
 - **THEN** the next-actions panel still shows an action linking to `/board`
+
+### Requirement: Next-action surfaces use consistent action styling
+Dashboard and project next-action surfaces SHALL use consistent action-card or action-row styling and copy patterns.
+
+#### Scenario: Dashboard next actions match Portal action pattern
+- **WHEN** the dashboard renders Operator next actions
+- **THEN** each action SHALL use the same shared visual pattern as project overview action cards or rows
+- **AND** each action SHALL link to the existing page that handles the workflow
+
+#### Scenario: Next-action copy is concise and operator-facing
+- **WHEN** a next-action surface describes setup, launch, review, alarm, or board work
+- **THEN** the copy SHALL name the operator action and the affected workflow without exposing internal implementation terms as the primary label
 

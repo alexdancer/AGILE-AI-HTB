@@ -6,13 +6,58 @@
 <p class="page-sub">{% if active_project %}{{ active_project.root_path }} · {% endif %}estimate task · launch worker · running work · review gates · done · blocked</p>
 
 {% if error %}
-<div class="demo-banner" style="background:var(--danger);color:white;padding:10px 16px;border-radius:4px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:12px">
+<div class="notice danger" style="display:flex;justify-content:space-between;align-items:center;gap:12px">
   <span>{{ error }}</span>
   <span class="btn-row">
-    {% if 'adapter' in error|lower or 'tracking' in error|lower or 'worker' in error|lower %}<a href="/settings/workers" style="color:white;text-decoration:underline;font-weight:bold">Open Worker Setup</a>{% endif %}
-    <a href="{% if active_project %}/projects/{{ active_project.id }}/board{% else %}/board{% endif %}" style="color:white;text-decoration:none;font-weight:bold">&times;</a>
+    {% if 'adapter' in error|lower or 'tracking' in error|lower or 'worker' in error|lower %}<a href="/settings/workers">Open Worker Setup</a>{% endif %}
+    <a href="{% if active_project %}/projects/{{ active_project.id }}/board{% else %}/board{% endif %}">&times;</a>
   </span>
 </div>
+{% endif %}
+
+<section class="status-toolbar">
+  <div class="status-group">
+    <span class="pill {% if board_summary.launch_ready %}green{% else %}yellow{% endif %}">{% if board_summary.launch_ready %}launch ready{% else %}setup needed{% endif %}</span>
+    <span class="status-item">{{ board_summary.total_tasks }} tasks</span>
+    {% for column in columns %}<span class="status-item">{{ column }} {{ board_summary.counts[column] }}</span>{% endfor %}
+  </div>
+  <div class="status-item">
+    {% if board_summary.active_adapter %}adapter={{ board_summary.active_adapter.name }}{% if board_summary.active_adapter.tracking_label %} · {{ board_summary.active_adapter.tracking_label }}{% endif %}{% else %}no Worker adapter{% endif %} · refreshed <span data-last-refreshed>now</span>
+  </div>
+</section>
+
+{% if automation_summary %}
+<section class="panel" style="margin-bottom:16px">
+  <div class="panel-header">
+    <h3>Run automation</h3>
+    <span class="mono muted">{% if automation_summary.live_refresh_enabled %}Live refresh active{% else %}Manual launch mode{% endif %}</span>
+  </div>
+  <div class="panel-body" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+    <span class="mono muted">Eligible Estimated: {{ automation_summary.eligible_count }}</span>
+    <span class="mono muted">Running: {{ automation_summary.counts.Running }}</span>
+    <span class="mono muted">Review: {{ automation_summary.counts.Review }}</span>
+    <span class="mono muted">Policy: project-scoped · one-at-a-time</span>
+    {% if automation_summary.queue.status != 'idle' %}
+    <span class="mono muted">Queue: {{ automation_summary.queue.status }}{% if automation_summary.queue.latest_stop_reason %} · {{ automation_summary.queue.latest_stop_reason }}{% endif %}</span>
+    {% endif %}
+    {% if automation_summary.latest_event %}
+    <span class="mono muted">Latest: {{ automation_summary.latest_event.title }}</span>
+    {% endif %}
+    <form method="post" action="/projects/{{ active_project.id }}/run-next" style="margin-left:auto">
+      <button type="submit">Run next task</button>
+    </form>
+    {% if automation_summary.queue.status == 'running' %}
+    <form method="post" action="/projects/{{ active_project.id }}/queue/stop">
+      <button type="submit">Stop queue</button>
+    </form>
+    {% else %}
+    <form method="post" action="/projects/{{ active_project.id }}/queue/start" style="display:flex;gap:8px;align-items:center">
+      <label class="mono" style="font-size:11px"><input type="checkbox" name="auto_agent_review" value="1"> Auto Agent Review</label>
+      <button type="submit" class="primary">Run queue</button>
+    </form>
+    {% endif %}
+  </div>
+</section>
 {% endif %}
 
 <form method="post" action="{% if active_project %}/projects/{{ active_project.id }}/tasks/estimate-form{% else %}/tasks/estimate-form{% endif %}" enctype="multipart/form-data" style="margin-bottom:24px;display:flex;gap:10px;align-items:flex-end">
@@ -21,6 +66,9 @@
     <textarea id="intake-description" name="description" placeholder="e.g. Add a save command to the CLI\n\n- [ ] Update route\n- [ ] Add tests" rows="4" style="width:100%"></textarea>
     <label for="markdown-file" class="mono" style="font-size:11px;margin-top:6px">Optional .md task file</label>
     <input type="file" id="markdown-file" name="markdown_file" accept=".md,text/markdown,text/plain">
+    <p class="mono muted" style="font-size:11px;margin-top:4px">
+      {% if active_project %}Estimating with project context: {{ active_project.name }}{% else %}No project context — estimate will be less accurate{% endif %}
+    </p>
   </div>
   <button type="submit" class="primary">Estimate task</button>
 </form>
@@ -31,23 +79,26 @@
     <h3 class="mono" style="font-size:13px;text-transform:uppercase;letter-spacing:0.08em;margin:0 0 10px;color:var(--fg-1)">{{ column }}</h3>
     {% for task in tasks_by_status.get(column, []) %}
     <div class="task {% if column == 'Review' %}review{% endif %}" id="{{ task.id }}">
-      <strong>{{ task.description }}</strong>
-      <p class="muted mono">Task: {{ task.id }}</p>
-      {% if task.estimate_tokens is not none %}<p class="mono">Estimate: {{ "{:,}".format(task.estimate_tokens) }} tokens</p>{% endif %}
-      {% if task.recommended_model %}<p class="mono">Model: {{ task.recommended_model }}</p>{% endif %}
-      {% if task.actual_tokens is not none %}<p class="mono">Actual: {{ "{:,}".format(task.actual_tokens) }} tokens</p>{% endif %}
+      {% set launch_model = task.metadata.launch_model %}
+      {% set display_model = launch_model or task.recommended_model %}
+      <strong class="task-title">{{ task.description }}</strong>
+      <p class="task-meta mono">
+        {% if task.estimate_tokens is not none %}<span>Estimate: {{ "{:,}".format(task.estimate_tokens) }}</span>{% endif %}
+        {% if display_model %}<span>{% if launch_model %}Run{% else %}Model{% endif %}: {{ display_model }}</span>{% endif %}
+        {% if task.actual_tokens is not none %}<span>Actual: {{ "{:,}".format(task.actual_tokens) }}</span>{% endif %}
+      </p>
       {% if column == 'Estimated' and adapters %}
-      <form method="post" action="/tasks/{{ task.id }}/launch" style="margin-top:8px">
+      <form method="post" action="/tasks/{{ task.id }}/launch" style="margin-top:8px" data-disable-on-submit>
         <input type="hidden" name="proxy_url" value="{{ default_proxy_url }}">
         {% if active_project %}<input type="hidden" name="project_id" value="{{ active_project.id }}">{% endif %}
         {% if adapters|length > 0 %}
-        <label class="mono" style="font-size:11px">Adapter</label>
+        <label class="mono" style="font-size:11px">Worker Adapter</label>
         <select name="adapter_id" onchange="updateModels(this, 'models-{{ task.id }}')" style="width:100%;margin-bottom:4px">
           {% for a in adapters %}
           <option value="{{ a.id }}" {% if a.is_default %}selected{% endif %} data-models="{{ a.supported_models|join(',') }}">{{ a.name }}{% if a.tracking_label %} — {{ a.tracking_label }}{% endif %}</option>
           {% endfor %}
         </select>
-        <label class="mono" style="font-size:11px">Model</label>
+        <label class="mono" style="font-size:11px">Worker model{% if task.recommended_model %} · recommended={{ task.recommended_model }}{% endif %}</label>
         <select id="models-{{ task.id }}" name="model" style="width:100%;margin-bottom:6px">
           {% set default_adapter = adapters|selectattr("is_default")|first or adapters[0] %}
           {% for m in default_adapter.supported_models %}
@@ -66,8 +117,8 @@
         {% endif %}
         <button type="submit" style="width:100%">Launch task</button>
       </form>
-      {% elif column == 'Estimated' and not adapters %}
-      <p class="muted">No worker adapters configured.</p>
+      {% elif column == 'Estimated' and not board_summary.launch_ready %}
+      <p class="empty-state">No launchable Worker adapters. <a href="/settings/workers">Open Worker Setup</a>.</p>
       {% endif %}
       {% if column == 'Running' %}
       <p class="muted mono">Worker Run: {{ task.metadata.active_worker_run_id or 'active' }}</p>
@@ -76,51 +127,20 @@
         <button type="submit">Refresh status</button>
       </form>
       {% endif %}
-      {% if task.metadata.worker_run_events %}
-      <div style="margin-top:8px;padding:8px;border-left:3px solid var(--border);background:rgba(255,255,255,0.03)">
-        <p class="muted mono" style="margin:0 0 4px">Worker timeline</p>
-        <ul class="muted" style="margin:0;padding-left:18px">
-          {% for event in task.metadata.worker_run_events %}
-          <li><span class="mono">{{ event.kind }}</span> · {{ event.title }}{% if event.detail_summary %}<br><span class="mono">{{ event.detail_summary }}</span>{% endif %}</li>
-          {% endfor %}
-        </ul>
-      </div>
-      {% endif %}
       {% if task.metadata.launch_error %}
       <div class="launch-error" style="margin-top:8px;padding:8px;border-left:3px solid var(--danger);background:rgba(255,0,0,0.08)">
         <p class="muted"><strong>Launch error:</strong> {{ task.metadata.launch_error }}</p>
         {% if task.metadata.last_launch_failure %}
         <p class="muted mono">Return code: {{ task.metadata.last_launch_failure.returncode }}</p>
-        {% if task.metadata.last_launch_failure.stderr %}<p class="muted mono">{{ task.metadata.last_launch_failure.stderr }}</p>{% endif %}
         {% endif %}
       </div>
       {% endif %}
-      {% if task.metadata.launch_blocked_reason and not task.metadata.launch_retryable %}<p class="muted">{{ task.metadata.launch_blocked_reason }}</p>{% endif %}
-      {% if column == 'Blocked' and task.metadata.blocked_reason %}<p class="muted">{{ task.metadata.blocked_reason }}</p>{% endif %}
-      {% if column == 'Blocked' and task.metadata.requires_manual_estimate %}<p class="muted">Manual estimate required</p>{% endif %}
+      {% if task.metadata.launch_blocked_reason and not task.metadata.launch_retryable %}<p class="muted"><strong>Launch guardrail block:</strong> {{ task.metadata.launch_blocked_reason }}</p>{% endif %}
+      {% if column == 'Blocked' and task.metadata.blocked_reason %}<p class="muted"><strong>Human/block reason:</strong> {{ task.metadata.blocked_reason }}</p>{% endif %}
+      {% if column == 'Blocked' and task.metadata.requires_manual_estimate %}<p class="muted"><strong>Manual estimate required:</strong> Estimate this slice before Worker launch.</p>{% endif %}
       {% if column == 'Review' %}
-      {% if task.metadata.launch_stdout %}<p class="muted mono">Output: {{ task.metadata.launch_stdout }}</p>{% endif %}
       <div class="review-actions" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:grid;gap:8px">
         {% if task.metadata.review_actions_available %}
-        {% if task.metadata.review_prompt %}
-        <div style="padding:8px;background:rgba(255,255,255,0.04);border-radius:4px">
-          <p class="muted" style="margin:0 0 4px"><strong>User review note</strong></p>
-          <p class="muted" style="margin:0">{{ task.metadata.review_prompt }}</p>
-        </div>
-        {% endif %}
-        {% if task.metadata.agent_review %}
-        <div style="padding:8px;background:rgba(255,255,255,0.04);border-radius:4px">
-          <p class="muted" style="margin:0 0 4px"><strong>Agent Review</strong> · {{ task.metadata.agent_review.status }} · {{ task.metadata.agent_review.recommendation }}</p>
-          <p class="muted" style="margin:0">{{ task.metadata.agent_review.summary }}</p>
-          {% if task.metadata.agent_review.findings %}
-          <ul class="muted" style="margin:6px 0 0;padding-left:18px">
-            {% for finding in task.metadata.agent_review.findings %}
-            <li>{{ finding.severity }}: {{ finding.message }}{% if finding.path %} <span class="mono">{{ finding.path }}{% if finding.line %}:{{ finding.line }}{% endif %}</span>{% endif %}</li>
-            {% endfor %}
-          </ul>
-          {% endif %}
-        </div>
-        {% endif %}
         <form method="post" action="/tasks/{{ task.id }}/review" style="display:grid;gap:6px">
           {% if active_project %}<input type="hidden" name="project_id" value="{{ active_project.id }}">{% endif %}
           <input type="hidden" name="action" value="save_prompt">
@@ -152,10 +172,41 @@
         {% endif %}
       </div>
       {% endif %}
-      {% if task.session_id %}<p><a href="/sessions/{{ task.session_id }}">Session report</a></p>{% endif %}
+      <details class="task-details">
+        <summary>Details</summary>
+        <p class="muted mono">Task: {{ task.id }}</p>
+        <p class="muted full-description">{{ task.description }}</p>
+        {% if launch_model and task.recommended_model and launch_model != task.recommended_model %}<p class="muted mono">Recommended: {{ task.recommended_model }}</p>{% endif %}
+        {% if task.metadata.worker_run_events %}
+        <p class="muted mono" style="margin:8px 0 4px">Worker timeline</p>
+        <ul class="muted" style="margin:0;padding-left:18px">
+          {% for event in task.metadata.worker_run_events %}
+          <li><span class="mono">{{ event.kind }}</span> · {{ event.title }}{% if event.detail_summary %}<br><span class="mono">{{ event.detail_summary }}</span>{% endif %}</li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        {% if task.metadata.last_launch_failure and task.metadata.last_launch_failure.stderr %}<p class="muted mono">{{ task.metadata.last_launch_failure.stderr }}</p>{% endif %}
+        {% if task.metadata.launch_stdout %}<p class="muted mono">Output: {{ task.metadata.launch_stdout }}</p>{% endif %}
+        {% if task.metadata.review_prompt %}
+        <p class="muted"><strong>User review note</strong></p>
+        <p class="muted">{{ task.metadata.review_prompt }}</p>
+        {% endif %}
+        {% if task.metadata.agent_review %}
+        <p class="muted"><strong>Agent Review</strong> · {{ task.metadata.agent_review.status }} · {{ task.metadata.agent_review.recommendation }}</p>
+        <p class="muted">{{ task.metadata.agent_review.summary }}</p>
+        {% if task.metadata.agent_review.findings %}
+        <ul class="muted" style="margin:6px 0 0;padding-left:18px">
+          {% for finding in task.metadata.agent_review.findings %}
+          <li>{{ finding.severity }}: {{ finding.message }}{% if finding.path %} <span class="mono">{{ finding.path }}{% if finding.line %}:{{ finding.line }}{% endif %}</span>{% endif %}</li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        {% endif %}
+        {% if task.session_id %}<p><a href="/sessions/{{ task.session_id }}">Session report</a></p>{% endif %}
+      </details>
     </div>
     {% else %}
-    <p class="muted">No tasks.</p>
+    <p class="empty-state">{{ board_empty_states[column] }}</p>
     {% endfor %}
   </article>
   {% endfor %}
@@ -181,5 +232,30 @@ function updateModels(adapterSelect, modelSelectId) {
     modelSelect.appendChild(opt);
   }
 }
+document.querySelectorAll('form[data-disable-on-submit]').forEach(function(form) {
+  form.addEventListener('submit', function() {
+    var button = form.querySelector('button[type="submit"]');
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Launching…';
+    }
+  });
+});
+document.querySelectorAll('[data-last-refreshed]').forEach(function(el) {
+  el.textContent = new Date().toLocaleTimeString();
+});
+{% if active_project and automation_summary and automation_summary.live_refresh_enabled %}
+window.setTimeout(function pollBoardStatus() {
+  fetch('/projects/{{ active_project.id }}/board/status', {headers: {'accept': 'application/json'}})
+    .then(function(response) { return response.ok ? response.json() : null; })
+    .then(function(data) {
+      if (!data) return;
+      if (data.reload_required || data.has_active_runs || data.queue_active) {
+        window.location.reload();
+      }
+    })
+    .catch(function() {});
+}, 2500);
+{% endif %}
 </script>
 {% endblock %}
