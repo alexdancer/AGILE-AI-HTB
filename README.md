@@ -44,13 +44,29 @@ uv run htb seed-demo
 ## Docker
 
 ```bash
-docker-compose up -d
+# Local Control Plane/Portal. Override these in your shell; do not commit secrets.
+export TOKEN_TRACKER_PORTAL_TOKEN="replace-with-local-token"
+export AGILE_AI_HTB_CONTROL_PROVIDER="openai"
+export AGILE_AI_HTB_CONTROL_MODEL="gpt-5.4-mini"
+# Optional for model-powered estimates/reports:
+# export AGILE_AI_HTB_CONTROL_API_KEY="replace-with-provider-key"
+
+docker-compose up -d --build
 curl http://localhost:8000/health
 # {"status":"ok"}
 
-# Seed demo data (includes verified worker adapter)
+# Seed demo data and inspect setup from inside the container
 docker-compose exec agile-ai-htb htb seed-demo
+# Optional readiness report; exits nonzero until required secrets are set.
+docker-compose exec agile-ai-htb htb check || true
+
+# Full local Docker smoke: build/start, /health, /login, seed-demo,
+# container recreation DB persistence, cleanup.
+# Stops and recreates this repo's Compose service; named volumes are kept.
+scripts/docker-smoke.sh
 ```
+
+Docker runs the containerized Control Plane/Portal with SQLite at `/data/harness.db`. It does not automatically get host-installed OpenCode, Claude Code, Codex, Hermes, local repo paths, or host credentials; Worker launch readiness still depends on Worker Adapter setup and tracking-mode checks.
 
 ## The demo loop
 
@@ -155,9 +171,9 @@ Full runbook: [`docs/DEPLOY.md`](docs/DEPLOY.md)
 | `TOKEN_TRACKER_GUARDRAILS_PATH` | `guardrails.yaml` | Guardrail config |
 | `TOKEN_TRACKER_PORTAL_TOKEN` | — | Portal login/bearer token (required) |
 | `TOKEN_TRACKER_PORTAL_COOKIE_SECURE` | `false` | Set `true` for HTTPS |
-| `TOKEN_TRACKER_CONTROL_PLANE_MODEL` / `AGILE_AI_HTB_CONTROL_MODEL` | `gpt-4o-mini` | Control-plane model for estimates, summaries, and reports. Local/demo runs should set `gpt-5.4-mini`. |
+| `AGILE_AI_HTB_CONTROL_MODEL` / `TOKEN_TRACKER_CONTROL_PLANE_MODEL` | `gpt-4o-mini` | Control-plane model for estimates, summaries, and reports. Local/demo runs should set `gpt-5.4-mini`. |
 | `TOKEN_TRACKER_TASK_BREAKDOWN_MODEL` / `AGILE_AI_HTB_TASK_BREAKDOWN_MODEL` | control-plane model | Optional Task Breakdown Agent model. Falls back to the control-plane model and records spend as control-plane orchestration tokens labeled `task_breakdown`, not Worker Adapter spend. |
-| `TOKEN_TRACKER_CONTROL_PLANE_PROVIDER` / `AGILE_AI_HTB_CONTROL_PROVIDER` | `openai` | Direct upstream provider (`openai`, `openai-compatible`, or `anthropic`) |
+| `AGILE_AI_HTB_CONTROL_PROVIDER` / `TOKEN_TRACKER_CONTROL_PLANE_PROVIDER` | `openai` | Direct upstream provider (`openai`, `openai-compatible`, or `anthropic`) |
 | `AGILE_AI_HTB_CONTROL_BASE_URL` | — | Optional base URL for OpenAI-compatible upstreams |
 | `AGILE_AI_HTB_CONTROL_API_KEY_ENV` | `AGILE_AI_HTB_CONTROL_API_KEY` | Env var name holding control-plane API key |
 | `AGILE_AI_HTB_CONTROL_API_KEY` | — | Control-plane model API key |

@@ -25,7 +25,7 @@ class FakeControlPlaneLLM:
         return {
             "choices": [{"message": {"content": "AGILE_AI_HTB_CONTROL_PLANE_OK"}}],
             "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10},
-            "api_key": "sk_should_not_render",
+            "api_key": "sk_sho...nder",
         }
 
 
@@ -64,11 +64,13 @@ def _connect_project(database_path: Path, root: Path) -> dict:
 def _project_metadata(database_path: Path, root: Path) -> dict:
     return project_task_metadata(_connect_project(database_path, root))
 
+
 def test_sessions_index_renders_mockup_style_session_table(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     with _client(tmp_path) as client:
         started = client.post(
             "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
             json={"task_description": "Review live portal", "model": "claude-haiku"},
         ).json()
         db.record_token_turn(
@@ -93,11 +95,52 @@ def test_sessions_index_renders_mockup_style_session_table(tmp_path, monkeypatch
     assert "0 events" in html
     assert "zone:" in html
 
+
+def test_sessions_index_compacts_long_task_text_preserves_scan_fields(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    long_task = "Review compact sessions " + ("visible summary " * 20) + "FULL_TASK_TAIL_2099"
+    with _client(tmp_path) as client:
+        started = client.post(
+            "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
+            json={"task_description": long_task, "model": "claude-haiku"},
+        ).json()
+        db.record_token_turn(
+            tmp_path / "harness.db",
+            session_id=started["session_id"],
+            model="claude-haiku",
+            prompt_tokens=1234,
+            completion_tokens=56,
+            cost=0.01,
+            raw_usage={"total_tokens": 1290},
+        )
+
+        index = client.get("/sessions", headers=_portal_headers())
+        report = client.get(f"/sessions/{started['session_id']}", headers=_portal_headers())
+
+    assert index.status_code == 200
+    html = index.text
+    assert "compact-text lines-2" in html
+    assert "Review compact sessions" in html
+    assert "FULL_TASK_TAIL_2099" not in html
+    assert f"/sessions/{started['session_id']}" in html
+    assert "claude-haiku" in html
+    assert "1,234" in html
+    assert "56" in html
+    assert "1,290" in html
+    assert "0 runs" in html
+    assert "0 events" in html
+    assert "zone:" in html
+    assert report.status_code == 200
+    assert "FULL_TASK_TAIL_2099" in report.text
+
+
 def test_session_report_renders_totals_alarm_checkpoint_without_internal_artifact_link(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     with _client(tmp_path) as client:
         started = client.post(
             "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
             json={"task_description": "Audit session", "model": "claude-haiku"},
         ).json()
         session_id = started["session_id"]
@@ -207,7 +250,101 @@ def test_session_report_renders_totals_alarm_checkpoint_without_internal_artifac
     assert "Repo Context Brief" in html
     assert "AGENTS.md" in html
     assert "pyproject.toml" in html
-    assert "sk_secret_123" not in html
+    assert "***" not in html
+
+
+def test_session_report_compacts_summary_but_preserves_full_evidence(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    long_task = "Compact report task " + ("summary text " * 24) + "REPORT_TASK_TAIL_2099"
+    long_command_tail = "LAUNCH_TARGET_TAIL_2099"
+    long_detail_tail = "TIMELINE_DETAIL_TAIL_2099"
+    long_result_tail = "ERROR_RESULT_TAIL_2099"
+    repo_tail = "REPO_CONTEXT_TAIL_2099"
+
+    with _client(tmp_path) as client:
+        started = client.post(
+            "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
+            json={"task_description": long_task, "model": "claude-haiku"},
+        ).json()
+        session_id = started["session_id"]
+        db.record_token_turn(
+            tmp_path / "harness.db",
+            session_id=session_id,
+            model="claude-haiku",
+            prompt_tokens=50,
+            completion_tokens=10,
+            cost=0.01,
+            raw_usage={"total_tokens": 60},
+        )
+        task = db.create_task(
+            tmp_path / "harness.db",
+            description=long_task,
+            status="Running",
+            session_id=session_id,
+            metadata=_project_metadata(tmp_path / "harness.db", tmp_path / "compact-report-project"),
+        )
+        worker_run = db.create_worker_run(
+            tmp_path / "harness.db",
+            task_id=task["id"],
+            session_id=session_id,
+            adapter_id="opencode",
+            model="claude-haiku",
+            tracking_mode="native_usage",
+            command_plan={
+                "command": ["opencode", "run", "--dir", str(tmp_path / "compact-report-project"), "x" * 240, long_command_tail],
+                "env": {},
+                "metadata": {},
+            },
+            metadata={
+                "connected_project_name": "compact-report-project",
+                "repo_context_brief": {
+                    "documents": [{"path": "AGENTS.md", "excerpt": "Use pytest."}],
+                    "manifests": ["pyproject.toml"],
+                    "text": "Repo context\n" + ("bounded raw text\n" * 30) + repo_tail,
+                },
+            },
+        )
+        db.mark_worker_run_failed(
+            tmp_path / "harness.db",
+            worker_run["id"],
+            error_type="demo_failure",
+            error_message=long_result_tail + (" actionable failure detail" * 40),
+            returncode=2,
+        )
+        db.record_worker_run_event(
+            tmp_path / "harness.db",
+            worker_run_id=worker_run["id"],
+            session_id=session_id,
+            task_id=task["id"],
+            kind="adapter_complete",
+            title="Worker Run completed with detailed evidence",
+            level="info",
+            detail={"custom_payload": ("timeline payload " * 30) + long_detail_tail},
+        )
+
+        response = client.get(f"/sessions/{session_id}", headers=_portal_headers())
+
+    assert response.status_code == 200
+    html = response.text
+    assert "compact-text lines-2" in html
+    assert "compact-text lines-3" in html
+    assert "Full task and launch evidence" in html
+    assert "Full launch target" in html
+    assert "Full status/result" in html
+    assert "Timeline detail" in html
+    assert "raw-evidence" in html
+    assert "Repo Context Brief" in html
+    assert "REPORT_TASK_TAIL_2099" in html
+    assert long_command_tail in html
+    assert long_detail_tail in html
+    assert "custom_payload" in html
+    assert long_result_tail in html
+    assert repo_tail in html
+    assert "opencode" in html
+    assert "native_usage" in html
+    assert "compact-report-project" in html
+
 
 def test_session_report_missing_session_returns_404(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
@@ -215,4 +352,3 @@ def test_session_report_missing_session_returns_404(tmp_path, monkeypatch):
         response = client.get("/sessions/missing", headers=_portal_headers())
 
     assert response.status_code == 404
-

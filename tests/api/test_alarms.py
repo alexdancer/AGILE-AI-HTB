@@ -18,6 +18,7 @@ def _client(tmp_path):
 def _start_session(client):
     return client.post(
         "/session/start",
+        headers={"Authorization": "Bearer test-portal-token"},
         json={"task_description": "Review alarm", "model": "claude-haiku"},
     ).json()["session_id"]
 

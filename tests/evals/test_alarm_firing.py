@@ -52,6 +52,7 @@ def _client(tmp_path):
 def _start_session(client, daily_used_tokens=0, daily_cap_tokens=1_000_000, session_cap_tokens=200_000):
     return client.post(
         "/session/start",
+        headers={"Authorization": "Bearer test-portal-token"},
         json={
             "task_description": "Alarm eval",
             "model": "claude-haiku",

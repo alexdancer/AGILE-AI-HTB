@@ -30,7 +30,7 @@ def _guardrails(request: Request):
     return request.app.state.guardrails
 
 
-@router.post("/session/start")
+@router.post("/session/start", dependencies=[Depends(require_portal_auth)])
 def start_session(payload: SessionStartRequest, request: Request) -> dict[str, Any]:
     session_api_key = f"sk_sess_{secrets.token_urlsafe(24)}"
     budget = payload.budget or {}

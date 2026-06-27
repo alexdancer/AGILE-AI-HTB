@@ -151,29 +151,24 @@ Render dashboard → agile-ai-htb → Shell. Useful for:
 Before pushing, verify the image builds and runs:
 
 ```bash
-# Build
-docker build -t agile-ai-htb .
+export TOKEN_TRACKER_PORTAL_TOKEN="replace-with-local-token"
+export AGILE_AI_HTB_CONTROL_PROVIDER="openai"
+export AGILE_AI_HTB_CONTROL_MODEL="gpt-5.4-mini"
+# Optional for model-powered checks:
+# export AGILE_AI_HTB_CONTROL_API_KEY="replace-with-provider-key"
 
-# Run (background)
-docker run --rm -d --name agile-ai-htb-dev \
-  -p 8000:8000 \
-  -e PORT=8000 \
-  -e TOKEN_TRACKER_PORTAL_TOKEN=demo-token \
-  agile-ai-htb
-
-# Wait for startup
-sleep 3
-
-# Health check
+docker-compose up -d --build
 curl -s http://localhost:8000/health
-# {"status":"ok"}
+curl -s http://localhost:8000/login >/dev/null
+docker-compose exec agile-ai-htb htb seed-demo
+# Optional readiness report; exits nonzero until required secrets are set.
+docker-compose exec agile-ai-htb htb check || true
+docker-compose down
 
-# Portal login page
-curl -s http://localhost:8000/login | head -5
-
-# Seed demo data
-docker exec agile-ai-htb-dev htb seed-demo
-
-# Stop
-docker stop agile-ai-htb-dev
+# Or run the full local smoke path. It picks docker-compose first, falls back to
+# docker compose, verifies /data/harness.db across container recreation, and cleans up.
+# It stops and recreates this repo's Compose service; named volumes are kept.
+scripts/docker-smoke.sh
 ```
+
+Local Docker proves the containerized Control Plane/Portal. It does not automatically provide host OpenCode, Claude Code, Codex, Hermes, local repo paths, or host credentials; Worker launch readiness still comes from configured Worker Adapter and tracking-mode checks.

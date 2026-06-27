@@ -69,6 +69,7 @@ def test_alarms_browser_accept_renders_html_inbox_without_breaking_json_api(tmp_
     with _client(tmp_path) as client:
         started = client.post(
             "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
             json={"task_description": "Alarm inbox", "model": "claude-haiku"},
         ).json()
         db.record_alarm(

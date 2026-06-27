@@ -593,6 +593,52 @@ def test_verify_worker_adapter_native_usage_accepts_opencode_step_finish_tokens(
     assert artifact["token_log"][0]["total_tokens"] == 22245
 
 
+def test_verify_worker_adapter_native_usage_accepts_opencode_step_finish_without_model(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(
+        db_path,
+        "opencode",
+        workdir=str(tmp_path),
+        config={"native_verification_template": ["opencode", "run", "--model", "{model}", "--format", "json", "{prompt}"]},
+        supported_models=["openai/gpt-5.4"],
+    )
+    stdout = "\n".join(
+        [
+            json.dumps({"type": "text", "sessionID": "ses_demo_2099", "part": {"type": "text", "text": SENTINEL_RESPONSE}}),
+            json.dumps(
+                {
+                    "type": "step_finish",
+                    "sessionID": "ses_demo_2099",
+                    "part": {
+                        "type": "step-finish",
+                        "sessionID": "ses_demo_2099",
+                        "messageID": "msg_demo_2099",
+                        "tokens": {"total": 14766, "input": 7572, "output": 14, "reasoning": 12, "cache": {"write": 0, "read": 7168}},
+                        "cost": 0,
+                    },
+                }
+            ),
+        ]
+    )
+
+    result = verify_worker_adapter(
+        db_path,
+        "opencode",
+        model="openai/gpt-5.4",
+        proxy_url="http://127.0.0.1:8000/v1",
+        tracking_mode="native_usage",
+        runner=FakeRunner(stdout=stdout),
+    )
+
+    artifact = db.build_session_artifact(db_path, result.session_id)
+    assert result.passed is True
+    assert artifact["token_log"][0]["model"] == "openai/gpt-5.4"
+    assert artifact["token_log"][0]["prompt_tokens"] == 14740
+    assert artifact["token_log"][0]["completion_tokens"] == 14
+    assert artifact["token_log"][0]["total_tokens"] == 14766
+
+
 def test_verify_worker_adapter_native_usage_fails_without_usage_evidence(tmp_path):
     db_path = tmp_path / "harness.db"
     db.init_db(db_path)

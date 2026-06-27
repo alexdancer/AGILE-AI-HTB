@@ -46,6 +46,7 @@ def test_chat_completions_governs_forwards_persists_usage_snapshot_and_alarms(tm
     with client:
         started = client.post(
             "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
             json={
                 "task_description": "Proxy request",
                 "model": "claude-haiku",
@@ -92,6 +93,7 @@ def test_chat_completions_uses_request_model_for_cost_calculation(tmp_path, monk
     with client:
         started = client.post(
             "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
             json={"task_description": "Proxy request", "model": "session-model"},
         ).json()
         client.post(
@@ -110,6 +112,7 @@ def test_chat_completions_ignores_previous_day_usage_for_zone_selection(tmp_path
     with client:
         old = client.post(
             "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
             json={"task_description": "Old session", "model": "claude-haiku"},
         ).json()
         db.record_token_turn(
@@ -126,6 +129,7 @@ def test_chat_completions_ignores_previous_day_usage_for_zone_selection(tmp_path
 
         started = client.post(
             "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
             json={
                 "task_description": "New session",
                 "model": "claude-haiku",
@@ -149,6 +153,7 @@ def test_chat_completions_rejects_aborted_session(tmp_path):
     with client:
         started = client.post(
             "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
             json={"task_description": "Abort", "model": "claude-haiku"},
         ).json()
         with db.connect(tmp_path / "harness.db") as conn:

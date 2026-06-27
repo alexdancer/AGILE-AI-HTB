@@ -33,6 +33,7 @@ def test_streaming_chat_completions_passes_chunks_and_persists_final_usage_only(
     with TestClient(app) as client:
         started = client.post(
             "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
             json={"task_description": "Stream request", "model": "claude-haiku"},
         ).json()
         with client.stream(

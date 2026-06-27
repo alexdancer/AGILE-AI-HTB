@@ -42,6 +42,7 @@ def _start_session(client, **budget_kw):
     budget = {"daily_used_tokens": 0, "daily_cap_tokens": 1_000_000, "session_cap_tokens": 200_000, **budget_kw}
     return client.post(
         "/session/start",
+        headers={"Authorization": "Bearer test-portal-token"},
         json={"task_description": "Proxy token tracking", "model": "claude-haiku", "budget": budget},
     ).json()
 

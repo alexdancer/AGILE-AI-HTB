@@ -299,6 +299,7 @@ Run:
 
 ```bash
 curl -fsS -X POST "$BASE_URL/session/start" \
+  -H "Authorization: Bearer ${TOKEN_TRACKER_PORTAL_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
     "task_description": "DEMO 2099 direct proxy test",

@@ -23,13 +23,14 @@ The system SHALL execute the Worker Adapter command outside the HTTP request lif
 - **AND** the response does not wait for the adapter subprocess to exit
 
 ### Requirement: Worker Run success moves task to Review
-The system SHALL move the task from Running to Review when the Worker Run finishes successfully and required runtime evidence is present.
+The system SHALL move the task from Running to Review when the Worker Run finishes successfully and required runtime evidence is present, and SHALL persist the task's actual Worker execution token total from authoritative usage evidence.
 
 #### Scenario: Successful worker run enters Review
 - **WHEN** a background Worker Run exits with return code 0
 - **AND** required token usage evidence for the selected tracking mode is present
 - **THEN** the system marks the Worker Run `completed`
 - **AND** the associated task moves to Review
+- **AND** the associated task records `actual_tokens` as the Worker execution token total for that completed run's session.
 
 ### Requirement: Worker Run records review evidence
 The system SHALL preserve sanitized Worker Run evidence for operator review after completion, including the connected project root/effective Worker workdir and evidence of where files were changed when such evidence is available.

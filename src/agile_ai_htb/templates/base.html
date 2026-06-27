@@ -106,11 +106,19 @@
     th { background: var(--bg-2); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-2); }
     tr:hover td { background: var(--bg-2); }
     .task { background: var(--bg-2); border: 1px solid var(--line); border-radius: 4px; padding: 12px 14px; margin: 12px 0; }
-    .task-title { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+    .compact-text, .task-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+    .compact-text.lines-3, .task-title { -webkit-line-clamp: 3; }
+    .compact-text.lines-4 { -webkit-line-clamp: 4; }
+    .wrap-anywhere { overflow-wrap: anywhere; word-break: break-word; }
+    .mt-12 { margin-top: 12px; }
+    .raw-evidence { white-space: pre-wrap; max-height: 260px; overflow: auto; background: rgba(0,0,0,0.18); padding: 10px; border-radius: 4px; overflow-wrap: anywhere; }
+    .raw-evidence.tall { max-height: 360px; }
     .task-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 8px 0; color: var(--fg-2); overflow-wrap: anywhere; }
     .task-details { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+    .task-details.spaced { margin-bottom: 16px; }
     .task-details summary { color: var(--accent); cursor: pointer; font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
     .task-details .full-description { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .task-details .raw-evidence { margin: 6px 0; }
     .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; border: 1px solid var(--line-2); color: var(--fg-1); background: var(--bg-2); }
     .pill.green { color: var(--accent); border-color: var(--accent-dim); }
     .pill.yellow { color: var(--warn); border-color: #8a6d2a; }

@@ -20,10 +20,22 @@ def _portal_headers():
     return {"Authorization": f"Bearer {PORTAL_TOKEN}"}
 
 
+def test_session_start_requires_portal_auth_before_key_mint(tmp_path):
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/session/start",
+            json={"task_description": "Unauthed spend path", "model": "claude-haiku"},
+        )
+
+    assert response.status_code == 401
+    assert "session_api_key" not in response.text
+
+
 def test_session_start_returns_key_zone_and_report_url(tmp_path):
     with _client(tmp_path) as client:
         response = client.post(
             "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
             json={
                 "task_description": "Implement a tiny CLI command",
                 "model": "claude-haiku",
@@ -44,6 +56,7 @@ def test_session_report_current_zone_includes_prior_daily_budget_usage(tmp_path)
     with _client(tmp_path) as client:
         started = client.post(
             "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
             json={
                 "task_description": "Finish under tight budget",
                 "model": "claude-haiku",
@@ -62,6 +75,7 @@ def test_session_report_artifact_and_checkpoint_evaluation(tmp_path, monkeypatch
     with _client(tmp_path) as client:
         started = client.post(
             "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
             json={"task_description": "Investigate loop", "model": "claude-sonnet"},
         ).json()
         session_id = started["session_id"]

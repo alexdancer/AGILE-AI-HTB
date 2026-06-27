@@ -5,10 +5,15 @@
 <p class="page-sub">tokens · guardrails · alarms · checkpoints</p>
 
 <section class="panel {% if requires_review %}review{% endif %}">
+  {% set task_text = session.task_description or '' %}
+  {% set task_preview = task_text[:220] ~ ('…' if task_text|length > 220 else '') %}
+  {% set launch_target = evidence_summary.launch_target or '' %}
+  {% set launch_preview = launch_target[:180] ~ ('…' if launch_target|length > 180 else '') %}
+  {% set result_text = evidence_summary.result or '' %}
   <div class="session-head">
     <div>
       <div class="id">{{ session.id }}</div>
-      <div class="meta">{{ session.task_description }} · model={{ session.model }} · status={{ session.status }}</div>
+      <div class="meta compact-text lines-2">{{ task_preview }} · model={{ session.model }} · status={{ session.status }}</div>
     </div>
     <div class="flex">
       <span class="pill blue">{{ session.status }}</span>
@@ -17,12 +22,18 @@
   </div>
   <div class="panel-body">
     <div class="evidence-summary" style="margin-bottom:16px">
-      <div class="item"><p class="section-label">Task / project</p><p class="mono muted">{{ evidence_summary.task }} · {{ evidence_summary.selected_project }}</p></div>
-      <div class="item"><p class="section-label">Worker launch</p><p class="mono muted">{{ evidence_summary.adapter_id }} · {{ evidence_summary.worker_model }} · {{ evidence_summary.tracking_mode }}</p><p class="mono muted">target: {{ evidence_summary.launch_target }}</p></div>
-      <div class="item"><p class="section-label">Status / result</p><span class="pill {% if evidence_summary.requires_review %}yellow{% else %}green{% endif %}">{% if evidence_summary.requires_review %}review needed{% else %}clear{% endif %}</span><p class="mono muted">{{ evidence_summary.status }} · {{ evidence_summary.result }}</p></div>
+      <div class="item"><p class="section-label">Task / project</p><p class="mono muted compact-text lines-3">{{ task_preview }} · {{ evidence_summary.selected_project }}</p></div>
+      <div class="item"><p class="section-label">Worker launch</p><p class="mono muted compact-text lines-2">{{ evidence_summary.adapter_id }} · {{ evidence_summary.worker_model }} · {{ evidence_summary.tracking_mode }}</p><p class="mono muted compact-text lines-2">target: {{ launch_preview }}</p></div>
+      <div class="item"><p class="section-label">Status / result</p><span class="pill {% if evidence_summary.requires_review %}yellow{% else %}green{% endif %}">{% if evidence_summary.requires_review %}review needed{% else %}clear{% endif %}</span><p class="mono muted compact-text lines-2">{{ evidence_summary.status }} · {{ result_text }}</p>{% if result_text %}<details class="task-details"><summary>Full status/result</summary><pre class="mono raw-evidence">{{ evidence_summary.status }} · {{ result_text }}</pre></details>{% endif %}</div>
       <div class="item"><p class="section-label">Usage / guardrails</p><p class="mono muted">{{ "{:,}".format(evidence_summary.token_totals.total_tokens) }} tokens · {{ evidence_summary.alarms }} alarms · {{ evidence_summary.failed_checkpoints }} failed checks</p></div>
-      <div class="item"><p class="section-label">Evidence coverage</p><p class="mono muted">{{ evidence_summary.worker_runs }} runs · {{ evidence_summary.worker_events }} timeline events · {{ evidence_summary.error_events }} errors</p>{% if evidence_summary.missing_labels %}<p class="mono muted">{{ evidence_summary.missing_labels|join(' · ') }}</p>{% endif %}</div>
+      <div class="item"><p class="section-label">Evidence coverage</p><p class="mono muted">{{ evidence_summary.worker_runs }} runs · {{ evidence_summary.worker_events }} timeline events · {{ evidence_summary.error_events }} errors</p>{% if evidence_summary.missing_labels %}<p class="mono muted compact-text lines-2">{{ evidence_summary.missing_labels|join(' · ') }}</p>{% endif %}</div>
     </div>
+    <details class="task-details spaced">
+      <summary>Full task and launch evidence</summary>
+      <div class="full-description raw-evidence">{{ task_text }}</div>
+      <p class="section-label mt-12">Full launch target</p>
+      <pre class="mono raw-evidence">{{ launch_target }}</pre>
+    </details>
     <div class="grid cols-2">
       <div>
         <h3 class="section-label">Token totals</h3>
@@ -78,7 +89,7 @@
           <td><span class="pill {% if event.level == 'error' %}red{% elif event.level == 'warn' %}yellow{% else %}blue{% endif %}">{{ event.level }}</span></td>
           <td class="mono">{{ event.layer }}</td>
           <td class="mono">{{ event.kind }}</td>
-          <td>{{ event.title }}{% if event.detail_summary %}<div class="muted mono">{{ event.detail_summary }}</div>{% endif %}</td>
+          <td><div class="wrap-anywhere">{{ event.title }}</div>{% if event.detail_summary %}<div class="muted mono compact-text lines-2">{{ event.detail_summary }}</div>{% endif %}{% if event.detail %}<details class="task-details"><summary>Timeline detail</summary><pre class="mono raw-evidence">{{ event.detail|tojson(indent=2) }}</pre></details>{% endif %}</td>
         </tr>
         {% else %}
         <tr><td colspan="5" class="muted">No Worker Run timeline events.</td></tr>
@@ -99,7 +110,7 @@
           {% for doc in run.metadata.repo_context_brief.documents %}<span class="mono">{{ doc.path }}</span>{% if not loop.last %}, {% endif %}{% endfor %}
           {% for manifest in run.metadata.repo_context_brief.manifests %}{% if run.metadata.repo_context_brief.documents or not loop.first %}, {% endif %}<span class="mono">{{ manifest }}</span>{% endfor %}
         </p>
-        <pre class="mono" style="white-space:pre-wrap;max-height:260px;overflow:auto;background:rgba(0,0,0,0.18);padding:10px;border-radius:4px">{{ run.metadata.repo_context_brief.text }}</pre>
+        <pre class="mono raw-evidence">{{ run.metadata.repo_context_brief.text }}</pre>
       </div>
       {% endif %}
     {% else %}

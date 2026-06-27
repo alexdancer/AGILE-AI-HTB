@@ -204,6 +204,7 @@ def test_review_action_save_prompt_and_mark_done_preserve_completed_session_evid
             status="Review",
             estimate_tokens=8000,
             recommended_model="gpt-5.1-codex",
+            actual_tokens=321,
             session_id=session["id"],
         )
 
@@ -225,6 +226,7 @@ def test_review_action_save_prompt_and_mark_done_preserve_completed_session_evid
     body = done.json()
     assert body["status"] == "Done"
     assert body["session_id"] == session["id"]
+    assert body["actual_tokens"] == 321
     assert body["metadata"]["review_decision"] == "accepted"
     assert body["metadata"]["reviewed_by"] == "operator"
 

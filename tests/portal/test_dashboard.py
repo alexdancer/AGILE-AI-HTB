@@ -69,6 +69,7 @@ def test_dashboard_renders_budget_alarm_and_navigation_sections(tmp_path, monkey
     with _client(tmp_path) as client:
         started = client.post(
             "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
             json={"task_description": "Build portal", "model": "claude-haiku"},
         ).json()
         db.record_token_turn(
@@ -134,6 +135,7 @@ def test_dashboard_next_actions_count_launch_and_review_tasks(tmp_path, monkeypa
         )
         session = client.post(
             "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
             json={"task_description": "Completed Worker task", "model": "gpt-5.1-codex"},
         ).json()
         db.update_session_status(database_path, session["session_id"], "completed")
@@ -187,6 +189,7 @@ def test_dashboard_next_actions_prioritize_critical_alarms(tmp_path, monkeypatch
     with _client(tmp_path) as client:
         session = client.post(
             "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
             json={"task_description": "Budget alarm", "model": "claude-haiku"},
         ).json()
         db.record_alarm(
@@ -214,6 +217,7 @@ def test_dashboard_budget_ignores_previous_day_usage(tmp_path, monkeypatch):
     with _client(tmp_path) as client:
         old = client.post(
             "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
             json={"task_description": "Old spend", "model": "claude-haiku"},
         ).json()
         db.record_token_turn(
@@ -230,6 +234,7 @@ def test_dashboard_budget_ignores_previous_day_usage(tmp_path, monkeypatch):
 
         current = client.post(
             "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
             json={"task_description": "Current spend", "model": "claude-haiku"},
         ).json()
         db.record_token_turn(

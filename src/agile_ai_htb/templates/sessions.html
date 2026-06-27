@@ -15,9 +15,11 @@
       </thead>
       <tbody>
         {% for item in sessions %}
+        {% set task_text = item.session.task_description or '' %}
+        {% set task_preview = task_text[:160] ~ ('…' if task_text|length > 160 else '') %}
         <tr>
           <td class="mono muted"><a href="/sessions/{{ item.session.id }}">{{ item.session.id }}</a></td>
-          <td>{{ item.session.task_description }}</td>
+          <td><div class="compact-text lines-2">{{ task_preview }}</div></td>
           <td class="mono">{{ item.session.model }}</td>
           <td><span class="pill {% if item.session.status in ['active', 'running'] %}blue{% elif item.session.status == 'completed' %}green{% else %}muted{% endif %}">{{ item.session.status }}</span></td>
           <td class="mono right">{{ "{:,}".format(item.token_totals.prompt_tokens) }}</td>

@@ -23,7 +23,7 @@ The system SHALL let an operator approve a Review task and move it to Done witho
 - **AND** the operator chooses Mark Done
 - **THEN** the task moves to Done
 - **AND** the system records operator review decision metadata
-- **AND** existing Worker Run, session, token, and launch evidence remain linked to the task
+- **AND** existing Worker Run, session, token, actual token, and launch evidence remain linked to the task
 
 #### Scenario: Done action rejects non-review task
 - **WHEN** an operator requests Mark Done for a task that is not in Review

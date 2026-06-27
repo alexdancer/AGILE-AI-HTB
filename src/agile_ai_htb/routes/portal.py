@@ -1261,6 +1261,11 @@ def session_report_view(session_id: str, request: Request):
         artifact = db.build_session_artifact(request.app.state.settings.database_path, session_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="session not found") from exc
+    artifact = dict(artifact)
+    artifact["worker_run_events"] = [
+        {**event, "detail": _safe_worker_evidence(event.get("detail") or {})}
+        for event in artifact.get("worker_run_events", [])
+    ]
 
     token_totals = _token_totals(artifact)
     token_breakdown = db.session_token_breakdown(request.app.state.settings.database_path, session_id)

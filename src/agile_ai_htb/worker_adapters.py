@@ -732,7 +732,11 @@ def _parse_native_usage_evidence(stdout: str, *, model: str, returncode: int = 0
         if explicit_model and explicit_model != model:
             continue
         model_usage_map = item.get("modelUsage") or item.get("model_usage")
-        if not explicit_model and (not isinstance(model_usage_map, dict) or _matching_model_usage(model_usage_map, model=model) is None):
+        if (
+            not explicit_model
+            and (not isinstance(model_usage_map, dict) or _matching_model_usage(model_usage_map, model=model) is None)
+            and not _selected_model_bound_usage(item, usage)
+        ):
             continue
         run_binding = _usage_run_binding(item, usage)
         if run_binding is None:
@@ -764,10 +768,12 @@ def _prompt_token_count(usage: dict[str, Any]) -> int:
     base_prompt_tokens = _int_from_any(
         usage.get("prompt_tokens") or usage.get("input_tokens") or usage.get("input") or usage.get("tokens_in")
     )
+    cache = usage.get("cache")
     return (
         base_prompt_tokens
         + _int_from_any(usage.get("cache_read_input_tokens") or usage.get("cacheReadInputTokens"))
         + _int_from_any(usage.get("cache_creation_input_tokens") or usage.get("cacheCreationInputTokens"))
+        + (_int_from_any(cache.get("read")) + _int_from_any(cache.get("write")) if isinstance(cache, dict) else 0)
     )
 
 
@@ -867,6 +873,11 @@ def _usage_run_binding(item: dict[str, Any], usage: dict[str, Any]) -> dict[str,
             if container.get(key):
                 return {key: str(container[key])}
     return None
+
+
+def _selected_model_bound_usage(item: dict[str, Any], usage: dict[str, Any]) -> bool:
+    # ponytail: OpenCode step-finish stopped repeating model; the command plan already pins the selected model.
+    return item.get("type") == "step-finish" and item.get("tokens") is usage and _usage_run_binding(item, usage) is not None
 
 
 def _looks_like_usage_key(key: str) -> bool:

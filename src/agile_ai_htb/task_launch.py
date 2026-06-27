@@ -756,6 +756,7 @@ def _execute_worker_run(
         return
 
     _record_budget_overrun_if_needed(database_path, session["id"])
+    actual_tokens = _worker_execution_token_total(database_path, session["id"])
     db.update_session_status(database_path, session["id"], "completed")
     launched = db.update_task(
         database_path,
@@ -763,6 +764,7 @@ def _execute_worker_run(
         {
             "status": "Review",
             "session_id": session["id"],
+            "actual_tokens": actual_tokens,
             "metadata": {
                 **claimed.get("metadata", {}),
                 "launch_returncode": returncode,
@@ -1159,6 +1161,7 @@ def _finalize_write_capable_launch(
         "diff_summary": diff_summary,
         "pr_capability": detect_pr_capability(project_root) if project_root else {"available": False, "reason": "No project root."},
     }
+    actual_tokens = _worker_execution_token_total(database_path, session["id"])
     if not test_command:
         db.update_session_status(database_path, session["id"], "completed")
         return db.update_task(
@@ -1167,6 +1170,7 @@ def _finalize_write_capable_launch(
             {
                 "status": "Review",
                 "session_id": session["id"],
+                "actual_tokens": actual_tokens,
                 "metadata": {
                     **base_metadata,
                     "post_run_verification": {"passed": False, "reason": "No test command configured."},
@@ -1202,6 +1206,7 @@ def _finalize_write_capable_launch(
         {
             "status": "Review",
             "session_id": session["id"],
+            "actual_tokens": actual_tokens,
             "metadata": {
                 **base_metadata,
                 "post_run_verification": verification,
@@ -1273,6 +1278,11 @@ def _slug(value: str) -> str:
 def _session_has_worker_token_usage(database_path: Path | str, session_id: str) -> bool:
     artifact = db.build_session_artifact(database_path, session_id)
     return any(turn.get("usage_kind") in {"task_execution", "worker"} for turn in artifact["token_log"])
+
+
+def _worker_execution_token_total(database_path: Path | str, session_id: str) -> int:
+    breakdown = db.session_token_breakdown(database_path, session_id)
+    return int((breakdown.get("by_category") or {}).get("worker_execution") or 0)
 
 
 def _workdir_run_evidence(plan: Any, *, stdout: str, stderr: str) -> dict[str, Any]:

@@ -147,6 +147,25 @@ def test_estimate_within_budget_launches(tmp_path):
     assert result.task["metadata"]["budget_check"]["passed"] is True
 
 
+def test_successful_worker_run_records_actual_worker_execution_tokens(tmp_path):
+    db_path = tmp_path / "harness.db"
+    task = _verified_budget_task(db_path, tmp_path, estimate=100, budget={"daily_used_tokens": 0, "daily_cap_tokens": 500})
+
+    launch_task(
+        db_path,
+        task["id"],
+        adapter_id="opencode",
+        model=None,
+        proxy_url=None,
+        runner=_runner_recording(db_path, total_tokens=77),
+    )
+    _wait_for_worker_run(db_path, task["id"], "completed")
+    completed = db.get_task(db_path, task["id"])
+
+    assert completed["status"] == "Review"
+    assert completed["actual_tokens"] == 77
+
+
 def test_launch_rejects_task_from_different_project_board(tmp_path):
     db_path = tmp_path / "harness.db"
     db.init_db(db_path)

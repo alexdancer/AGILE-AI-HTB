@@ -73,6 +73,11 @@
   <button type="submit" class="primary">Estimate task</button>
 </form>
 
+<div style="margin-bottom:16px;display:flex;gap:10px;align-items:center">
+  <input id="board-filter" type="text" placeholder="Filter tasks..." style="flex:1">
+  <span id="filter-indicator" class="mono muted" style="font-size:11px;display:none"></span>
+</div>
+
 <section class="columns">
   {% for column in columns %}
   <article class="column">
@@ -81,6 +86,10 @@
     <div class="task {% if column == 'Review' %}review{% endif %}" id="{{ task.id }}">
       {% set launch_model = task.metadata.launch_model %}
       {% set display_model = launch_model or task.recommended_model %}
+      {% set has_launch_returncode = task.metadata.launch_returncode is defined and task.metadata.launch_returncode is not none %}
+      {% set has_launch_details = task.metadata.launch_adapter_id or task.metadata.launch_model or task.metadata.tracking_mode or task.metadata.usage_source or has_launch_returncode or task.metadata.worker_run_status or task.metadata.active_worker_run_id or task.metadata.workdir_evidence or task.metadata.launch_error or task.metadata.last_launch_failure or task.metadata.launch_blocked_reason or task.metadata.launch_stdout %}
+      {% set has_blocked_details = column == 'Blocked' and (task.metadata.blocked_reason or task.metadata.requires_manual_estimate) %}
+      {% set has_review_details = task.metadata.review_prompt or task.metadata.agent_review %}
       <strong class="task-title">{{ task.description }}</strong>
       <p class="task-meta mono">
         {% if task.estimate_tokens is not none %}<span>Estimate: {{ "{:,}".format(task.estimate_tokens) }}</span>{% endif %}
@@ -127,17 +136,8 @@
         <button type="submit">Refresh status</button>
       </form>
       {% endif %}
-      {% if task.metadata.launch_error %}
-      <div class="launch-error" style="margin-top:8px;padding:8px;border-left:3px solid var(--danger);background:rgba(255,0,0,0.08)">
-        <p class="muted"><strong>Launch error:</strong> {{ task.metadata.launch_error }}</p>
-        {% if task.metadata.last_launch_failure %}
-        <p class="muted mono">Return code: {{ task.metadata.last_launch_failure.returncode }}</p>
-        {% endif %}
-      </div>
-      {% endif %}
-      {% if task.metadata.launch_blocked_reason and not task.metadata.launch_retryable %}<p class="muted"><strong>Launch guardrail block:</strong> {{ task.metadata.launch_blocked_reason }}</p>{% endif %}
-      {% if column == 'Blocked' and task.metadata.blocked_reason %}<p class="muted"><strong>Human/block reason:</strong> {{ task.metadata.blocked_reason }}</p>{% endif %}
-      {% if column == 'Blocked' and task.metadata.requires_manual_estimate %}<p class="muted"><strong>Manual estimate required:</strong> Estimate this slice before Worker launch.</p>{% endif %}
+      {% if has_launch_details %}<p class="muted mono compact-text lines-2">Launch diagnostics recorded · expand Details</p>{% endif %}
+      {% if has_blocked_details %}<p class="muted mono compact-text lines-2">Blocked/manual details recorded · expand Details</p>{% endif %}
       {% if column == 'Review' %}
       <div class="review-actions" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:grid;gap:8px">
         {% if task.metadata.review_actions_available %}
@@ -175,34 +175,101 @@
       <details class="task-details">
         <summary>Details</summary>
         <p class="muted mono">Task: {{ task.id }}</p>
-        <p class="muted full-description">{{ task.description }}</p>
-        {% if launch_model and task.recommended_model and launch_model != task.recommended_model %}<p class="muted mono">Recommended: {{ task.recommended_model }}</p>{% endif %}
-        {% if task.metadata.worker_run_events %}
-        <p class="muted mono" style="margin:8px 0 4px">Worker timeline</p>
-        <ul class="muted" style="margin:0;padding-left:18px">
-          {% for event in task.metadata.worker_run_events %}
-          <li><span class="mono">{{ event.kind }}</span> · {{ event.title }}{% if event.detail_summary %}<br><span class="mono">{{ event.detail_summary }}</span>{% endif %}</li>
-          {% endfor %}
-        </ul>
-        {% endif %}
-        {% if task.metadata.last_launch_failure and task.metadata.last_launch_failure.stderr %}<p class="muted mono">{{ task.metadata.last_launch_failure.stderr }}</p>{% endif %}
-        {% if task.metadata.launch_stdout %}<p class="muted mono">Output: {{ task.metadata.launch_stdout }}</p>{% endif %}
-        {% if task.metadata.review_prompt %}
-        <p class="muted"><strong>User review note</strong></p>
-        <p class="muted">{{ task.metadata.review_prompt }}</p>
-        {% endif %}
-        {% if task.metadata.agent_review %}
-        <p class="muted"><strong>Agent Review</strong> · {{ task.metadata.agent_review.status }} · {{ task.metadata.agent_review.recommendation }}</p>
-        <p class="muted">{{ task.metadata.agent_review.summary }}</p>
-        {% if task.metadata.agent_review.findings %}
-        <ul class="muted" style="margin:6px 0 0;padding-left:18px">
-          {% for finding in task.metadata.agent_review.findings %}
-          <li>{{ finding.severity }}: {{ finding.message }}{% if finding.path %} <span class="mono">{{ finding.path }}{% if finding.line %}:{{ finding.line }}{% endif %}</span>{% endif %}</li>
-          {% endfor %}
-        </ul>
-        {% endif %}
-        {% endif %}
+        {% if launch_model and task.recommended_model and launch_model != task.recommended_model %}<p class="muted mono">Estimate recommendation: {{ task.recommended_model }}</p>{% endif %}
         {% if task.session_id %}<p><a href="/sessions/{{ task.session_id }}">Session report</a></p>{% endif %}
+        <p class="section-label mt-12">Task body</p>
+        <pre class="mono raw-evidence">{{ task.description }}</pre>
+
+        {% if has_launch_details %}
+        <details class="task-details">
+          <summary>Launch</summary>
+          {% if task.metadata.active_worker_run_id %}<p class="muted mono">Worker run: {{ task.metadata.active_worker_run_id }}</p>{% endif %}
+          {% if task.metadata.launch_adapter_id %}<p class="muted mono">Adapter: {{ task.metadata.launch_adapter_id }}</p>{% endif %}
+          {% if task.metadata.launch_model %}<p class="muted mono">Model: {{ task.metadata.launch_model }}</p>{% endif %}
+          {% if task.metadata.tracking_mode %}<p class="muted mono">Tracking: {{ task.metadata.tracking_mode }}</p>{% endif %}
+          {% if task.metadata.usage_source %}<p class="muted mono">Usage source: {{ task.metadata.usage_source }}</p>{% endif %}
+          {% if task.metadata.worker_run_status %}<p class="muted mono">Status: {{ task.metadata.worker_run_status }}</p>{% endif %}
+          {% if has_launch_returncode %}<p class="muted mono">Return code: {{ task.metadata.launch_returncode }}</p>{% endif %}
+          {% if task.metadata.workdir_evidence and task.metadata.workdir_evidence.configured_workdir %}<p class="muted mono">Workdir: {{ task.metadata.workdir_evidence.configured_workdir }}</p>{% endif %}
+          {% if task.metadata.launch_stdout and not (task.metadata.launch_adapter_id or task.metadata.launch_model or task.metadata.tracking_mode or task.metadata.usage_source or has_launch_returncode or task.metadata.worker_run_status or task.metadata.active_worker_run_id or task.metadata.workdir_evidence or task.metadata.launch_error or task.metadata.last_launch_failure or task.metadata.launch_blocked_reason) %}
+          <p class="muted mono">Launch output captured. Open Logs below for stdout.</p>
+          {% endif %}
+          {% if task.metadata.launch_error %}
+          <p class="section-label">Launch error:</p>
+          <pre class="mono raw-evidence">{{ task.metadata.launch_error }}</pre>
+          {% endif %}
+          {% if task.metadata.launch_blocked_reason and not task.metadata.launch_retryable %}
+          <p class="section-label mt-12">Launch guardrail block</p>
+          <pre class="mono raw-evidence">{{ task.metadata.launch_blocked_reason }}</pre>
+          {% endif %}
+          {% if task.metadata.last_launch_failure %}
+          <p class="section-label mt-12">Last launch failure</p>
+          <pre class="mono raw-evidence">returncode={{ task.metadata.last_launch_failure.returncode }}</pre>
+          {% endif %}
+        </details>
+        {% endif %}
+
+        {% if task.metadata.worker_run_events %}
+        <details class="task-details">
+          <summary>Timeline</summary>
+          {% for event in task.metadata.worker_run_events %}
+          <pre class="mono raw-evidence">{% if event.created_at %}{{ event.created_at }} · {% endif %}{{ event.kind }} · {{ event.title }}{% if event.detail_summary %}
+{{ event.detail_summary }}{% endif %}</pre>
+          {% endfor %}
+        </details>
+        {% endif %}
+
+        {% if (task.metadata.last_launch_failure and task.metadata.last_launch_failure.stderr) or (task.metadata.last_launch_failure and task.metadata.last_launch_failure.stdout) or task.metadata.launch_stdout %}
+        <details class="task-details">
+          <summary>Logs</summary>
+          {% if task.metadata.last_launch_failure and task.metadata.last_launch_failure.stderr %}
+          <p class="section-label">stderr</p>
+          <pre class="mono raw-evidence tall">{{ task.metadata.last_launch_failure.stderr }}</pre>
+          {% endif %}
+          {% if task.metadata.last_launch_failure and task.metadata.last_launch_failure.stdout %}
+          <p class="section-label mt-12">stdout</p>
+          <pre class="mono raw-evidence tall">{{ task.metadata.last_launch_failure.stdout }}</pre>
+          {% endif %}
+          {% if task.metadata.launch_stdout %}
+          <p class="section-label mt-12">launch stdout</p>
+          <pre class="mono raw-evidence tall">{{ task.metadata.launch_stdout }}</pre>
+          {% endif %}
+        </details>
+        {% endif %}
+
+        {% if has_review_details %}
+        <details class="task-details">
+          <summary>Review</summary>
+          {% if task.metadata.review_prompt %}
+          <p class="section-label">User review note</p>
+          <pre class="mono raw-evidence">{{ task.metadata.review_prompt }}</pre>
+          {% endif %}
+          {% if task.metadata.agent_review %}
+          <p class="muted"><strong>Agent Review</strong> · {{ task.metadata.agent_review.status }} · {{ task.metadata.agent_review.recommendation }}</p>
+          <pre class="mono raw-evidence">{{ task.metadata.agent_review.summary }}</pre>
+          {% if task.metadata.agent_review.findings %}
+          <p class="section-label mt-12">Findings</p>
+          {% for finding in task.metadata.agent_review.findings %}
+          <pre class="mono raw-evidence">{{ finding.severity }}: {{ finding.message }}{% if finding.path %} {{ finding.path }}{% if finding.line %}:{{ finding.line }}{% endif %}{% endif %}</pre>
+          {% endfor %}
+          {% endif %}
+          {% endif %}
+        </details>
+        {% endif %}
+
+        {% if has_blocked_details %}
+        <details class="task-details">
+          <summary>Blocked</summary>
+          {% if task.metadata.blocked_reason %}
+          <p class="section-label">Human/block reason</p>
+          <pre class="mono raw-evidence">{{ task.metadata.blocked_reason }}</pre>
+          {% endif %}
+          {% if task.metadata.requires_manual_estimate %}
+          <p class="section-label mt-12">Manual estimate required</p>
+          <pre class="mono raw-evidence">Estimate this slice before Worker launch.</pre>
+          {% endif %}
+        </details>
+        {% endif %}
       </details>
     </div>
     {% else %}
@@ -257,5 +324,42 @@ window.setTimeout(function pollBoardStatus() {
     .catch(function() {});
 }, 2500);
 {% endif %}
+
+(function() {
+  var filter = document.getElementById('board-filter');
+  var indicator = document.getElementById('filter-indicator');
+  if (!filter) return;
+  filter.addEventListener('input', function() {
+    var query = filter.value.toLowerCase();
+    var cards = document.querySelectorAll('.columns .task');
+    var visibleCount = 0;
+    cards.forEach(function(card) {
+      var match = !query || card.textContent.toLowerCase().indexOf(query) !== -1;
+      card.style.display = match ? '' : 'none';
+      if (match) visibleCount++;
+    });
+    if (query) {
+      indicator.textContent = visibleCount + ' of ' + cards.length + ' tasks visible';
+      indicator.style.display = '';
+    } else {
+      indicator.style.display = 'none';
+    }
+    // Show column empty state for fully-filtered columns
+    document.querySelectorAll('.column').forEach(function(col) {
+      var taskDivs = col.querySelectorAll('.task');
+      var anyVisible = false;
+      taskDivs.forEach(function(t) { if (t.style.display !== 'none') anyVisible = true; });
+      var existing = col.querySelector('.filter-empty');
+      if (!anyVisible && taskDivs.length > 0 && !existing) {
+        var msg = document.createElement('p');
+        msg.className = 'empty-state filter-empty';
+        msg.textContent = 'No matching tasks';
+        col.appendChild(msg);
+      } else if (existing && (anyVisible || !taskDivs.length)) {
+        existing.remove();
+      }
+    });
+  });
+})();
 </script>
 {% endblock %}

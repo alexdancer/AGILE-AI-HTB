@@ -69,6 +69,7 @@ def test_portal_routes_require_operator_bearer_token(tmp_path, monkeypatch):
     with _client(tmp_path) as client:
         started = client.post(
             "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
             json={"task_description": "Secured portal", "model": "claude-haiku"},
         ).json()
 

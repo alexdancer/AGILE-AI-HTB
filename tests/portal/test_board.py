@@ -64,12 +64,23 @@ def _connect_project(database_path: Path, root: Path) -> dict:
 def _project_metadata(database_path: Path, root: Path) -> dict:
     return project_task_metadata(_connect_project(database_path, root))
 
+
+def _task_card(html: str, task_id: str) -> str:
+    start = html.index(f'id="{task_id}"')
+    next_card = html.find('\n    <div class="task ', start + 1)
+    next_empty = html.find('\n    <p class="empty-state"', start + 1)
+    next_column = html.find('\n  </article>', start + 1)
+    candidates = [idx for idx in (next_card, next_empty, next_column) if idx != -1]
+    end = min(candidates) if candidates else len(html)
+    return html[start:end]
+
+
 def test_board_shows_blocked_manual_estimate_state(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     db.init_db(tmp_path / "harness.db")
     project = _connect_project(tmp_path / "harness.db", tmp_path / "project")
     with _client(tmp_path) as client:
-        client.post(
+        task = client.post(
             "/tasks",
             json={
                 "description": "Needs operator sizing",
@@ -81,17 +92,19 @@ def test_board_shows_blocked_manual_estimate_state(tmp_path, monkeypatch):
                     "requires_manual_estimate": True,
                 },
             },
-        )
+        ).json()
         response = client.get(f"/projects/{project['id']}/board", headers=_portal_headers())
 
     assert response.status_code == 200
-    assert "Needs operator sizing" in response.text
-    assert "Launch guardrail block:" in response.text
-    assert "Daily budget exhausted" in response.text
-    assert "Estimator unavailable: timeout" in response.text
-    assert "Human/block reason:" in response.text
-    assert "Manual estimate required" in response.text
-    assert "Estimate this slice before Worker launch" in response.text
+    card = _task_card(response.text, task["id"])
+    assert "Needs operator sizing" in card
+    assert "Launch diagnostics recorded · expand Details" in card
+    assert "Blocked/manual details recorded · expand Details" in card
+    assert "<summary>Launch</summary>" in card
+    assert "<summary>Blocked</summary>" in card
+    assert card.index("<summary>Details</summary>") < card.index("Launch guardrail block") < card.index("Daily budget exhausted")
+    assert card.index("<summary>Blocked</summary>") < card.index("Human/block reason") < card.index("Estimator unavailable: timeout")
+    assert card.index("<summary>Blocked</summary>") < card.index("Manual estimate required") < card.index("Estimate this slice before Worker launch")
 
 def test_project_board_filters_tasks_and_global_board_redirects_to_recent_project(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
@@ -192,10 +205,127 @@ def test_board_shows_launched_model_before_recommendation(tmp_path, monkeypatch)
         response = client.get("/board", headers=_portal_headers())
 
     assert response.status_code == 200
-    html = response.text
-    assert "Run: openai/gpt-5.5 --variant high" in html
-    assert "Recommended: gpt-5.4-mini" in html
-    assert task["id"] in html
+    card = _task_card(response.text, task["id"])
+    assert "Run: openai/gpt-5.5 --variant high" in card
+    assert "Estimate recommendation: gpt-5.4-mini" in card
+    assert card.index("Run: openai/gpt-5.5 --variant high") < card.index("Estimate recommendation: gpt-5.4-mini")
+    assert task["id"] in card
+
+
+def test_board_uses_bounded_details_for_verbose_evidence(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    long_task_tail = "BOARD_FULL_TASK_TAIL_2099"
+    stderr_tail = "BOARD_STDERR_TAIL_2099"
+    stdout_tail = "BOARD_STDOUT_TAIL_2099"
+    timeline_tail = "BOARD_TIMELINE_TAIL_2099"
+    review_tail = "BOARD_REVIEW_TAIL_2099"
+    with _client(tmp_path) as client:
+        task = db.create_task(
+            database_path,
+            description="Compact board task " + ("long body " * 40) + long_task_tail,
+            status="Review",
+            estimate_tokens=9000,
+            recommended_model="gpt-5.4-mini",
+            metadata={
+                **_project_metadata(database_path, tmp_path / "connected-project"),
+                "launch_error": "Adapter failed before review",
+                "last_launch_failure": {
+                    "returncode": 2,
+                    "stderr": "stderr line\n" + ("stderr detail\n" * 20) + stderr_tail,
+                    "stdout": "stdout line\n" + ("stdout detail\n" * 20) + stdout_tail,
+                },
+                "launch_stdout": "worker output\n" + ("output detail\n" * 20) + stdout_tail,
+                "worker_run_events": [
+                    {"kind": "launch", "title": "Worker started", "detail_summary": "timeline detail " + timeline_tail}
+                ],
+                "review_prompt": "Focus on the bounded review details " + review_tail,
+                "agent_review": {
+                    "status": "completed",
+                    "summary": "Review summary " + review_tail,
+                    "recommendation": "inspect",
+                    "findings": [{"severity": "medium", "message": "Finding " + review_tail}],
+                },
+            },
+        )
+
+        response = client.get("/board", headers=_portal_headers())
+
+    assert response.status_code == 200
+    card = _task_card(response.text, task["id"])
+    assert "task-title" in card
+    assert "raw-evidence" in card
+    assert "raw-evidence tall" in card
+    assert card.count('<pre class="mono raw-evidence') >= 8
+    for summary in ["Details", "Launch", "Timeline", "Logs", "Review"]:
+        assert f"<summary>{summary}</summary>" in card
+    assert card.index("<summary>Details</summary>") < card.index("Task body") < card.rindex(long_task_tail)
+    assert card.index("<summary>Timeline</summary>") < card.index(timeline_tail)
+    assert card.index("<summary>Logs</summary>") < card.index(stderr_tail)
+    assert card.index("<summary>Logs</summary>") < card.index(stdout_tail)
+    assert card.index("<summary>Review</summary>") < card.index(review_tail)
+
+
+def test_board_launch_details_show_successful_worker_run_evidence(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        task = db.create_task(
+            database_path,
+            description="Review launched task evidence",
+            status="Review",
+            estimate_tokens=8000,
+            recommended_model="gpt-5.4-mini",
+            actual_tokens=1234,
+            metadata={
+                **_project_metadata(database_path, tmp_path / "connected-project"),
+                "launch_adapter_id": "opencode",
+                "launch_model": "openai/gpt-5.5 --variant high",
+                "tracking_mode": "proxy_governed",
+                "usage_source": "harness_proxy",
+                "launch_returncode": 0,
+                "worker_run_status": "completed",
+                "active_worker_run_id": "wr_DEMO_999",
+                "workdir_evidence": {"configured_workdir": "/tmp/DEMO_2099_project", "has_filesystem_evidence": True},
+            },
+        )
+
+        response = client.get("/board", headers=_portal_headers())
+
+    assert response.status_code == 200
+    card = _task_card(response.text, task["id"])
+    assert "Actual: 1,234" in card
+    assert "Launch diagnostics recorded · expand Details" in card
+    assert "<summary>Launch</summary>" in card
+    assert "Worker run: wr_DEMO_999" in card
+    assert "Adapter: opencode" in card
+    assert "Model: openai/gpt-5.5 --variant high" in card
+    assert "Tracking: proxy_governed" in card
+    assert "Usage source: harness_proxy" in card
+    assert "Return code: 0" in card
+    assert "Workdir: /tmp/DEMO_2099_project" in card
+
+
+def test_board_hides_launch_details_when_no_launch_evidence_exists(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        task = db.create_task(
+            database_path,
+            description="Review task without launch evidence",
+            status="Review",
+            estimate_tokens=8000,
+            recommended_model="gpt-5.1-codex",
+            metadata=_project_metadata(database_path, tmp_path / "connected-project"),
+        )
+
+        response = client.get("/board", headers=_portal_headers())
+
+    assert response.status_code == 200
+    card = _task_card(response.text, task["id"])
+    assert "Launch diagnostics recorded" not in card
+    assert "<summary>Launch</summary>" not in card
+
 
 def test_board_renders_unexpected_statuses_as_blocked(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
@@ -308,3 +438,16 @@ def test_board_redirects_when_no_project(tmp_path, monkeypatch):
         response = client.get("/board", headers=_portal_headers(), follow_redirects=False)
 
     assert response.status_code == 303
+
+def test_board_filter_input_is_present(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        database_path = tmp_path / "harness.db"
+        project_root = tmp_path / "connected-project"
+        _connect_project(database_path, project_root)
+        response = client.get("/board", headers=_portal_headers(), follow_redirects=False)
+
+    assert response.status_code in (200, 303)
+    if response.status_code == 200:
+        assert 'id="board-filter"' in response.text
+        assert 'id="filter-indicator"' in response.text
