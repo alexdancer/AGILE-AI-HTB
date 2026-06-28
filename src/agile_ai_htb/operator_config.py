@@ -5,6 +5,7 @@ import re
 import secrets
 import shlex
 import tomllib
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,7 @@ DEFAULT_SECRETS_PATH = Path(".htb/secrets.env")
 CONTROL_API_KEY_PLACEHOLDER = "<your-control-plane-api-key>"
 DEFAULT_LOCAL_CONFIG: dict[str, Any] = {
     "database_path": ".htb/harness.db",
-    "guardrails_path": "guardrails.yaml",
+    "guardrails_path": ".htb/guardrails.yaml",
     "host": "127.0.0.1",
     "port": 8000,
     "portal_token_env": "TOKEN_TRACKER_PORTAL_TOKEN",
@@ -43,6 +44,19 @@ def write_default_operator_config(path: Path | str = DEFAULT_CONFIG_PATH) -> dic
     config.update(load_operator_config(config_path))
     config_path.write_text(_render_config(config), encoding="utf-8")
     return config
+
+
+def write_default_guardrails_file(config: dict[str, Any]) -> Path:
+    guardrails_path = Path(str(config.get("guardrails_path") or DEFAULT_LOCAL_CONFIG["guardrails_path"]))
+    guardrails_path.parent.mkdir(parents=True, exist_ok=True)
+    if not guardrails_path.exists():
+        default_text = (
+            resources.files("agile_ai_htb")
+            .joinpath("defaults/guardrails.yaml")
+            .read_text(encoding="utf-8")
+        )
+        guardrails_path.write_text(default_text, encoding="utf-8")
+    return guardrails_path
 
 
 def update_operator_config(path: Path | str = DEFAULT_CONFIG_PATH, **updates: Any) -> dict[str, Any]:
@@ -76,6 +90,18 @@ def ensure_secret_placeholder(env_name: str, path: Path | str = DEFAULT_SECRETS_
     values = _parse_env_file(secrets_path) if secrets_path.exists() else {}
     values.setdefault(env_name, CONTROL_API_KEY_PLACEHOLDER)
     secrets_path.write_text(_render_secrets_env(values), encoding="utf-8")
+    return values
+
+
+def write_control_plane_secret(
+    env_name: str, api_key: str, path: Path | str = DEFAULT_SECRETS_PATH
+) -> dict[str, str]:
+    secrets_path = Path(path)
+    secrets_path.parent.mkdir(parents=True, exist_ok=True)
+    values = _parse_env_file(secrets_path) if secrets_path.exists() else {}
+    values[env_name] = api_key
+    secrets_path.write_text(_render_secrets_env(values), encoding="utf-8")
+    os.environ[env_name] = api_key
     return values
 
 

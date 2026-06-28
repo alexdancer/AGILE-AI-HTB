@@ -2,9 +2,7 @@
 
 ## Purpose
 Define the model connection AGILE-AI-HTB uses for its own control-plane work, separate from any Worker Harness model configuration or credentials.
-
 ## Requirements
-
 ### Requirement: Control-plane model connection
 The system SHALL provide a distinct direct control-plane model connection for AGILE-AI-HTB's own orchestration work, separate from Worker Harness model access and without requiring LiteLLM.
 
@@ -68,7 +66,7 @@ The system SHALL allow an authenticated operator to edit the control-plane provi
 - **AND** new control-plane requests SHALL use the saved settings after the save succeeds
 
 ### Requirement: Control-plane preset selection
-The system SHALL provide a small set of portal presets for common control-plane connection shapes while preserving free-text advanced fields.
+The system SHALL provide a small set of portal presets and a real model dropdown for common control-plane connection shapes while preserving an explicit custom model path for OpenAI-compatible endpoints or future model IDs.
 
 #### Scenario: OpenAI preset selected
 - **WHEN** the operator selects the OpenAI preset
@@ -84,6 +82,16 @@ The system SHALL provide a small set of portal presets for common control-plane 
 - **WHEN** the operator selects the OpenAI-compatible preset
 - **THEN** the form SHALL set provider `openai-compatible`
 - **AND** it SHALL require or expose free-text model and base URL fields for the compatible provider
+
+#### Scenario: Operator chooses a curated control-plane model
+- **WHEN** the operator opens the Control Plane model settings form for a curated provider/model choice
+- **THEN** the normal model chooser SHALL render as a native dropdown control rather than a textbox or `datalist`
+- **AND** the dropdown SHALL include the supported curated Control Plane model choices
+
+#### Scenario: Existing custom model preserved
+- **WHEN** the saved Control Plane model is not one of the curated dropdown choices
+- **THEN** the form SHALL preserve the existing model value through an explicit custom model path
+- **AND** saving without choosing a different model SHALL NOT silently replace the custom value with a curated default
 
 ### Requirement: Control-plane split-model default
 The system SHALL default to applying the selected control-plane model to estimator and task-breakdown model settings while allowing the operator to preserve split-model settings.
@@ -125,3 +133,27 @@ The system SHALL provide a separately configurable Task Breakdown Model for Task
 #### Scenario: Worker Adapter model remains separate
 - **WHEN** the Task Breakdown Agent runs before estimation
 - **THEN** the system does not use OpenCode, Claude Code, Codex, Hermes, or other Worker Adapter model configuration as the Task Breakdown Model unless explicitly configured as a control-plane model connection
+
+### Requirement: Portal-managed control-plane API key entry
+The system SHALL allow an authenticated operator to provide the control-plane API key value from the control-plane model settings portal without requiring manual environment variable export or manual `.htb/secrets.env` editing for the common local setup path.
+
+#### Scenario: Operator saves a new control-plane key
+- **WHEN** an authenticated operator enters provider/model settings and a non-empty control-plane API key value in the portal
+- **THEN** the system SHALL store the key value in ignored local secret storage for the configured control-plane API key name
+- **AND** the system SHALL NOT store the key value in `.htb/config.toml`
+- **AND** subsequent control-plane requests SHALL be able to load the saved key without a server restart
+
+#### Scenario: Operator leaves key blank
+- **WHEN** an authenticated operator saves control-plane settings with the API key field blank
+- **THEN** the system SHALL preserve any existing stored control-plane API key value
+- **AND** the system SHALL NOT replace the stored value with an empty string or placeholder
+
+#### Scenario: Portal redacts key values
+- **WHEN** the control-plane settings page, save response, connection status, logs, or test evidence are rendered
+- **THEN** the system SHALL show whether a key is present without displaying the raw control-plane API key value
+
+#### Scenario: Connection test remains explicit
+- **WHEN** an authenticated operator saves a new control-plane API key value
+- **THEN** the system SHALL mark prior connection test evidence as needing a new test
+- **AND** the system SHALL NOT require the provider connection test to pass before saving the local settings and secret
+

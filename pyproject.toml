@@ -6,7 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "agile-ai-htb"
 version = "0.1.0"
 description = "A token-budget governance harness for AI coding agents."
+readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+keywords = ["ai", "agent", "governance", "token-tracking", "harness"]
 dependencies = [
     "fastapi",
     "uvicorn",
@@ -25,13 +28,17 @@ test = [
 
 [project.scripts]
 htb = "agile_ai_htb.cli:main"
-htb-demo-worker = "agile_ai_htb.demo_worker:main"
+
+[project.urls]
+Homepage = "https://github.com/alexdancer/AI-Harness-Token-Tracker"
+Repository = "https://github.com/alexdancer/AI-Harness-Token-Tracker"
+Issues = "https://github.com/alexdancer/AI-Harness-Token-Tracker/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-agile_ai_htb = ["templates/*.html"]
+agile_ai_htb = ["templates/*.html", "defaults/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

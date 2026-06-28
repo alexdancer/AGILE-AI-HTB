@@ -95,6 +95,8 @@ def test_settings_workers_page_requires_auth_and_renders_safe_adapter_cards(tmp_
     assert "OpenCode" in html
     assert "OpenCode diagnostics" in html
     assert "Hermes" in html
+    assert "Adapter identity is the local CLI harness" in html
+    assert "Control-plane API keys do not configure native Worker CLI auth" in html
     assert "configured" in html
     assert "unconfigured" in html
     assert "verified" in html

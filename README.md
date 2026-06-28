@@ -2,71 +2,98 @@
 
 A portal-first token-budget governance harness for AI coding agents. AGILE-AI-HTB has two model layers: a control-plane model used by the portal for estimates/planning/reports, and Worker Harness models used by local coding CLIs such as OpenCode, Claude Code, or Codex. It tracks spend by category, enforces Worker execution budgets, and escalates to a human — never the agent — when things go wrong.
 
-Agent-agnostic. Proxy-governed mode works with OpenAI-compatible agents through the Harness Proxy and direct upstream provider clients. Native Worker mode uses the installed harness's own CLI/config/auth and imports trustworthy usage evidence when available.
+Agent-agnostic. Proxy-governed mode works with OpenAI-compatible agents through the Harness Proxy and direct upstream provider clients. Native Worker mode uses the installed Worker CLI's own config/auth and imports trustworthy usage evidence when available.
+
+Current public path: install the `htb` operator CLI, run the local Control Plane/Portal, configure the control-plane model in the Portal, connect a local repo, verify one Worker Adapter, then launch a tiny governed task. Contributor `uv run ...` commands are for repo development, not normal operator setup.
 
 ## Four pillars
 
 | Pillar | What it does |
 |---|---|
-| **Guardrails** | 6 declared constraints enforced at the transport level: daily cap, session cap, budget zones (green/yellow/red), loop detection, session timeout, tool-category limits. Three-layer graduated enforcement per zone — system prompt rewrite, max_tokens clamping, tool restrictions. |
+| **Guardrails** | 6 declared constraints enforced at launch, transport, or review depending on tracking mode: daily cap, session cap, budget zones (green/yellow/red), loop detection, session timeout, tool-category limits. Proxy-governed runs can apply transport controls; native-usage runs reconcile after the CLI reports usage. |
 | **Checkpoints** | 4 pass/fail evaluations at session boundaries: budget health, stuck-loop score, tool diversity, timeout respect. Stateless — replayable from any session artifact. |
 | **Material Handling** | Clean interfaces: AGILE board (Estimated → Running → Review → Done → Blocked), dashboard, session reports, REST API. Launch creates an auditable asynchronous Worker Run; retryable runtime failures return to Estimated with inline evidence. No unestimated Backlog — task intake estimates and budgets before launch. |
 | **Alarms** | 7 named alarm types with severity and recommended actions: BUDGET_YELLOW, BUDGET_RED, DAILY_CAP_EXCEEDED, SESSION_CAP_EXCEEDED, LOOP_DETECTED, SESSION_TIMEOUT, TOOL_CATEGORY_BIAS, CHECKPOINT_FAIL. |
 
 **Human-in-the-loop**: the harness constrains the agent, not the human. Every escalation presents a decision — continue, abort, raise budget, adjust guardrail.
 
-## Quick start
+## Quick start: first 10 minutes
 
 ```bash
-# Clone and enter
-git clone https://github.com/alexdancer/AI-Harness-Token-Tracker.git
-cd AI-Harness-Token-Tracker
+# 1. Install the operator CLI.
+# Current source install, before PyPI release:
+pipx install "git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git"
 
-# Install with uv (preferred) or pip
-uv pip install -e ".[test]"
-# or: python3 -m venv .venv && .venv/bin/pip install -e ".[test]"
+# After PyPI release this becomes:
+# pipx install agile-ai-htb
 
-# Run tests (zero provider calls — all fakes)
-uv run python -m pytest -q
+# One-line bootstrap alternative:
+# curl -fsSL https://raw.githubusercontent.com/alexdancer/AI-Harness-Token-Tracker/main/install.sh | sh
 
-# Configure local operator defaults (non-secrets only)
-uv run htb init
-# Edit .htb/secrets.env once, then start the portal
-uv run htb serve
+# 2. Create local operator config, local secrets, and default guardrails.
+htb init
 
-# In another terminal, verify setup; optionally seed demo tasks
-uv run htb check
-uv run htb seed-demo
-
-# Open http://localhost:8000/login — log in with your portal token
+# 3. Start the Portal.
+htb serve
 ```
 
-## Docker
+Then open `http://localhost:8000/login`, use the portal token from `.htb/secrets.env`, and finish setup in the Portal:
+
+1. Open `/settings/control-plane`.
+2. Pick the control-plane provider/model, paste the provider API key, save, then click **Test control-plane connection**.
+3. Connect a local project from `/projects`.
+4. Open `/settings/workers`, choose a Worker Adapter, discover/allow Worker models, then verify token tracking.
+5. Launch a tiny task from the project board and review the session report/token evidence.
+
+In another terminal, `htb check` prints redacted `PASS`/`WARN`/`FAIL` setup lines you can paste into support issues.
+
+The control-plane API key powers AGILE-AI-HTB estimation, planning, recommendations, and reports. Native Worker CLIs such as OpenCode, Claude Code, Codex, and Hermes keep their own CLI auth/config; pasting a control-plane key does not configure those tools.
+
+`htb init` creates local-only files under `.htb/`: non-secret `.htb/config.toml`, ignored `.htb/secrets.env`, ignored `.htb/guardrails.yaml`, and a default SQLite path of `.htb/harness.db`. The database file is created when the app initializes. The Portal can save a submitted control-plane API key into `.htb/secrets.env`; it never writes raw key values to `.htb/config.toml` or displays them again.
+
+## What AGILE-AI-HTB governs
+
+AGILE-AI-HTB governs work launched through its AGILE Board and a verified Worker Adapter:
+
+- `proxy_governed`: Worker model traffic flows through the Harness Proxy, so request-time guardrails and token accounting are active during the run.
+- `native_usage`: the Worker CLI uses its own auth/config and AGILE-AI-HTB imports trustworthy run-bound usage after the run; accounting is authoritative, but there is no mid-run request throttling.
+- `observed_only`: diagnostics only; not normal board-launchable.
+
+It does not govern arbitrary external-agent spend unless traffic goes through the Harness Proxy or the native CLI emits trustworthy usage evidence bound to the launched Worker Run.
+
+## Docker: no-secret Control Plane trial
 
 ```bash
-# Local Control Plane/Portal. Override these in your shell; do not commit secrets.
+# Local Control Plane/Portal. Override this in your shell; do not commit secrets.
 export TOKEN_TRACKER_PORTAL_TOKEN="replace-with-local-token"
 export AGILE_AI_HTB_CONTROL_PROVIDER="openai"
 export AGILE_AI_HTB_CONTROL_MODEL="gpt-5.4-mini"
-# Optional for model-powered estimates/reports:
+# Optional later for model-powered estimates/reports:
 # export AGILE_AI_HTB_CONTROL_API_KEY="replace-with-provider-key"
 
 docker-compose up -d --build
 curl http://localhost:8000/health
 # {"status":"ok"}
 
-# Seed demo data and inspect setup from inside the container
-docker-compose exec agile-ai-htb htb seed-demo
-# Optional readiness report; exits nonzero until required secrets are set.
+# Inspect setup from inside the container; exits nonzero until required secrets are set.
 docker-compose exec agile-ai-htb htb check || true
 
-# Full local Docker smoke: build/start, /health, /login, seed-demo,
+# Full local Docker smoke: build/start, /health, /login,
 # container recreation DB persistence, cleanup.
 # Stops and recreates this repo's Compose service; named volumes are kept.
 scripts/docker-smoke.sh
 ```
 
-Docker runs the containerized Control Plane/Portal with SQLite at `/data/harness.db`. It does not automatically get host-installed OpenCode, Claude Code, Codex, Hermes, local repo paths, or host credentials; Worker launch readiness still depends on Worker Adapter setup and tracking-mode checks.
+Docker runs the containerized Control Plane/Portal with SQLite at `/data/harness.db`. The no-secret path proves image build/start, `/health`, `/login`, and database persistence. Model-powered estimates, provider connection tests, and real Worker verification require later credential setup.
+
+Docker does not automatically get host-installed OpenCode, Claude Code, Codex, Hermes, local repo paths, or host credentials; Worker launch readiness still depends on Worker Adapter setup and tracking-mode checks. Docker control-plane env vars configure AGILE-AI-HTB estimation/planning/reporting only, not native Worker CLI auth.
+
+More setup details:
+
+- [Install options](docs/INSTALL.md)
+- [Getting started](docs/GETTING_STARTED.md)
+- [Worker Adapter setup matrix](docs/WORKER_ADAPTER_SETUP.md)
+- [Setup support checklist](docs/SETUP_SUPPORT_CHECKLIST.md)
 
 ## The demo loop
 
@@ -76,19 +103,18 @@ Docker runs the containerized Control Plane/Portal with SQLite at `/data/harness
 4. **Worker runs async** — Each launch creates a persisted Worker Run with command plan metadata, stdout/stderr evidence, timeout/error details, and token/usage evidence. Successful runs move to `Review`; retryable launch/runtime failures return to `Estimated`; hard safety failures move to `Blocked`.
 5. **Report** — Session artifact shows token totals, tool breakdown, zone snapshots, alarms, checkpoint results, and Worker Run evidence.
 
-Use `.htb/config.toml` for the control-plane provider/model and `.htb/secrets.env` for `AGILE_AI_HTB_CONTROL_API_KEY` in the local operator flow. `PROVIDER_API_KEY` remains a compatibility alias for older deployments only; native OpenCode mode uses the installed `opencode` CLI's own config/auth.
+Use `.htb/config.toml` for the control-plane provider/model. Keep `AGILE_AI_HTB_CONTROL_API_KEY` in ignored `.htb/secrets.env`, an environment variable, or paste it through `/settings/control-plane`; the portal writes key values only to ignored local secret storage. `PROVIDER_API_KEY` remains a compatibility alias for older setups only; native OpenCode mode uses the installed `opencode` CLI's own config/auth.
 
 ### Local OpenCode read-only proof
 
-Initialize the operator config, edit `.htb/secrets.env`, start the portal, then run the script:
+Initialize the operator config, start the portal, provide the control-plane API key through `.htb/secrets.env` or `/settings/control-plane`, then run the script:
 
 ```bash
-uv run htb init
-# Edit .htb/secrets.env and replace AGILE_AI_HTB_CONTROL_API_KEY=<your-control-plane-api-key>
-uv run htb serve
+htb init
+htb serve
 
 # second terminal
-uv run htb check
+htb check
 PROJECT_ROOT=$PWD scripts/local-opencode-readonly-demo.sh
 ```
 
@@ -151,57 +177,35 @@ Review caveat: the external smoke check is intentionally broad. It does not catc
 
 The cumulative token total is OpenCode event-stream accounting from `step_finish -> part.tokens`, including cache-read usage. The comparison claim is governance, not magic compression: direct OpenCode shows uncontrolled baseline usage; AGILE-AI-HTB adds estimate, budget gate, launch evidence, token ledger, alarms, and review workflow around the same Worker task.
 
-## Deploy to Render
+## Configuration
 
-One-click Blueprint deploy via `render.yaml` at the repo root.
+For normal local runs, use `/settings/control-plane` to change the control-plane provider, model, base URL, API key env name, or API key value live. The portal saves non-secrets to `.htb/config.toml`, writes submitted key values only to ignored local secret storage, and marks the connection as `needs test` until you rerun the control-plane test.
 
-1. Push to GitHub
-2. Render dashboard → New → Blueprint → connect repo
-3. Create 1GB disk named `harness-data` (mount: `/data`)
-4. Set secrets in dashboard: `TOKEN_TRACKER_PORTAL_TOKEN`, `AGILE_AI_HTB_CONTROL_API_KEY`
-5. Deploy → `https://agile-ai-htb.onrender.com/login`
+Use environment variables mainly for Docker, CI, or headless operation:
 
-Full runbook: [`docs/DEPLOY.md`](docs/DEPLOY.md)
+| Setting | Purpose |
+|---|---|
+| `TOKEN_TRACKER_PORTAL_TOKEN` | Portal login token |
+| `AGILE_AI_HTB_CONTROL_PROVIDER` | Control-plane provider: `openai`, `anthropic`, or `openai-compatible` |
+| `AGILE_AI_HTB_CONTROL_MODEL` | Control-plane model for estimates, breakdowns, recommendations, and reports |
+| `AGILE_AI_HTB_CONTROL_BASE_URL` | Required for OpenAI-compatible endpoints; optional otherwise |
+| `AGILE_AI_HTB_CONTROL_API_KEY` | Control-plane provider API key |
 
-## Env vars
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `TOKEN_TRACKER_DATABASE_PATH` | `harness.db` | SQLite path (`/data/harness.db` in Docker) |
-| `TOKEN_TRACKER_GUARDRAILS_PATH` | `guardrails.yaml` | Guardrail config |
-| `TOKEN_TRACKER_PORTAL_TOKEN` | — | Portal login/bearer token (required) |
-| `TOKEN_TRACKER_PORTAL_COOKIE_SECURE` | `false` | Set `true` for HTTPS |
-| `AGILE_AI_HTB_CONTROL_MODEL` / `TOKEN_TRACKER_CONTROL_PLANE_MODEL` | `gpt-4o-mini` | Control-plane model for estimates, summaries, and reports. Local/demo runs should set `gpt-5.4-mini`. |
-| `TOKEN_TRACKER_TASK_BREAKDOWN_MODEL` / `AGILE_AI_HTB_TASK_BREAKDOWN_MODEL` | control-plane model | Optional Task Breakdown Agent model. Falls back to the control-plane model and records spend as control-plane orchestration tokens labeled `task_breakdown`, not Worker Adapter spend. |
-| `AGILE_AI_HTB_CONTROL_PROVIDER` / `TOKEN_TRACKER_CONTROL_PLANE_PROVIDER` | `openai` | Direct upstream provider (`openai`, `openai-compatible`, or `anthropic`) |
-| `AGILE_AI_HTB_CONTROL_BASE_URL` | — | Optional base URL for OpenAI-compatible upstreams |
-| `AGILE_AI_HTB_CONTROL_API_KEY_ENV` | `AGILE_AI_HTB_CONTROL_API_KEY` | Env var name holding control-plane API key |
-| `AGILE_AI_HTB_CONTROL_API_KEY` | — | Control-plane model API key |
-| `TOKEN_TRACKER_PROVIDER_API_KEY_ENV` | `PROVIDER_API_KEY` | Legacy control-plane provider-key env var name |
-| `PROVIDER_API_KEY` | — | Compatibility alias; not required for native OpenCode Worker mode |
-
-For local operator runs, use `/settings/control-plane` to change provider, model, base URL, or API key env name live. The portal saves non-secrets to `.htb/config.toml`, leaves key values in `.htb/secrets.env`/environment, and marks the connection as `needs test` until you rerun the control-plane test.
+Native Worker CLIs keep their own auth/config. See [Getting started](docs/GETTING_STARTED.md) and [Worker Adapter setup](docs/WORKER_ADAPTER_SETUP.md) for setup details.
 
 ## Tests
 
 ```bash
 # Full suite
-uv run python -m pytest -q
+uv run pytest -q
 
-# Behavioral evals only (31 tests)
-uv run python -m pytest tests/test_eval_*.py -v
+# Contributor CLI smoke from a checkout
+uv run htb --help
 
-# Proxy token tracking evals
-uv run python -m pytest tests/test_eval_proxy_token_tracking.py -v
-
-# Zone transition evals
-uv run python -m pytest tests/test_eval_zone_transitions.py -v
-
-# Alarm firing evals
-uv run python -m pytest tests/test_eval_alarm_firing.py -v
-
-# Estimator evals
-uv run python -m pytest tests/test_eval_estimator.py -v
+# Focused suites
+uv run pytest tests/portal tests/api tests/workers -q
+uv run pytest tests/evals -v
+uv run pytest tests/smoke -q
 ```
 
 All tests use fake LLM clients. Zero provider calls. Zero cost.
@@ -211,11 +215,12 @@ All tests use fake LLM clients. Zero provider calls. Zero cost.
 ```
 src/agile_ai_htb/
   app.py              FastAPI app factory + /health
-  cli.py              htb operator CLI (serve, seed-demo)
+  cli.py              htb operator CLI (init, serve, check, seed-demo)
   db.py               SQLite persistence, schema, migrations
   auth.py             Portal cookie auth
   settings.py         Env-var settings
   guardrails.py       Guardrail config loader + zone math
+  operator_config.py  .htb config/secrets helpers
   governance.py       Three-layer enforcement engine
   alarms.py           7 alarm types + detection logic
   checkpoints.py      4 stateless checkpoint evaluators
@@ -223,19 +228,27 @@ src/agile_ai_htb/
   task_launch.py      Task → session orchestration
   launch_guardrails.py Pre-launch validation
   worker_adapters.py  Adapter presets + subprocess runner
-  demo_worker.py      Lightweight proxy caller for demos
-  demo_seed.py        Synthetic DEMO task + adapter seeding
   routes/             FastAPI route modules
   templates/          Jinja2 HTML templates
+  defaults/           Default guardrail YAML bundled in package
 tests/
-  test_eval_*.py      31 behavioral evals
-  test_*.py           Unit + integration tests
+  api/                REST/API behavior tests
+  portal/             Server-rendered Portal tests
+  workers/            Worker adapter and launch tests
+  budgeting/          Budget, guardrail, alarm, checkpoint tests
+  evals/              Behavioral evals
+  demo/               Synthetic demo invariant tests
+  smoke/              End-to-end smoke tests
 CONTEXT.md            Domain glossary
 docs/
-  PRD.md              Product requirements
-  IMPLEMENTATION-PLAN.md  Implementation plan + status
+  GETTING_STARTED.md  First-run operator guide
+  INSTALL.md          pipx, curl installer, and Homebrew status
+  WORKER_ADAPTER_SETUP.md
+  SETUP_SUPPORT_CHECKLIST.md
+  TODO.md             Human-readable next work
+  MCP_AGENT_HARNESS_TODO.md
   HARNESS.md          Architecture reference
-  DEMO.md             Demo scenario
-  DEMO_VIDEO_SCRIPT.md 6-minute video script
-  DEPLOY.md           Render deployment runbook
+  DEMO_2099_OPENCODE_COMPARISON_RUNBOOK.md
+install.sh            uv-tool/pipx bootstrap installer
+packaging/homebrew/   Future Homebrew formula scaffold
 ```

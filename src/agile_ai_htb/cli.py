@@ -19,6 +19,7 @@ from agile_ai_htb.operator_config import (
     load_operator_config,
     load_operator_secrets_env,
     secret_env_names,
+    write_default_guardrails_file,
     write_default_secrets_env,
     write_default_operator_config,
 )
@@ -37,12 +38,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         config = write_default_operator_config(config_path)
         secrets_path = Path(getattr(args, "secrets_path", None) or DEFAULT_SECRETS_PATH)
         write_default_secrets_env(config, secrets_path)
+        guardrails_path = write_default_guardrails_file(config)
         print(f"Wrote {config_path}")
         print(f"Wrote {secrets_path}")
-        print("Edit .htb/secrets.env once; htb serve and htb check load it automatically.")
+        print(f"Wrote {guardrails_path}")
+        print("Start with htb serve, then add the control-plane API key in /settings/control-plane.")
         portal_token_env, control_key_env = secret_env_names(config)
         print(f"Portal login token: set {portal_token_env} in {secrets_path}")
-        print(f"Control-plane API key: replace {control_key_env}={CONTROL_API_KEY_PLACEHOLDER} in {secrets_path}")
+        print(
+            f"Control-plane API key: configure {control_key_env} in /settings/control-plane; "
+            f"{secrets_path} or shell env remain supported alternatives."
+        )
         return 0
 
     if command == "serve":
@@ -166,6 +172,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="SQLite database path. Overrides TOKEN_TRACKER_DATABASE_PATH.",
     )
+
     return parser
 
 
@@ -191,7 +198,13 @@ def _check_operator_setup() -> int:
         if os.getenv(env_name):
             print(f"PASS {label} env {env_name} present")
         else:
-            print(f"FAIL {label} env {env_name} missing")
+            if label == "control-plane API key":
+                print(
+                    f"FAIL {label} env {env_name} missing; add it in /settings/control-plane, "
+                    ".htb/secrets.env, or the shell environment. This does not configure native Worker CLI auth."
+                )
+            else:
+                print(f"FAIL {label} env {env_name} missing")
             hard_fail = True
 
     if os.getenv(settings.control_plane_api_key_env):
@@ -209,7 +222,11 @@ def _check_operator_setup() -> int:
             print(f"FAIL control-plane model {settings.control_plane_model} unreachable: {type(exc).__name__}")
             hard_fail = True
     else:
-        print(f"FAIL control-plane model {settings.control_plane_model} unchecked: missing {settings.control_plane_api_key_env}")
+        print(
+            f"FAIL control-plane model {settings.control_plane_model} unchecked: missing "
+            f"{settings.control_plane_api_key_env}; configure it in /settings/control-plane, "
+            ".htb/secrets.env, or the shell environment. Native Worker CLI auth is separate."
+        )
 
     print(("PASS" if settings.local_runner_enabled else "WARN") + " local runner " + ("enabled" if settings.local_runner_enabled else "disabled"))
     _print_worker_readiness(settings.database_path)
@@ -235,7 +252,7 @@ def _print_worker_readiness(database_path: Path) -> None:
         if readiness.ui_launchable:
             print(f"PASS Worker adapter {identity} launch-ready via {mode}")
         elif mode == "observed_only":
-            print(f"WARN Worker adapter {identity} observed_only is diagnostic-only")
+            print(f"WARN Worker adapter {identity} observed_only is diagnostic-only and not normal board-launchable")
         else:
             print(f"WARN Worker adapter {identity} not launch-ready: {'; '.join(readiness.reasons)}")
 

@@ -114,9 +114,9 @@ def _seed_demo_worker_adapter(db_path: Path | str) -> None:
                 "Demo Worker",
                 json.dumps(
                     {
-                        "command": "htb-demo-worker",
-                        "verification_template": ["htb-demo-worker", "--prompt", "{prompt}", "--proxy-url", "{proxy_url}", "--session-key", "{session_api_key}", "--turns", "1", "--dry-run"],
-                        "launch_template": ["htb-demo-worker", "--prompt", "{prompt}", "--proxy-url", "{proxy_url}", "--session-key", "{session_api_key}", "--model", "{model}"],
+                        "command": "htb",
+                        "verification_template": ["htb", "--help"],
+                        "launch_template": ["htb", "--help"],
                         "launch_timeout_seconds": 360,
                     },
                     separators=(",", ":"),

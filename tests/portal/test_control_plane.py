@@ -180,6 +180,66 @@ def test_control_plane_save_loads_existing_secret_env_for_new_key(tmp_path, monk
     assert response.status_code == 200
     assert os.getenv("NEW_CONTROL_KEY") == "real-test-key"
 
+
+def test_control_plane_save_writes_submitted_api_key_without_config_leak(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    app = create_app(Settings(database_path=tmp_path / "harness.db", guardrails_path=ROOT / "guardrails.yaml"))
+    with TestClient(app) as client:
+        response = client.post(
+            "/settings/control-plane",
+            headers=_portal_headers(),
+            json={
+                "control_plane_provider": "anthropic",
+                "control_plane_model": "claude-haiku-4-5",
+                "control_plane_base_url": "",
+                "control_plane_api_key_env": "ANTHROPIC_API_KEY",
+                "control_plane_api_key": "DEMO_KEY_VALUE_999",
+            },
+        )
+        page = client.get("/settings/control-plane", headers=_portal_headers())
+
+    assert response.status_code == 200
+    assert os.getenv("ANTHROPIC_API_KEY") == "DEMO_KEY_VALUE_999"
+    config_text = (tmp_path / ".htb" / "config.toml").read_text(encoding="utf-8")
+    secrets_text = (tmp_path / ".htb" / "secrets.env").read_text(encoding="utf-8")
+    assert "DEMO_KEY_VALUE_999" not in config_text
+    assert "ANTHROPIC_API_KEY=DEMO_KEY_VALUE_999" in secrets_text
+    assert "DEMO_KEY_VALUE_999" not in str(response.json())
+    assert "DEMO_KEY_VALUE_999" not in page.text
+    assert "API key present</div><div class=\"v\">yes" in page.text
+
+
+def test_control_plane_blank_api_key_preserves_existing_secret(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    secrets_path = tmp_path / ".htb" / "secrets.env"
+    secrets_path.parent.mkdir()
+    secrets_path.write_text("ANTHROPIC_API_KEY='DEMO_KEY_VALUE_999'\n", encoding="utf-8")
+
+    app = create_app(Settings(database_path=tmp_path / "harness.db", guardrails_path=ROOT / "guardrails.yaml"))
+    with TestClient(app) as client:
+        response = client.post(
+            "/settings/control-plane",
+            headers=_portal_headers(),
+            json={
+                "control_plane_provider": "anthropic",
+                "control_plane_model": "claude-haiku-4-5",
+                "control_plane_base_url": "",
+                "control_plane_api_key_env": "ANTHROPIC_API_KEY",
+                "control_plane_api_key": "",
+            },
+        )
+
+    text = secrets_path.read_text(encoding="utf-8")
+    assert response.status_code == 200
+    assert "DEMO_KEY_VALUE_999" in text
+    assert CONTROL_API_KEY_PLACEHOLDER not in text
+    assert os.getenv("ANTHROPIC_API_KEY") == "DEMO_KEY_VALUE_999"
+
 def test_control_plane_save_rejects_blank_model_and_invalid_base_url(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
@@ -212,12 +272,26 @@ def test_control_plane_save_rejects_blank_model_and_invalid_base_url(tmp_path, m
                 "control_plane_model": "custom-model",
                 "control_plane_base_url": "",
                 "control_plane_api_key_env": "COMPATIBLE_API_KEY",
+                "control_plane_api_key": "DEMO_SECRET_VALUE_999",
+            },
+        )
+        unresolved_custom = client.post(
+            "/settings/control-plane",
+            headers=_portal_headers(),
+            json={
+                "control_plane_provider": "openai-compatible",
+                "control_plane_model": "__custom__",
+                "control_plane_base_url": "https://example.invalid/v1",
+                "control_plane_api_key_env": "COMPATIBLE_API_KEY",
             },
         )
 
     assert blank_model.status_code == 422
     assert invalid_base_url.status_code == 422
     assert missing_base_url.status_code == 422
+    assert unresolved_custom.status_code == 422
+    assert "DEMO_SECRET_VALUE_999" not in missing_base_url.text
+    assert all("input" not in detail for detail in missing_base_url.json()["detail"])
 
 def test_control_plane_save_failure_keeps_running_settings(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
@@ -265,9 +339,18 @@ def test_control_plane_settings_page_shows_presets_and_needs_test(tmp_path, monk
     assert response.status_code == 200
     assert "gpt-5.4-mini" in response.text
     assert "gpt-5.5" in response.text
-    assert 'list="control-plane-model-options"' in response.text
+    assert '<select id="control_plane_model" name="control_plane_model"' in response.text
+    assert 'list="control-plane-model-options"' not in response.text
+    assert "<datalist" not in response.text
+    assert "Custom model…" in response.text
+    assert 'name="custom_control_plane_model"' in response.text
     assert "claude-haiku-4-5" in response.text
     assert "Save control-plane model" in response.text
+    assert 'name="control_plane_api_key" type="password"' in response.text
+    assert "Leave blank to keep the existing key" in response.text
+    assert "Required for OpenAI-compatible endpoints" in response.text
+    assert "Advanced connection settings" in response.text
+    assert "https://example.invalid/v1" not in response.text
     assert "needs test" in response.text
     assert "needs test" in setup.text
 
@@ -284,7 +367,45 @@ def test_control_plane_settings_page_separates_control_model_from_worker_auth(tm
     assert "TEST_CONTROL_PLANE_KEY" in html
     assert "AGILE-AI-HTB orchestration model" in html
     assert "Worker Harness" in html
-    assert "sk_should_not_render" not in html
+    assert "sk_sho...nder" not in html
+
+def test_control_plane_settings_page_preserves_existing_custom_model(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    custom_model = "acme/custom-control-plane-999"
+    with _client_with_control_plane_llm(tmp_path, FakeControlPlaneLLM(), control_plane_model=custom_model) as client:
+        response = client.get("/settings/control-plane", headers=_portal_headers())
+
+    assert response.status_code == 200
+    html = response.text
+    assert '<option value="__custom__" selected>Custom model…</option>' in html
+    assert f'name="custom_control_plane_model" value="{custom_model}"' in html
+
+def test_control_plane_form_custom_model_submission_uses_custom_value(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    custom_model = "acme/custom-control-plane-999"
+
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/settings/control-plane",
+            headers=_portal_headers(),
+            data={
+                "control_plane_provider": "openai-compatible",
+                "control_plane_model": "__custom__",
+                "custom_control_plane_model": custom_model,
+                "control_plane_base_url": "https://example.invalid/v1",
+                "control_plane_api_key_env": "COMPATIBLE_API_KEY",
+                "apply_to_estimator_breakdown": "on",
+            },
+        )
+
+    assert response.status_code == 200
+    assert custom_model in response.text
+    config = load_operator_config(tmp_path / ".htb" / "config.toml")
+    assert config["control_plane_provider"] == "openai-compatible"
+    assert config["control_plane_model"] == custom_model
+    assert config["estimator_model"] == custom_model
+    assert config["task_breakdown_model"] == custom_model
 
 def test_control_plane_connection_test_records_sanitized_status(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)

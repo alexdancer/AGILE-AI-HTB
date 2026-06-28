@@ -115,12 +115,13 @@ After the run, inspect the saved events for token usage fields emitted by your O
 Use the operator setup path. If you need an isolated comparison database, edit `.htb/config.toml` after init and set `database_path = ".demo/opencode-comparison/harness.db"` before starting the portal.
 
 ```bash
-uv run htb init
+htb init
 
-# Required: edit .htb/secrets.env once.
+# Add/test the control-plane key in /settings/control-plane after the portal starts.
+# Ignored .htb/secrets.env and shell env values remain supported alternatives.
 # AGILE_AI_HTB_CONTROL_API_KEY is the portal/control-plane estimator key, not the OpenCode Worker auth.
 
-uv run htb serve
+htb serve
 ```
 
 In another terminal:
@@ -131,7 +132,7 @@ set -a
 source .htb/secrets.env
 set +a
 
-uv run htb check
+htb check
 curl -fsS "$BASE_URL/health"
 curl -fsS -X POST "$BASE_URL/settings/control-plane/test" \
   -H "Authorization: Bearer $TOKEN_TRACKER_PORTAL_TOKEN" \
@@ -145,7 +146,7 @@ Expected:
 ..."passed":true...
 ```
 
-If the control-plane test says `missing control-plane API key env: AGILE_AI_HTB_CONTROL_API_KEY`, edit `.htb/secrets.env` with the control-plane API key and restart `htb serve` before uploading the markdown task. Otherwise the board will create a `Blocked` task with `Estimator unavailable or invalid; manual estimate required.`
+If the control-plane test says `missing control-plane API key env: AGILE_AI_HTB_CONTROL_API_KEY`, add the key through `/settings/control-plane`, ignored `.htb/secrets.env`, or a shell environment variable, then rerun the test before uploading the markdown task. Otherwise the board will create a `Blocked` task with `Estimator unavailable or invalid; manual estimate required.`
 
 ## 4. Verify or Configure the OpenCode Worker Adapter
 

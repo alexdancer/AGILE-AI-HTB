@@ -98,13 +98,13 @@ def test_worker_adapter_builders_create_safe_configurable_command_plans(tmp_path
 
 def test_worker_adapter_template_can_reference_session_api_key(tmp_path):
     adapter = {
-        "id": "demo_worker",
-        "kind": "demo_worker",
-        "name": "Demo Worker",
+        "id": "custom_proxy_worker",
+        "kind": "custom_proxy_worker",
+        "name": "Custom Proxy Worker",
         "workdir": str(tmp_path),
         "config": {
             "verification_template": [
-                "htb-demo-worker",
+                "worker-cli",
                 "--prompt",
                 "{prompt}",
                 "--proxy-url",
@@ -124,7 +124,7 @@ def test_worker_adapter_template_can_reference_session_api_key(tmp_path):
     )
 
     assert plan.command == [
-        "htb-demo-worker",
+        "worker-cli",
         "--prompt",
         "Return sentinel",
         "--proxy-url",

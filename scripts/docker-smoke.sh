@@ -38,7 +38,6 @@ cleanup
 compose up -d --build agile-ai-htb
 wait_for_health
 curl -fsS http://localhost:8000/login >/dev/null
-compose exec -T agile-ai-htb htb seed-demo
 compose exec -T agile-ai-htb test -s /data/harness.db
 compose down >/dev/null
 compose up -d --no-build agile-ai-htb

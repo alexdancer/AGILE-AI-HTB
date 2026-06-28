@@ -13,7 +13,7 @@
 ## Control Plane
 **Definition**: The deployable Harness surface that owns the Portal, AGILE Board, budget governance, orchestration workflows, proxy, token accounting, and reports.
 **Properties**: Can run as a hosted service. Coordinates work but does not itself guarantee access to a User's local repository or local coding-agent tools.
-**Relationships**: Connects to Execution Backends. Receives Worker traffic through the Proxy Engine. Displays Project Capability.
+**Relationships**: Connects to Execution Backends. Receives Worker traffic through the Proxy Engine only for `proxy_governed` launches. Displays Project Capability.
 
 ## Execution Plane
 **Definition**: The environment where repository access, Worker Adapter launch, and coding-agent execution actually happen.
@@ -27,7 +27,7 @@
 
 ## Local Runner
 **Definition**: A small process running near the User's local repository that connects to the Control Plane and executes Worker Adapter launches on that machine.
-**Properties**: Has access to local repo paths and locally installed coding agents. In all-in-one local mode, it can run as a built-in Execution Backend inside the local Harness process. In hosted mode, it pairs with the hosted Control Plane, reports heartbeat/capabilities, and routes Worker model traffic through the Harness proxy for token tracking.
+**Properties**: Has access to local repo paths and locally installed coding agents. In all-in-one local mode, it can run as a built-in Execution Backend inside the local Harness process. In hosted mode, it pairs with the hosted Control Plane and reports heartbeat/capabilities. Worker model traffic goes through the Harness Proxy only when the adapter is verified as `proxy_governed`; `native_usage` uses the installed CLI's own auth/config and reports usage after the run.
 **Relationships**: An Execution Backend. Makes a Connected Project launch-ready when online, paired, and verified.
 
 ## Hosted Workspace
@@ -38,7 +38,7 @@
 ## Project Capability
 **Definition**: The Harness-visible readiness state of a Connected Project.
 **Properties**: States include not connected, analysis-ready, launch-ready via Local Runner, launch-ready via Hosted Workspace/Sandbox, and blocked when no execution backend can satisfy launch requirements. The minimum scale proof is multiple projects or execution backends visible in one Control Plane: at least one launch-ready OpenCode path, one analysis-ready path, and one blocked/non-launchable path.
-**Relationships**: Shown in the Portal. Feeds Launch Guardrails and determines whether board tasks can launch or only be estimated. The first implementation slice is a local execution slice that proves OpenCode can be verified and launched through the Harness Proxy with token ledger evidence before broader dashboard scale states are built. The first OpenCode launch proof is read-only repo inspection that produces a session report artifact; a tiny docs-only change can follow after that succeeds.
+**Relationships**: Shown in the Portal. Feeds Launch Guardrails and determines whether board tasks can launch or only be estimated. The first implementation slice is a local execution slice that proves OpenCode can be verified and launched with trustworthy token ledger evidence; the current OpenCode proof uses `native_usage`, while `proxy_governed` remains the proxy-routed path. The first OpenCode launch proof is read-only repo inspection that produces a session report artifact; a tiny docs-only change can follow after that succeeds.
 
 ## Repository Cleanliness Guardrail
 **Definition**: The launch rule that prevents write-capable Worker Sessions from mixing agent edits with pre-existing user changes.
@@ -68,7 +68,43 @@
 ## Operator Command
 **Definition**: A small administrative entrypoint for starting AGILE-AI-HTB and preparing demo data, not the product user experience.
 **Also known as**: `htb`.
-**Relationships**: Starts the Harness. Seeds Tasks for the Portal. Does not replace Portal workflows for task, session, alarm, or report management.
+**Properties**: Public operators should install this as a bare command through `pipx`, the curl installer, or a future release channel. Contributor `uv run htb ...` commands are repo-local development conveniences, not the primary public setup path. Current commands include `htb init`, `htb serve`, `htb check`, and `htb seed-demo`.
+**Relationships**: Starts the Harness. Initializes Operator Config and Local Secret Storage. Seeds Tasks for the Portal. Does not replace Portal workflows for task, session, alarm, or report management.
+
+## Operator Install
+**Definition**: The public installation path that makes the bare `htb` command available outside a source checkout.
+**Properties**: Current validated path is `pipx install "git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git"`; after PyPI release it becomes `pipx install agile-ai-htb`. The curl installer is a bootstrapper that prefers `uv tool install`, falls back to `pipx install`, verifies `htb` is on `PATH`, and prints `htb init` as the next command. Homebrew is planned but not public until a formula and release checksums are validated.
+**Relationships**: Precedes Operator Config. Must not ask for or store API keys, portal tokens, Worker credentials, or native CLI auth.
+
+## Operator Config
+**Definition**: The local non-secret configuration created by `htb init` and edited by the Portal for normal local operation.
+**Properties**: Stored at `.htb/config.toml`. Contains non-secret settings such as database path, guardrails path, host, port, portal token env name, control-plane provider/model/base URL/env name, and Local Runner enablement. Default guardrails are written to ignored `.htb/guardrails.yaml`; SQLite defaults to `.htb/harness.db`. Effective startup precedence is CLI flag, then environment variable, then `.htb/config.toml`, then built-in default.
+**Relationships**: Read by `htb serve` and `htb check`. Updated by Control Plane Settings for non-secret fields. Points to Local Secret Storage for actual secret values.
+
+## Local Secret Storage
+**Definition**: Ignored local storage for portal and control-plane secret values in the operator setup path.
+**Properties**: Stored at `.htb/secrets.env`. `htb init` creates a portal token value and a control-plane API-key placeholder. `htb serve` and `htb check` load non-placeholder values. Support output must not include raw `.htb/secrets.env` contents, API keys, bearer tokens, or portal tokens.
+**Relationships**: Supplies the Portal Login Token and Control Plane API Key. Distinct from Operator Config, which stores only env var names and other non-secret settings.
+
+## Portal Login Token
+**Definition**: The local token used to authenticate to the Portal login screen.
+**Properties**: Default env name is `TOKEN_TRACKER_PORTAL_TOKEN`. `htb init` writes a generated value to ignored `.htb/secrets.env`. Docker/headless operators may provide it as an environment variable.
+**Relationships**: Protects Portal pages. Separate from Control Plane API Key and Worker CLI auth.
+
+## Portal-Managed Control Plane API Key
+**Definition**: The normal local setup path where an authenticated operator pastes the control-plane provider API key into `/settings/control-plane` instead of manually editing exports first.
+**Properties**: A non-empty submitted key is written only to ignored `.htb/secrets.env` under the configured control-plane API key env name. Blank submissions preserve the existing key. Portal pages, save responses, connection status, logs, and test evidence must not display the raw key value.
+**Relationships**: Configures the Control Plane model connection for estimation, task breakdown, recommendations, summaries, and reports. Does not configure native OpenCode, Claude Code, Codex, Hermes, or other Worker CLI auth.
+
+## Control Plane Connection Test
+**Definition**: The explicit setup proof that the configured control-plane provider/model can be called without launching a Worker.
+**Properties**: The Portal test records sanitized success or failure evidence and marks changed settings as needing a fresh test. `htb check` calls the configured model and prints redacted support/readiness output without persisting backend status. A failed test keeps Worker Adapter launch readiness separate; it blocks model-powered control-plane actions, not local board viewing.
+**Relationships**: Validates Control Plane settings and Portal-Managed Control Plane API Key. Distinct from Worker Adapter verification.
+
+## Setup Overview
+**Definition**: The Portal setup surface that guides operators through the next missing action needed for a governed launch.
+**Properties**: Summarizes Control Plane model, Token Budget, Worker Adapter, and Connected Project readiness. It should show the next action plainly, keep advanced diagnostics secondary, and route launch-ready users to the project board.
+**Relationships**: Coordinates Operator Config, Control Plane Connection Test, Worker Setup, Token Budget, Connected Project, and AGILE Board readiness.
 
 ## Worker
 **Definition**: The AI coding agent being governed by the harness — the entity that consumes tokens by making API calls and invoking tools.

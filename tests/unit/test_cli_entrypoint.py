@@ -1,6 +1,9 @@
 from pathlib import Path
 
+from fastapi.testclient import TestClient
+
 from agile_ai_htb import db
+from agile_ai_htb.app import create_app
 from agile_ai_htb.cli import main
 
 
@@ -119,9 +122,11 @@ def test_init_writes_non_secret_operator_config(monkeypatch, tmp_path, capsys):
     output = capsys.readouterr().out
     assert "Wrote .htb/config.toml" in output
     assert "Wrote .htb/secrets.env" in output
-    assert "Edit .htb/secrets.env once" in output
+    assert "Start with htb serve" in output
+    assert "/settings/control-plane" in output
     assert "Portal login token: set TOKEN_TRACKER_PORTAL_TOKEN" in output
-    assert "Control-plane API key: replace AGILE_AI_HTB_CONTROL_API_KEY=<your-control-plane-api-key>" in output
+    assert "Control-plane API key: configure AGILE_AI_HTB_CONTROL_API_KEY" in output
+    assert ".htb/secrets.env or shell env remain supported alternatives" in output
     assert "export TOKEN_TRACKER_PORTAL_TOKEN" not in output
 
 
@@ -151,9 +156,10 @@ def test_init_preserves_existing_config_and_prints_configured_secret_env_names(m
     assert "CUSTOM_PORTAL_TOKEN=htb-" in secret_content
     assert "CUSTOM_CONTROL_API_KEY='<your-control-plane-api-key>'" in secret_content
     output = capsys.readouterr().out
-    assert "Edit .htb/secrets.env once" in output
+    assert "Start with htb serve" in output
+    assert "/settings/control-plane" in output
     assert "Portal login token: set CUSTOM_PORTAL_TOKEN" in output
-    assert "Control-plane API key: replace CUSTOM_CONTROL_API_KEY=<your-control-plane-api-key>" in output
+    assert "Control-plane API key: configure CUSTOM_CONTROL_API_KEY" in output
 
 
 def test_init_migrates_secret_values_mistakenly_written_as_env_names(monkeypatch, tmp_path, capsys):
@@ -255,7 +261,13 @@ def test_check_reports_missing_required_env_without_secret_values(monkeypatch, t
     output = capsys.readouterr().out
     assert "PASS portal token env TOKEN_TRACKER_PORTAL_TOKEN present" in output
     assert "FAIL control-plane API key env AGILE_AI_HTB_CONTROL_API_KEY missing" in output
+    assert "/settings/control-plane" in output
+    assert ".htb/secrets.env" in output
+    assert "shell environment" in output
+    assert "does not configure native Worker CLI auth" in output
+    assert "Native Worker CLI auth is separate" in output
     assert "sk-" not in output
+    assert "portal-secret" not in output
 
 
 def test_check_reports_control_plane_and_observed_only_worker(monkeypatch, tmp_path, capsys):
@@ -299,7 +311,7 @@ def test_check_reports_control_plane_and_observed_only_worker(monkeypatch, tmp_p
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "PASS control-plane model gpt-5.4-mini reachable" in output
-    assert "WARN Worker adapter opencode (opencode) observed_only is diagnostic-only" in output
+    assert "WARN Worker adapter opencode (opencode) observed_only is diagnostic-only and not normal board-launchable" in output
 
 
 def test_seed_demo_inserts_synthetic_tasks(tmp_path, capsys):
@@ -312,6 +324,36 @@ def test_seed_demo_inserts_synthetic_tasks(tmp_path, capsys):
     assert "DEMO_TASK_2099_T1" in tasks
     assert "DEMO_TASK_2099_T6" in tasks
     assert "inserted 6" in capsys.readouterr().out
+
+
+def test_init_creates_guardrails_for_clean_cwd_app_startup(tmp_path, monkeypatch, capsys):
+    _clear_cli_env(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["init"]) == 0
+
+    assert (tmp_path / ".htb" / "config.toml").exists()
+    assert (tmp_path / ".htb" / "secrets.env").exists()
+    assert (tmp_path / ".htb" / "guardrails.yaml").exists()
+    output = capsys.readouterr().out
+    assert "Wrote .htb/guardrails.yaml" in output
+
+    with TestClient(create_app()) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+
+
+def test_seed_demo_adapter_uses_installed_htb_command(tmp_path):
+    db_path = tmp_path / "harness.db"
+
+    assert main(["--database-path", str(db_path), "seed-demo"]) == 0
+
+    adapter = db.get_worker_adapter(db_path, "demo_worker")
+    assert adapter["config"]["command"] == "htb"
+    assert adapter["config"]["verification_template"] == ["htb", "--help"]
+    assert adapter["config"]["launch_template"] == ["htb", "--help"]
+    assert "htb-demo-worker" not in str(adapter["config"])
 
 
 def test_seed_demo_is_idempotent(tmp_path, capsys):

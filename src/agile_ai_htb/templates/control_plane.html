@@ -5,6 +5,18 @@
 <p class="page-sub">AGILE-AI-HTB orchestration model · separate from Worker Harness models and credentials</p>
 
 {% if error %}<p class="pill red">{{ error }}</p>{% endif %}
+{% set curated_control_plane_models = [
+  ('gpt-5.4-mini', 'OpenAI · gpt-5.4-mini'),
+  ('gpt-5.5', 'OpenAI · gpt-5.5'),
+  ('claude-haiku-4-5', 'Anthropic · Claude Haiku 4.5'),
+  ('anthropic/claude-sonnet-4-20250514', 'Anthropic · Claude Sonnet 4'),
+] %}
+{% set current_model_is_curated = settings.control_plane_model in [
+  'gpt-5.4-mini',
+  'gpt-5.5',
+  'claude-haiku-4-5',
+  'anthropic/claude-sonnet-4-20250514',
+] %}
 
 <section class="grid cols-2">
   <article class="panel">
@@ -15,7 +27,7 @@
           <button type="button" onclick="setControlPlanePreset('openai','gpt-5.4-mini','')">OpenAI · gpt-5.4-mini</button>
           <button type="button" onclick="setControlPlanePreset('openai','gpt-5.5','')">OpenAI · gpt-5.5</button>
           <button type="button" onclick="setControlPlanePreset('anthropic','claude-haiku-4-5','')">Anthropic · Claude Haiku 4.5</button>
-          <button type="button" onclick="setControlPlanePreset('openai-compatible','','https://example.invalid/v1')">OpenAI-compatible</button>
+          <button type="button" onclick="setControlPlanePreset('openai-compatible','','')">OpenAI-compatible</button>
         </div>
 
         <label>Provider
@@ -26,27 +38,38 @@
           </select>
         </label>
         <label>Model
-          <input id="control_plane_model" name="control_plane_model" value="{{ settings.control_plane_model }}" list="control-plane-model-options" required>
-          <datalist id="control-plane-model-options">
-            <option value="gpt-5.5"></option>
-            <option value="gpt-5.4-mini"></option>
-            <option value="claude-haiku-4-5"></option>
-            <option value="anthropic/claude-sonnet-4-20250514"></option>
-          </datalist>
+          <select id="control_plane_model" name="control_plane_model" required onchange="syncControlPlaneModelControls()">
+            {% for model, label in curated_control_plane_models %}
+            <option value="{{ model }}" {% if settings.control_plane_model == model %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+            <option value="__custom__" {% if not current_model_is_curated %}selected{% endif %}>Custom model…</option>
+          </select>
         </label>
+        <label id="custom_control_plane_model_row">Custom model
+          <input id="custom_control_plane_model" name="custom_control_plane_model" value="{% if not current_model_is_curated %}{{ settings.control_plane_model }}{% endif %}" placeholder="model id for OpenAI-compatible or future providers" oninput="syncControlPlaneModelControls()">
+        </label>
+        <p class="muted">Use Custom model for OpenAI-compatible endpoints or provider model IDs that are not in the curated dropdown.</p>
         <label>Base URL
-          <input id="control_plane_base_url" name="control_plane_base_url" value="{{ settings.control_plane_base_url }}" placeholder="provider default">
+          <input id="control_plane_base_url" name="control_plane_base_url" value="{{ settings.control_plane_base_url }}" placeholder="Required for OpenAI-compatible endpoints">
         </label>
-        <label>API key env name
-          <input id="control_plane_api_key_env" name="control_plane_api_key_env" value="{{ settings.control_plane_api_key_env }}" required>
+        <p class="muted">Required for OpenAI-compatible endpoints; leave blank for provider defaults.</p>
+        <label>API key
+          <input id="control_plane_api_key" name="control_plane_api_key" type="password" placeholder="Paste provider API key">
         </label>
+        <p class="muted">Leave blank to keep the existing key. The key is saved to ignored <code>.htb/secrets.env</code>, never shown again, and never written to <code>.htb/config.toml</code>.</p>
+        <details style="margin-top:10px">
+          <summary>Advanced connection settings</summary>
+          <label>API key env name
+            <input id="control_plane_api_key_env" name="control_plane_api_key_env" value="{{ settings.control_plane_api_key_env }}" required>
+          </label>
+        </details>
         <label style="display:flex;align-items:center;gap:8px;margin-top:10px">
           <input type="checkbox" name="apply_to_estimator_breakdown" checked>
           Use this model for estimation and task breakdown too
         </label>
         <button type="submit" class="primary" style="margin-top:14px">Save control-plane model</button>
       </form>
-      <p class="muted" style="margin-top:14px">Saves non-secrets to <code>.htb/config.toml</code> and applies to new control-plane requests. API key values stay in environment or <code>.htb/secrets.env</code>.</p>
+      <p class="muted" style="margin-top:14px">Saves non-secrets to <code>.htb/config.toml</code> and applies to new control-plane requests.</p>
       {% if shadowed_settings %}
       <p class="pill muted">Effective value is overridden by environment: {{ shadowed_settings }}</p>
       {% endif %}
@@ -91,8 +114,28 @@
 <script>
 function setControlPlanePreset(provider, model, baseUrl) {
   document.getElementById('control_plane_provider').value = provider;
-  if (model) document.getElementById('control_plane_model').value = model;
+  const modelSelect = document.getElementById('control_plane_model');
+  const customModel = document.getElementById('custom_control_plane_model');
+  if (model) {
+    modelSelect.value = model;
+    customModel.value = '';
+  } else {
+    modelSelect.value = '__custom__';
+    customModel.focus();
+  }
   document.getElementById('control_plane_base_url').value = baseUrl;
+  syncControlPlaneModelControls();
 }
+
+function syncControlPlaneModelControls() {
+  const modelSelect = document.getElementById('control_plane_model');
+  const customRow = document.getElementById('custom_control_plane_model_row');
+  const customModel = document.getElementById('custom_control_plane_model');
+  const customSelected = modelSelect.value === '__custom__';
+  customRow.style.display = customSelected ? 'block' : 'none';
+  customModel.required = customSelected;
+}
+
+syncControlPlaneModelControls();
 </script>
 {% endblock %}

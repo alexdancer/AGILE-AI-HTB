@@ -1,0 +1,86 @@
+# Getting started
+
+This is the first-run guide for operators evaluating AGILE-AI-HTB in their own workflow.
+
+## First-run path
+
+1. Install the operator CLI:
+   ```bash
+   pipx install "git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git"
+   ```
+   After PyPI release, use `pipx install agile-ai-htb`. See [Install options](INSTALL.md) for the curl installer and Homebrew status.
+2. Initialize and start:
+   ```bash
+   htb init
+   htb serve
+   ```
+3. Open `http://localhost:8000/login` and use the portal token from ignored `.htb/secrets.env`.
+4. Open `/settings/control-plane`, choose provider/model, paste the provider API key, save, then test the connection.
+5. Connect a local repository from `/projects`.
+6. Open `/settings/workers`, choose a Worker Adapter, discover/allow Worker models, then verify tracking.
+7. Launch a tiny task from the project board and inspect the session report/token evidence.
+8. Run `htb check` any time you need redacted setup status for support.
+
+## Contributor checkout
+
+If you are developing inside this repository rather than installing the operator CLI, use the repo-managed uv environment:
+
+```bash
+uv run pytest -q
+uv run htb --help
+```
+
+`uv run htb ...` is a contributor convenience. The public operator path is an installed bare `htb` command.
+
+## Model and credential split
+
+AGILE-AI-HTB has two model layers:
+
+| Layer | What it powers | Auth source |
+|---|---|---|
+| Control Plane / orchestrator model | Estimates, planning, task breakdown, model recommendations, summaries, reports | `/settings/control-plane`, ignored `.htb/secrets.env`, or env vars |
+| Worker / coding harness models | The actual coding task launched through OpenCode, Claude Code, Codex, Hermes, or another adapter | The native CLI's own auth/config, or Harness Proxy session credentials in `proxy_governed` mode |
+
+Pasting a control-plane API key does not configure native Worker CLIs.
+
+## What AGILE-AI-HTB governs
+
+AGILE-AI-HTB governs launches that go through its board and verified Worker Adapter path:
+
+- It estimates tasks before launch.
+- It records budget and launch evidence.
+- It enforces launch guardrails before new Worker runs.
+- It imports trustworthy Worker usage evidence when available.
+- It keeps human review as the final disposition step.
+
+AGILE-AI-HTB cannot govern arbitrary external-agent token spend unless either:
+
+- the Worker model traffic routes through the Harness Proxy in `proxy_governed` mode; or
+- the native Worker CLI emits trustworthy, run-bound usage evidence that AGILE-AI-HTB imports in `native_usage` mode.
+
+`observed_only` is diagnostic-only and is not normal AGILE Board launchable.
+
+## Local secret storage
+
+- `.htb/config.toml` stores non-secret config only.
+- `.htb/secrets.env` is ignored local storage for the portal token and control-plane API key.
+- The portal can write a submitted control-plane API key to `.htb/secrets.env` but never shows that raw value again.
+- Blank API-key submissions preserve the existing key.
+- Do not paste `.htb/secrets.env`, API keys, portal tokens, bearer tokens, or raw credentials into support issues.
+
+## Docker and Local Runner limits
+
+Docker runs the containerized Control Plane/Portal and persists SQLite state at `/data/harness.db`. The Docker no-secret path proves image build/start, `/health`, `/login`, and persistence.
+
+Docker does not automatically receive host-installed OpenCode, Claude Code, Codex, Hermes, local repo paths, or host credentials. Real Worker launch readiness still depends on Worker Adapter setup and tracking-mode verification.
+
+## Visual proof checklist
+
+Use synthetic/public-safe data only. Do not capture real secrets, real customer data, or private repo content.
+
+| Proof | Suggested path | Shows |
+|---|---|---|
+| First-run setup | `docs/assets/screenshots/setup-control-plane.png` | `/settings/control-plane` provider/model/API-key form and needs-test/tested state |
+| Project board readiness | `docs/assets/screenshots/project-board-launch-ready.png` | Connected project board, Worker readiness, tiny task ready to launch |
+| Session report/token evidence | `docs/assets/screenshots/session-token-evidence.png` | Token ledger/session report with Worker Run evidence |
+| Optional short recording | `docs/assets/screenshots/first-run-proof.gif` | Login → control-plane test → Worker setup → tiny launch → session report |

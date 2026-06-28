@@ -35,7 +35,12 @@ from agile_ai_htb.board_automation import (
 from agile_ai_htb.execution_backend import LocalExecutionBackend
 from agile_ai_htb.guardrails import get_budget_zone
 from agile_ai_htb.llm import LLMClient, extract_usage, response_to_dict
-from agile_ai_htb.operator_config import ensure_secret_placeholder, load_operator_secrets_env, update_operator_config
+from agile_ai_htb.operator_config import (
+    ensure_secret_placeholder,
+    load_operator_secrets_env,
+    update_operator_config,
+    write_control_plane_secret,
+)
 from agile_ai_htb.project_context import project_bound_tasks
 from agile_ai_htb.settings import Settings
 from agile_ai_htb.task_launch import DEFAULT_PROXY_URL, TaskLaunchBlocked, launch_task, refresh_task_from_session
@@ -84,6 +89,7 @@ class ControlPlaneSettingsRequest(BaseModel):
     control_plane_model: str = Field(min_length=1)
     control_plane_base_url: str = ""
     control_plane_api_key_env: str = Field(min_length=1, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    control_plane_api_key: str = ""
     apply_to_estimator_breakdown: bool = True
 
     @field_validator("control_plane_model")
@@ -92,6 +98,8 @@ class ControlPlaneSettingsRequest(BaseModel):
         model = value.strip()
         if not model:
             raise ValueError("model must not be blank")
+        if model == "__custom__":
+            raise ValueError("custom model value is required")
         return model
 
     @field_validator("control_plane_base_url")
@@ -104,6 +112,11 @@ class ControlPlaneSettingsRequest(BaseModel):
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("base URL must be an http(s) URL")
         return base_url.rstrip("/")
+
+    @field_validator("control_plane_api_key")
+    @classmethod
+    def _api_key_blank_means_keep_existing(cls, value: str) -> str:
+        return value.strip()
 
     @model_validator(mode="after")
     def _compatible_provider_requires_base_url(self) -> "ControlPlaneSettingsRequest":
@@ -992,8 +1005,11 @@ async def save_control_plane_settings(request: Request):
         updates["task_breakdown_model"] = payload.control_plane_model
     try:
         config = update_operator_config(**updates)
-        ensure_secret_placeholder(payload.control_plane_api_key_env)
-        load_operator_secrets_env(config)
+        if payload.control_plane_api_key:
+            write_control_plane_secret(payload.control_plane_api_key_env, payload.control_plane_api_key)
+        else:
+            ensure_secret_placeholder(payload.control_plane_api_key_env)
+            load_operator_secrets_env(config)
         _sync_control_plane_env(payload)
     except OSError as exc:
         if wants_html:
@@ -1301,6 +1317,9 @@ async def _control_plane_payload_from_request(request: Request) -> tuple[Control
     if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
         form = await request.form()
         raw: dict[str, Any] = {key: value for key, value in form.items() if value not in (None, "")}
+        if raw.get("control_plane_model") == "__custom__":
+            raw["control_plane_model"] = str(form.get("custom_control_plane_model") or "").strip()
+        raw.pop("custom_control_plane_model", None)
         raw["apply_to_estimator_breakdown"] = "apply_to_estimator_breakdown" in raw
         try:
             return ControlPlaneSettingsRequest.model_validate(raw), True
@@ -1312,6 +1331,7 @@ async def _control_plane_payload_from_request(request: Request) -> tuple[Control
 def _validation_error_details(exc: ValidationError) -> list[dict[str, Any]]:
     details: list[dict[str, Any]] = [dict(detail) for detail in exc.errors()]
     for detail in details:
+        detail.pop("input", None)
         ctx = detail.get("ctx")
         if isinstance(ctx, dict) and "error" in ctx:
             ctx["error"] = str(ctx["error"])

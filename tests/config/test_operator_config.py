@@ -1,8 +1,11 @@
+import os
+
 from agile_ai_htb.operator_config import (
     CONTROL_API_KEY_PLACEHOLDER,
     ensure_secret_placeholder,
     load_operator_config,
     update_operator_config,
+    write_control_plane_secret,
 )
 
 
@@ -53,3 +56,19 @@ def test_ensure_secret_placeholder_preserves_existing_secret(tmp_path):
 
     assert values["CONTROL_KEY"] == "keep-me"
     assert "keep-me" in secrets_path.read_text(encoding="utf-8")
+
+
+def test_write_control_plane_secret_preserves_unrelated_values_and_sets_env(tmp_path, monkeypatch):
+    monkeypatch.delenv("CONTROL_KEY", raising=False)
+    secrets_path = tmp_path / ".htb" / "secrets.env"
+    secrets_path.parent.mkdir()
+    secrets_path.write_text("OTHER_KEY='keep-me'\nCONTROL_KEY='old-value'\n", encoding="utf-8")
+
+    values = write_control_plane_secret("CONTROL_KEY", "DEMO_CONTROL_KEY_999", secrets_path)
+
+    text = secrets_path.read_text(encoding="utf-8")
+    assert values["OTHER_KEY"] == "keep-me"
+    assert values["CONTROL_KEY"] == "DEMO_CONTROL_KEY_999"
+    assert "OTHER_KEY=keep-me" in text
+    assert "CONTROL_KEY=DEMO_CONTROL_KEY_999" in text
+    assert os.environ["CONTROL_KEY"] == "DEMO_CONTROL_KEY_999"

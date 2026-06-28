@@ -54,7 +54,7 @@ The Harness separates coordination from execution:
 
 | Concept | Responsibility | First target |
 |---|---|---|
-| **Control Plane** | Portal, AGILE Board, budgets, Task Breakdown Agent, Estimator LLM, Proxy Engine, token accounting, reports | Render/Fly/Railway deployable web app |
+| **Control Plane** | Portal, AGILE Board, budgets, Task Breakdown Agent, Estimator LLM, Proxy Engine, token accounting, reports | Local Docker/FastAPI app; hosted target stays platform-neutral |
 | **Local Runner** | Runs near the user's local repo, launches local Claude Code/Codex/OpenCode/Hermes adapters, sends model traffic through the Harness proxy | Built into all-in-one local mode first; split/tunnel runner later |
 | **Hosted Workspace/Sandbox** | Clones Git repos for hosted analysis and later cloud-side Worker execution | Future launch backend; analysis-only first |
 | **Analysis-only backend** | Allows task breakdown and estimation without Worker launch | Available for hosted Git URL workspaces |
@@ -77,7 +77,7 @@ The minimum scale proof is one Control Plane coordinating multiple project/backe
 
 This proves the Control Plane can govern heterogeneous execution readiness at scale while keeping launch claims truthful.
 
-The first implementation slice is the **local execution slice**. It must prove real governance before expanding the dashboard: `htb init`, edit `.htb/secrets.env`, `htb serve`, `htb check`, connect a local repo path, detect OpenCode, verify the real OpenCode CLI launch path, record `adapter_verification` tokens through a budget-authoritative tracking mode, mark the project **Launch-ready via Local Runner**, launch one tiny task through OpenCode, and prove Worker tokens hit the Harness ledger. The first launch proof should be read-only: OpenCode inspects the connected repo and writes a short session report artifact summarizing language, test command, and top-level structure. After that passes, a second proof may perform a tiny docs-only codebase change.
+The first implementation slice is the **local execution slice**. It must prove real governance before expanding the dashboard: `htb init`, `htb serve`, configure/test the control-plane connection through `/settings/control-plane` or ignored local secret storage, `htb check`, connect a local repo path, detect OpenCode, verify the real OpenCode CLI launch path, record `adapter_verification` tokens through a budget-authoritative tracking mode, mark the project **Launch-ready via Local Runner**, launch one tiny task through OpenCode, and prove Worker tokens hit the Harness ledger. The first launch proof should be read-only: OpenCode inspects the connected repo and writes a short session report artifact summarizing language, test command, and top-level structure. After that passes, a second proof may perform a tiny docs-only codebase change.
 
 Launch Guardrails distinguish read-only from write-capable sessions. Read-only repo inspection may run even when the connected repository has uncommitted changes. Write-capable sessions require a detected git repository, visible current branch, and clean working tree before launch so Worker changes do not mix with pre-existing user edits. After the clean-tree check passes, the runner creates a task branch such as `htb/task-123-short-title`, launches the Worker on that branch, and records the branch name in the Session Artifact and Portal review flow. The Worker may edit files on the task branch, but the Harness owns final git history: after configured verification passes, the Harness creates the commit with task/session metadata. Commit gating uses the Project Profile test command plus a Harness-generated git diff review summary. If no test command is configured, verification is marked "missing test command" and manual approval is required before commit. If verification fails, changes remain uncommitted for review or retry. Pull request creation is optional, not required for the first local execution slice: when a GitHub remote and authenticated `gh` CLI are available, the Portal may show an Open PR action after the Harness-Owned Commit exists.
 
@@ -101,10 +101,11 @@ Local execution smoke path:
 
 ```bash
 # Start the all-in-one Control Plane + Local Runner
-uv run htb init
-# Edit .htb/secrets.env once; htb serve/check load it automatically
-uv run htb serve
-uv run htb check
+htb init
+# Add/test the control-plane key in /settings/control-plane after the portal starts.
+# Ignored .htb/secrets.env and shell env values remain supported alternatives.
+htb serve
+htb check
 
 # In another shell, run the reproducible synthetic smoke.
 # It requires OpenCode on PATH, initializes a temporary git repo, connects it
@@ -421,7 +422,7 @@ GET    /session/{id}/artifact  ← Raw JSON artifact (for checkpoint replay)
 POST   /session/{id}/checkpoint/evaluate  ← Re-run checkpoint evaluation
 GET    /guardrails             ← Current guardrail config
 PUT    /guardrails             ← Update guardrail defaults
-POST   /tasks                  ← Create task on AGILE board
+POST   /tasks                  ← Manual task row API; normal intake uses estimation
 PUT    /tasks/{id}             ← Update task (estimate, status)
 POST   /estimate               ← Estimate tokens + recommend model for a task description
 GET    /dashboard              ← Aggregate analytics (all sessions)
@@ -500,13 +501,13 @@ Every alarm in the portal includes action buttons. The harness polls for the hum
 
 ## Worker Adapter Interface (Swappable)
 
-The harness is Worker-agnostic only after a Worker Adapter proves it can route model traffic through the Proxy Engine. A Worker Adapter is the launch/control integration for one coding agent: Claude Code, Codex, OpenCode, Hermes, or a custom command. The model recommendation is separate from the Worker Adapter.
+The harness is Worker-agnostic only after a Worker Adapter proves budget-authoritative tracking. A Worker Adapter is the launch/control integration for one coding agent: Claude Code, Codex, OpenCode, Hermes, or a custom command. The model recommendation is separate from the Worker Adapter.
 
-An adapter is launchable from the AGILE Board only when the setup test proves token tracking works. If the coding agent talks directly to Anthropic/OpenAI instead of the harness proxy, the adapter is not launchable in governed mode.
+An adapter is launchable from the AGILE Board only when setup verification proves token tracking works through either Harness Proxy traffic or trustworthy native CLI usage evidence. Observed-only logs are diagnostic, not launch-ready.
 
 ### How the agent connects
 
-The agent is pointed at the harness URL instead of directly at the LLM provider. The harness URL can be `localhost:8000` (local development) or `https://harness.fly.dev` (cloud deployment). The agent does not know or care — it sends standard HTTP requests.
+For proxy-governed sessions, the agent is pointed at the local harness URL instead of directly at the LLM provider. Native-usage adapters keep their own CLI auth/config and report trustworthy usage after the run.
 
 ```bash
 # Hermes points at the harness
@@ -622,7 +623,6 @@ Each agent gets its own session key. The harness governs identically regardless 
 | Portal UI     | HTMX + Jinja2 + Chart.js                  | Server-rendered, no bundler, interactive via HTMX            |
 | Charts        | Chart.js                                  | Token burn timeline, tool distribution pie                   |
 | Notifications | Discord/Slack webhook + macOS `osascript` | Push alarms to user                                          |
-| Container     | Docker (single Dockerfile)                | Identical local and cloud deployment                         |
-| Cloud         | Fly.io / Railway                          | Fast deploy, free tier sufficient for demo                   |
+| Container     | Docker (single Dockerfile)                | Local Control Plane/Portal smoke and packaging check         |
 
 
