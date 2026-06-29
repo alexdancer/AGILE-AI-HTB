@@ -24,7 +24,7 @@ The honest claim:
 
 - Direct OpenCode shows uncontrolled baseline token usage for the task.
 - AGILE-AI-HTB shows operator governance around the Worker run: estimate, budget gate, override acknowledgement, launch evidence, usage import, alarms, and review evidence.
-- If both paths send the same full task to the same OpenCode model, Worker token usage may be similar. The harness does not automatically compress the prompt in `native_usage` mode.
+- If both paths send the same full task to the same OpenCode model, Worker token usage may be similar. The harness does not automatically compress the prompt in the supported native-usage path.
 
 ## Model and Tracking Responsibilities
 
@@ -40,10 +40,9 @@ Worker/coding harness model
 Worker Adapter identity
   OpenCode local CLI integration.
 
-Tracking mode
-  proxy_governed  -> Worker requests pass through Harness Proxy when configured.
-  native_usage    -> OpenCode uses native auth; harness imports trustworthy usage after the run.
-  observed_only   -> diagnostic only; not a normal governed board launch.
+Usage evidence path
+  OpenCode uses native auth; the harness imports trustworthy usage after the run.
+  Diagnostic-only observation is not a normal governed board launch.
 ```
 
 ## Files Used
@@ -173,7 +172,7 @@ Configure OpenCode with:
 - adapter identity: OpenCode
 - workdir: absolute path to `.demo/opencode-comparison/harness-target`
 - model: the OpenCode model you intend to use
-- tracking mode: verified `native_usage` or `proxy_governed`
+- usage evidence: verified native usage import
 
 The harness OpenCode command must bind that workdir through OpenCode's native project-dir flag, not only the subprocess cwd:
 
@@ -185,9 +184,8 @@ If OpenCode reports writes under a repo-level path such as `incident-ledger/` wh
 
 Important:
 
-- `native_usage` may launch without Harness Proxy credentials only when verification proves machine-readable, selected-model-aware, token-complete, successful-exit, run-bound usage evidence.
-- `proxy_governed` requires Harness Proxy URL/session API key wiring and provides runtime request governance.
-- `observed_only` is for diagnostics and must not be treated as a normal governed board launch.
+- Native Worker launch is allowed only when verification proves machine-readable, selected-model-aware, token-complete, successful-exit, run-bound usage evidence.
+- Diagnostic-only observation is for troubleshooting and must not be treated as a normal governed board launch.
 
 ## 5. Submit the Same Markdown Task Through AGILE-AI-HTB
 
@@ -219,7 +217,7 @@ Direct OpenCode baseline: external evidence only
 Harness Worker budget: configured lower than the direct baseline to show gate/override/review behavior
 ```
 
-For `native_usage`, if the estimate exceeds remaining Worker budget, launch should require explicit acknowledgement that native OpenCode requests cannot be throttled mid-run. The run may finish and then reconcile usage afterward.
+If the estimate exceeds remaining Worker budget, launch should require explicit acknowledgement that native OpenCode requests cannot be throttled mid-run. The run may finish and then reconcile usage afterward.
 
 ## 7. Launch Through AGILE-AI-HTB
 
@@ -227,9 +225,7 @@ From the board:
 
 1. Select the long markdown task.
 2. Confirm the selected Worker Adapter is OpenCode.
-3. Confirm the tracking label is one of:
-   - `Tracked via Native Usage`; or
-   - `Governed via Harness Proxy`.
+3. Confirm the tracking label is `Tracked via Native Usage`.
 4. Confirm the recommended model is supported by the adapter.
 5. Launch normally if the estimate fits the configured Worker budget.
 6. If the estimate exceeds budget, use the explicit override flow only if you intend to demonstrate over-budget launch behavior.
@@ -242,7 +238,7 @@ Expected harness evidence:
 - `budget_override=true` if an override was approved;
 - Worker Run/session ID;
 - stdout/stderr/exit evidence;
-- native or proxy usage evidence;
+- native usage evidence;
 - effective project-root/workdir evidence showing files in `.demo/opencode-comparison/harness-target`;
 - no suspicious outside-workdir paths such as repo-level `incident-ledger/` being counted as the harness target;
 - token ledger rows for harness Worker execution;
@@ -288,7 +284,7 @@ Avoid this framing:
 The harness automatically makes OpenCode use fewer tokens on the same full prompt.
 ```
 
-That is not true for normal `native_usage` execution.
+That is not true for normal native-usage execution.
 
 ## 10. Cleanup
 

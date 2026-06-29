@@ -2,7 +2,7 @@
 
 **Goal:** Let other AI agent harnesses drive AGILE-AI-HTB through MCP without bypassing the existing board, budget, Worker Run, and session-artifact guardrails.
 
-**Verdict:** Plausible as a thin MCP facade over the existing Control Plane. Not plausible as universal token governance for arbitrary external agents unless their model calls go through the Harness Proxy or they provide trustworthy native usage evidence.
+**Verdict:** Plausible as a thin MCP facade over the existing Control Plane. Not plausible as universal token governance for arbitrary external agents unless their usage is captured by a verified harness-owned path or they provide trustworthy native usage evidence.
 
 ## Core boundary
 
@@ -24,7 +24,7 @@ The MCP layer should call existing paths, not duplicate orchestration logic.
 
 - **Model layers stay separate:** control-plane/orchestrator model handles estimates, breakdowns, reports, reviews; Worker Adapter models belong to OpenCode, Claude Code, Codex, Hermes, etc.
 - **MCP is not token metering:** an MCP server sees tool calls, not the external harness's own LLM token usage.
-- **Authoritative Worker usage needs one of:** `proxy_governed`, verified `native_usage`, or explicit non-authoritative `observed_only` diagnostic labeling.
+- **Authoritative Worker usage needs one of:** verified native usage import, a verified harness-owned proxy path, or explicit non-authoritative diagnostic labeling.
 - **Long-running launches return handles:** `launch_task` should return `worker_run_id`, `task_id`, status, and portal/report links; polling/fetch tools return progress and artifacts later.
 - **Human-in-the-loop remains product law:** MCP must not silently mark tasks Done, auto-approve budget overrides, or bypass Review Disposition.
 - **Repo access is execution-plane dependent:** hosted MCP cannot launch against a user's local path unless a verified Local Runner / execution backend is paired.
@@ -94,4 +94,4 @@ The MCP layer should call existing paths, not duplicate orchestration logic.
 
 AGILE-AI-HTB can expose governed task, estimate, launch, run-inspection, and artifact workflows to other harnesses through MCP.
 
-It cannot govern arbitrary external-agent token spend unless the external harness routes traffic through AGILE-AI-HTB or gives trustworthy run-bound usage evidence.
+It cannot govern arbitrary external-agent token spend unless the external harness uses a verified AGILE-AI-HTB usage-capture path or gives trustworthy run-bound usage evidence.

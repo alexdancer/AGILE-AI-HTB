@@ -60,20 +60,25 @@ def test_pyproject_packages_server_rendered_templates_and_defaults():
 
 def test_readme_documents_portal_first_operator_flow():
     readme = (ROOT / "README.md").read_text()
+    operator_install = readme.split("For contributors working from a checkout", 1)[0]
 
     assert "AGILE-AI-HTB" in readme
     assert "pipx install" in readme
     assert "htb init" in readme
-    assert "uv run htb init" not in readme.split("## Docker", 1)[0]
+    assert "uv run htb init" not in operator_install
     assert "http://localhost:8000/login" in readme
     assert "htb check" in readme
     removed_command = "seed" + "-demo"
     assert f"htb {removed_command}" not in readme
-    assert "docker-compose up" in readme
+    assert "docker-compose up" not in readme
+    assert "Docker path" not in readme
     assert "uv run pytest" in readme
     assert "provider" in readme.lower()
-    assert "env var" in readme.lower()
-    assert "PROVIDER_API_KEY" in readme
+    assert "environment variables" in readme.lower()
+    assert "AGILE_AI_HTB_CONTROL_API_KEY" in readme
+    assert "proxy_governed" not in readme
+    assert "proxy-governed" not in readme.lower()
+    assert "Harness Proxy" not in readme
 
 
 def test_install_docs_separate_operator_installs_from_contributor_uv_run():
@@ -88,6 +93,24 @@ def test_install_docs_separate_operator_installs_from_contributor_uv_run():
     assert "uv run htb ...` is a contributor convenience" in install_doc
     assert "htb init" in getting_started
     assert "uv run htb ...` is a contributor convenience" in getting_started
+    assert "proxy_governed" not in getting_started
+    assert "Harness Proxy" not in getting_started
+
+
+def test_operator_docs_do_not_advertise_proxy_governed_mode():
+    operator_docs = [
+        ROOT / "docs" / "GETTING_STARTED.md",
+        ROOT / "docs" / "WORKER_ADAPTER_SETUP.md",
+        ROOT / "docs" / "SETUP_SUPPORT_CHECKLIST.md",
+        ROOT / "docs" / "DEMO_2099_OPENCODE_COMPARISON_RUNBOOK.md",
+        ROOT / "docs" / "MCP_AGENT_HARNESS_TODO.md",
+    ]
+
+    for path in operator_docs:
+        text = path.read_text()
+        assert "proxy_governed" not in text, path
+        assert "proxy-governed" not in text.lower(), path
+        assert "Governed via Harness Proxy" not in text, path
 
 
 def test_support_checklist_requests_bare_htb_check_and_install_method():

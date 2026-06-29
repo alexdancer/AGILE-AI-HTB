@@ -5,6 +5,7 @@ Parking lot for ideas I actually want to revisit. This is not a roadmap or a pro
 ## Build next
 
 - [ ] **Portal refresh:** make the project board easier to scan, especially project navigation, worker setup, queue status, review evidence, and empty/error states.
+- [ ] **Revamped Frontend:** change the frontend to have more general quality using React or Svelte
 - [ ] **Full CLI:** turn `htb` into a real terminal product for init, serve, check, projects, board tasks, worker setup, runs, reports, and budget status.
 - [ ] **MCP facade:** explore using this project as an MCP server so other agents can list projects, inspect boards, create/estimate tasks, launch guarded runs, and fetch artifacts without bypassing Harness guardrails.
 - [ ] **Tool/token map:** visualize which tools and commands a coding agent used, such as `git status`, `grep`, or `rm`, and show token usage tied to those actions.

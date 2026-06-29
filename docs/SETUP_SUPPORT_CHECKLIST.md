@@ -28,7 +28,7 @@ Include:
 - Control-plane provider/model
 - Control-plane key configured through `/settings/control-plane`, `.htb/secrets.env`, or environment variable
 - Worker Adapter identity: OpenCode, Claude Code, Codex, Hermes, or other
-- Tracking mode: `proxy_governed`, `native_usage`, `observed_only`, or unknown
+- Worker tracking status shown in the Portal: verified native usage, diagnostic-only, failed, or unknown
 - Whether you are running local Python or Docker
 
 ## Boundary reminder

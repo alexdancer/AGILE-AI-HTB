@@ -39,7 +39,7 @@ AGILE-AI-HTB has two model layers:
 | Layer | What it powers | Auth source |
 |---|---|---|
 | Control Plane / orchestrator model | Estimates, planning, task breakdown, model recommendations, summaries, reports | `/settings/control-plane`, ignored `.htb/secrets.env`, or env vars |
-| Worker / coding harness models | The actual coding task launched through OpenCode, Claude Code, Codex, Hermes, or another adapter | The native CLI's own auth/config, or Harness Proxy session credentials in `proxy_governed` mode |
+| Worker / coding harness models | The actual coding task launched through OpenCode, Claude Code, Codex, Hermes, or another adapter | The native CLI's own auth/config |
 
 Pasting a control-plane API key does not configure native Worker CLIs.
 
@@ -53,12 +53,7 @@ AGILE-AI-HTB governs launches that go through its board and verified Worker Adap
 - It imports trustworthy Worker usage evidence when available.
 - It keeps human review as the final disposition step.
 
-AGILE-AI-HTB cannot govern arbitrary external-agent token spend unless either:
-
-- the Worker model traffic routes through the Harness Proxy in `proxy_governed` mode; or
-- the native Worker CLI emits trustworthy, run-bound usage evidence that AGILE-AI-HTB imports in `native_usage` mode.
-
-`observed_only` is diagnostic-only and is not normal AGILE Board launchable.
+AGILE-AI-HTB cannot govern arbitrary external-agent token spend. The supported local path is governed only after Worker Adapter setup proves the native Worker CLI emits trustworthy, run-bound usage evidence that AGILE-AI-HTB can import for the selected model.
 
 ## Local secret storage
 
