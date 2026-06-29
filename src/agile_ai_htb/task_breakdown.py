@@ -87,21 +87,22 @@ async def breakdown_task_source(
     task_breakdown_model: str,
     intake_metadata: dict[str, Any] | None = None,
     structure_hints: list[str] | None = None,
+    repo_context: dict[str, Any] | None = None,
 ) -> tuple[TaskBreakdownResult, Any]:
+    user_payload: dict[str, Any] = {
+        "source_text": source_text,
+        "intake_metadata": intake_metadata or {},
+        "structure_hints": structure_hints or [],
+    }
+    if repo_context:
+        user_payload["repo_context"] = repo_context
     request = {
         "model": task_breakdown_model,
         "messages": [
             {"role": "system", "content": _system_prompt()},
             {
                 "role": "user",
-                "content": json.dumps(
-                    {
-                        "source_text": source_text,
-                        "intake_metadata": intake_metadata or {},
-                        "structure_hints": structure_hints or [],
-                    },
-                    sort_keys=True,
-                ),
+                "content": json.dumps(user_payload, sort_keys=True),
             },
         ],
         "temperature": 0,
@@ -129,7 +130,9 @@ def _system_prompt() -> str:
         "against the original source contract using the smallest executable proof available; it must not ask the Worker to "
         "reimplement the whole source task as one oversized implementation task. "
         "Write one concise global_contract_summary describing what all accepted slices must collectively satisfy. "
-        "Do not turn constraints like 'Do not add network dependencies.' or verification like 'Run pytest.' into standalone tasks."
+        "Do not turn constraints like 'Do not add network dependencies.' or verification like 'Run pytest.' into standalone tasks. "
+        "When the user payload includes repo_context, use it only to ground candidate slices, likely entry points, "
+        "verification commands, and repo constraints; never merge it into or replace the original source_text contract."
     )
 
 

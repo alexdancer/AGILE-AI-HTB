@@ -3,9 +3,7 @@
 ## Purpose
 
 Define the operator-controlled Review-stage disposition flow for completed Worker execution so tasks can be reviewed, approved, blocked, or annotated while preserving Worker Run, session, token, and launch evidence.
-
 ## Requirements
-
 ### Requirement: Review tasks expose operator disposition actions
 The system SHALL expose Review-stage actions for tasks awaiting operator inspection after completed Worker execution.
 
@@ -58,13 +56,21 @@ The system SHALL perform Agent Review using the AGILE-AI-HTB control-plane/orche
 - **AND** Mark Done and Block remain available
 
 ### Requirement: Agent Review result is persisted and displayed
-The system SHALL persist the latest Agent Review result on the task and display a concise response on the Review task card.
+The system SHALL persist the latest Agent Review result on the task and display a concise response on the Review task card, including enough session/model/token evidence for the operator to see that the action completed.
 
 #### Scenario: Agent Review completes
 - **WHEN** Agent Review completes successfully
-- **THEN** the task metadata records the review status, model, reviewed timestamp, summary, recommendation when available, and findings when available
-- **AND** the Review task card displays the latest Agent Review summary or response
+- **THEN** the task metadata records the review status, control-plane model, reviewed timestamp, summary, recommendation when available, findings when available, review session id, and Agent Review token totals when available
+- **AND** the Review task card displays a visible Agent Review completion line with the recommendation or summary
+- **AND** the Review task card shows or links the Agent Review session id and review token total when available
 - **AND** the Agent Review result does not automatically move the task to Done, Estimated, or Blocked
+
+#### Scenario: Agent Review fails visibly
+- **WHEN** Agent Review fails due to model, parsing, or runtime error
+- **THEN** the task remains in Review
+- **AND** the task metadata records a sanitized Agent Review failure with review session id and model when available
+- **AND** the Review task card displays a visible Agent Review failure line
+- **AND** Mark Done and Block remain available
 
 ### Requirement: Operator can block reviewed task
 The system SHALL let an operator move a Review task to Blocked with a human-readable reason.
@@ -98,3 +104,16 @@ Automatic Agent Review SHALL be advisory evidence only and SHALL NOT replace ope
 - **WHEN** Auto Agent Review fails due to control-plane model or parsing errors
 - **THEN** the task SHALL remain in Review
 - **AND** the Review card SHALL show review failure evidence without moving the task to Done or Blocked
+
+### Requirement: Agent Review evidence links to the reviewed session report
+The Review Disposition flow SHALL keep Agent Review evidence visible from the Review task card and from the Worker session report for the reviewed task.
+
+#### Scenario: Review result is visible from task card and session report
+- **WHEN** Agent Review completes for a Review task with a linked Worker session
+- **THEN** the Review task card SHALL show the latest Agent Review status, recommendation or failure state, review token total when available, and review session link when available
+- **AND** the Worker session report for that task SHALL show the same latest Agent Review result summary and review usage metadata
+
+#### Scenario: Agent Review accounting stays orchestration-only
+- **WHEN** Agent Review records token usage
+- **THEN** that usage SHALL be categorized as control-plane reporting or orchestration spend
+- **AND** it SHALL NOT be counted as Worker execution `actual_tokens` for the reviewed task

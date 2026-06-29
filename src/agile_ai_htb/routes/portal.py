@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import os
+import secrets
+
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from zoneinfo import ZoneInfo
-
-import os
-import secrets
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -15,7 +15,6 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from agile_ai_htb import db
-from agile_ai_htb.adapter_readiness import evaluate_adapter_readiness
 from agile_ai_htb.auth import (
     PORTAL_COOKIE_MAX_AGE_SECONDS,
     PORTAL_COOKIE_NAME,
@@ -32,7 +31,21 @@ from agile_ai_htb.board_automation import (
     start_run_automation,
     stop_run_automation,
 )
+from agile_ai_htb.board_workspace import (
+    board_page_context as _board_page_context,
+    project_board_counts as _project_board_counts,
+    project_has_running_work as _project_has_running_work,
+    project_task_history_context as _project_task_history_context,
+    project_workspace_summary as _project_workspace_summary,
+    refresh_project_board_tasks as _refresh_project_board_tasks,
+)
 from agile_ai_htb.execution_backend import LocalExecutionBackend
+from agile_ai_htb.evidence_reporting import (
+    daily_cap_tokens as _daily_cap_tokens,
+    safe_evidence as _safe_worker_evidence,
+    session_evidence_summary as _session_evidence_summary,
+    token_totals as _token_totals,
+)
 from agile_ai_htb.guardrails import get_budget_zone
 from agile_ai_htb.llm import LLMClient, extract_usage, response_to_dict
 from agile_ai_htb.operator_config import (
@@ -41,13 +54,17 @@ from agile_ai_htb.operator_config import (
     update_operator_config,
     write_control_plane_secret,
 )
-from agile_ai_htb.project_context import project_bound_tasks
+from agile_ai_htb.project_context import task_project_id
 from agile_ai_htb.settings import Settings
 from agile_ai_htb.task_launch import DEFAULT_PROXY_URL, TaskLaunchBlocked, launch_task, refresh_task_from_session
 from agile_ai_htb.routes.tasks import _ensure_review_task, _run_agent_review
 from agile_ai_htb.template_context import portal_template_context
-from agile_ai_htb.tracking_modes import NATIVE_USAGE, OBSERVED_ONLY, PROXY_GOVERNED, tracking_mode_view
-from agile_ai_htb.worker_model_allowlist import allowed_worker_model_ids
+from agile_ai_htb.worker_setup_view import (
+    active_adapter_for_request as _active_adapter_for_request,
+    validate_worker_tracking_mode as _validate_worker_tracking_mode,
+    worker_adapter_view_models as _worker_adapter_view_models,
+    worker_setup_next_action as _worker_setup_next_action,
+)
 from agile_ai_htb.worker_adapters import (
     detect_worker_adapter,
     discover_worker_models,
@@ -61,9 +78,6 @@ templates = Jinja2Templates(
     directory=Path(__file__).resolve().parents[1] / "templates",
     context_processors=[portal_template_context],
 )
-
-BOARD_COLUMNS = ["Estimated", "Running", "Review", "Done", "Blocked"]
-
 
 class WorkerVerifyRequest(BaseModel):
     model: str = Field(min_length=1)
@@ -172,8 +186,8 @@ def dashboard(request: Request):
     database_path = request.app.state.settings.database_path
     config = request.app.state.guardrails
     day_start = _current_day_start_iso(request.app.state.settings.timezone)
-    token_total = db.total_token_usage(database_path, since=day_start)
     token_breakdown = db.token_usage_breakdown(database_path, since=day_start)
+    budget_token_total = db.budgeted_token_usage(database_path, since=day_start)
     budget_settings = _effective_budget_settings(database_path, config)
     daily_cap = budget_settings.get("daily_cap_tokens")
     alarms = db.list_alarms(database_path)
@@ -203,11 +217,12 @@ def dashboard(request: Request):
         {
             "active_page": "dashboard",
             "next_actions": next_actions,
-            "token_total": token_total,
+            "token_total": budget_token_total,
+            "budget_token_total": budget_token_total,
             "worker_token_total": token_breakdown["by_category"]["worker_execution"],
             "token_breakdown": token_breakdown,
             "daily_cap": daily_cap,
-            "current_zone": get_budget_zone(token_breakdown["by_category"]["worker_execution"], daily_cap, config),
+            "current_zone": get_budget_zone(budget_token_total, daily_cap, config),
             "session_count": len(sessions),
             "active_session_count": len(active_sessions),
             "alarm_count": len(alarms),
@@ -327,7 +342,7 @@ def setup_overview(request: Request):
     settings = request.app.state.settings
     budget_settings = _effective_budget_settings(database_path, config)
     adapters = _worker_adapter_view_models(database_path)
-    active_adapter = _active_adapter_for_request(adapters, request)
+    active_adapter = _active_adapter_for_request(adapters, request.query_params.get("adapter_id"))
     projects = db.list_connected_projects(database_path)
     try:
         control_status = db.get_execution_backend_status(database_path, "control_plane_model")
@@ -419,6 +434,57 @@ def project_board(project_id: str, request: Request):
     return _render_board(request, active_project=_project_view_model(request, project))
 
 
+@router.get("/projects/{project_id}/task-history", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
+def project_task_history(project_id: str, request: Request):
+    database_path = request.app.state.settings.database_path
+    project = _project_view_model(request, _ensure_project(database_path, project_id))
+    context = _project_task_history_context(
+        database_path,
+        active_project=project,
+        selected_filter=request.query_params.get("filter", "all"),
+    )
+    return templates.TemplateResponse(
+        request,
+        "task_history.html",
+        {
+            "active_page": "task_history",
+            "active_project": project,
+            "project": project,
+            **context,
+        },
+    )
+
+
+@router.post("/projects/{project_id}/tasks/{task_id}/archive", dependencies=[Depends(require_portal_auth)])
+def project_archive_task(project_id: str, task_id: str, request: Request):
+    database_path = request.app.state.settings.database_path
+    _ensure_project_task(database_path, project_id, task_id)
+    try:
+        db.archive_task(database_path, task_id)
+    except ValueError as exc:
+        return RedirectResponse(
+            f"/projects/{project_id}/board?error={quote(str(exc))}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    return RedirectResponse(f"/projects/{project_id}/board", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/projects/{project_id}/tasks/archive-done", dependencies=[Depends(require_portal_auth)])
+def project_archive_done_tasks(project_id: str, request: Request):
+    database_path = request.app.state.settings.database_path
+    _ensure_project(database_path, project_id)
+    db.archive_done_tasks_for_project(database_path, project_id)
+    return RedirectResponse(f"/projects/{project_id}/board", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/projects/{project_id}/tasks/{task_id}/unarchive", dependencies=[Depends(require_portal_auth)])
+def project_unarchive_task(project_id: str, task_id: str, request: Request):
+    database_path = request.app.state.settings.database_path
+    _ensure_project_task(database_path, project_id, task_id)
+    db.unarchive_task(database_path, task_id)
+    return RedirectResponse(f"/projects/{project_id}/task-history", status_code=status.HTTP_303_SEE_OTHER)
+
+
 @router.post("/projects/{project_id}/run-next", dependencies=[Depends(require_portal_auth)])
 def project_run_next(project_id: str, request: Request):
     database_path = request.app.state.settings.database_path
@@ -497,175 +563,21 @@ async def project_board_status(project_id: str, request: Request):
 
 def _render_board(request: Request, *, active_project: dict[str, Any] | None = None):
     database_path = request.app.state.settings.database_path
-    db.mark_stale_worker_runs_interrupted(database_path)
-    if active_project is not None:
-        _refresh_project_board_tasks(database_path, str(active_project["id"]))
-    tasks = db.list_tasks(database_path)
-    if active_project is not None:
-        tasks = project_bound_tasks(tasks, str(active_project["id"]))
-    grouped = {column: [] for column in BOARD_COLUMNS}
-    for task in tasks:
-        task = dict(task)
-        metadata = dict(task.get("metadata", {}))
-        metadata["review_actions_available"] = _review_actions_available(database_path, task)
-        if metadata.get("active_worker_run_id"):
-            metadata["worker_run_events"] = db.list_worker_run_events(
-                database_path,
-                worker_run_id=str(metadata["active_worker_run_id"]),
-            )[-6:]
-        task["metadata"] = metadata
-        status = "Estimated" if task["status"] == "Ready" else task["status"] if task["status"] in grouped else "Blocked"
-        if status == "Blocked" and task["status"] not in grouped:
-            task["metadata"] = {
-                **task.get("metadata", {}),
-                "blocked_reason": f"Unsupported task status: {task['status']}",
-            }
-            task["status"] = "Blocked"
-        grouped[status].append(task)
-    has_demo_tasks = any(str(task["id"]).startswith("DEMO_TASK_2099_") for task in tasks)
-    adapters = [adapter for adapter in _worker_adapter_view_models(database_path) if adapter.get("tracking", {}).get("mode") != "observed_only"]
-    error = request.query_params.get("error", "")
-    board_counts = _board_counts(tasks)
-    launchable_adapters = [adapter for adapter in adapters if adapter.get("launchable")]
-    board_summary = {
-        "counts": board_counts,
-        "total_tasks": sum(board_counts.values()),
-        "launch_ready": bool(launchable_adapters),
-        "active_adapter": launchable_adapters[0] if launchable_adapters else (adapters[0] if adapters else None),
-    }
-    automation_summary = None
-    if active_project is not None:
-        project_id = str(active_project["id"])
-        counts = board_counts
-        queue_state = get_run_automation_state(database_path, project_id)
-        automation_summary = {
-            "counts": counts,
-            "queue": queue_state,
-            "eligible_count": len(list_eligible_estimated_tasks(database_path, project_id)),
-            "latest_event": (queue_state.get("events") or [None])[-1],
-            "live_refresh_enabled": counts["Running"] > 0 or queue_state.get("status") == "running",
-        }
+    context = _board_page_context(
+        database_path,
+        active_project=active_project,
+        default_proxy_url=DEFAULT_PROXY_URL,
+        error=request.query_params.get("error", ""),
+    )
     return templates.TemplateResponse(
         request,
         "board.html",
         {
             "active_page": "board",
             "active_project": active_project,
-            "columns": BOARD_COLUMNS,
-            "tasks_by_status": grouped,
-            "has_demo_tasks": has_demo_tasks,
-            "has_verified_worker_adapter": db.has_verified_worker_adapter(database_path),
-            "adapters": adapters,
-            "default_proxy_url": DEFAULT_PROXY_URL,
-            "error": error,
-            "board_summary": board_summary,
-            "board_empty_states": _board_empty_states(active_project, board_summary),
-            "automation_summary": automation_summary,
+            **context,
         },
     )
-
-
-def _project_board_counts(database_path: Path | str, project_id: str) -> dict[str, int]:
-    return _board_counts(project_bound_tasks(db.list_tasks(database_path), project_id))
-
-
-def _project_has_running_work(database_path: Path | str, project_id: str) -> bool:
-    project_tasks = project_bound_tasks(db.list_tasks(database_path), project_id)
-    if any(task.get("status") == "Running" for task in project_tasks):
-        return True
-    task_ids = {task["id"] for task in project_tasks}
-    return any(
-        run.get("status") in {"queued", "running"} and run.get("task_id") in task_ids
-        for run in db.list_worker_runs(database_path)
-    )
-
-
-def _board_counts(tasks: list[dict[str, Any]]) -> dict[str, int]:
-    counts = {column: 0 for column in BOARD_COLUMNS}
-    for task in tasks:
-        status_value = "Estimated" if task.get("status") == "Ready" else str(task.get("status") or "Blocked")
-        counts[status_value if status_value in counts else "Blocked"] += 1
-    return counts
-
-
-def _board_empty_states(active_project: dict[str, Any] | None, board_summary: dict[str, Any]) -> dict[str, str]:
-    intake_target = "the project task intake" if active_project is not None else "a connected project board"
-    estimated = f"No Estimated tasks. Add or break down work through {intake_target}; estimated slices are the launch queue."
-    if not board_summary.get("launch_ready"):
-        estimated += " No launchable Worker adapter is ready yet."
-    return {
-        "Estimated": estimated,
-        "Running": "No Running tasks. Launched Worker slices appear here until their session finishes or is refreshed.",
-        "Review": "No Review tasks. Completed Worker runs that need human disposition appear here before Done.",
-        "Done": "No Done tasks. Accepted Review work lands here with session evidence preserved.",
-        "Blocked": "No Blocked tasks. Guardrail blocks, setup blockers, human Block dispositions, and manual-estimate requirements appear here.",
-    }
-
-
-def _project_workspace_summary(database_path: Path | str, project: dict[str, Any]) -> dict[str, Any]:
-    project_id = str(project["id"])
-    tasks = project_bound_tasks(db.list_tasks(database_path), project_id)
-    counts = _board_counts(tasks)
-    adapters = _worker_adapter_view_models(database_path)
-    launch_ready = any(adapter.get("launchable") for adapter in adapters)
-    capability = project.get("capability") or {}
-    next_actions = [
-        {
-            "label": "Open task board",
-            "href": f"/projects/{project_id}/board",
-            "tone": "green" if counts["Estimated"] or counts["Review"] else "blue",
-            "detail": f"{sum(counts.values())} tasks · {counts['Estimated']} estimated · {counts['Review']} review",
-        },
-        {
-            "label": "Worker setup",
-            "href": "/settings/workers",
-            "tone": "green" if launch_ready else "yellow",
-            "detail": "Launch-ready adapter available" if launch_ready else "Verify a Worker adapter before launch",
-        },
-    ]
-    if counts["Running"]:
-        next_actions.append(
-            {
-                "label": "Running work",
-                "href": f"/projects/{project_id}/board",
-                "tone": "blue",
-                "detail": f"{counts['Running']} running slices need refresh or completion evidence.",
-            }
-        )
-    if counts["Review"]:
-        next_actions.append(
-            {
-                "label": "Review needed",
-                "href": f"/projects/{project_id}/board",
-                "tone": "yellow",
-                "detail": f"{counts['Review']} completed slices need human review disposition.",
-            }
-        )
-    if counts["Blocked"]:
-        next_actions.append(
-            {
-                "label": "Blocked work",
-                "href": f"/projects/{project_id}/board",
-                "tone": "yellow",
-                "detail": f"{counts['Blocked']} slices need guardrail, setup, or manual-estimate attention.",
-            }
-        )
-    next_actions.append(
-        {
-            "label": "Session evidence",
-            "href": "/sessions",
-            "tone": "blue",
-            "detail": "Review tokens, guardrails, alarms, checkpoints, and Worker timeline evidence",
-        }
-    )
-    return {
-        "counts": counts,
-        "total_tasks": sum(counts.values()),
-        "launch_ready": launch_ready,
-        "capability_state": capability.get("state", "unknown"),
-        "test_command": (project.get("profile") or {}).get("test_command"),
-        "next_actions": next_actions,
-    }
 
 
 def _next_setup_step(steps: list[dict[str, Any]], ready_to_launch: bool) -> dict[str, Any]:
@@ -675,41 +587,22 @@ def _next_setup_step(steps: list[dict[str, Any]], ready_to_launch: bool) -> dict
     return {"label": f"Open {next_step['name']}", "href": next_step["href"], "detail": next_step["detail"]}
 
 
-def _worker_setup_next_action(active_adapter: dict[str, Any] | None, has_projects: bool) -> dict[str, str]:
-    if active_adapter is None:
-        return {"label": "Choose active adapter", "href": "/settings/workers", "detail": "No Worker adapter is available."}
-    if not active_adapter.get("configured"):
-        return {"label": "Choose active adapter", "href": f"/settings/workers?adapter_id={active_adapter['id']}", "detail": "Mark an adapter as the active default before launch."}
-    if not active_adapter.get("discovered_models"):
-        return {"label": "Discover models", "href": f"/settings/workers?adapter_id={active_adapter['id']}", "detail": "Run native discovery so launch controls show approved Worker models."}
-    if not active_adapter.get("supported_models"):
-        return {"label": "Approve Worker models", "href": f"/settings/workers?adapter_id={active_adapter['id']}", "detail": "Select at least one discovered model for governed launch."}
-    if not active_adapter.get("launchable"):
-        return {"label": "Verify adapter", "href": f"/settings/workers?adapter_id={active_adapter['id']}", "detail": "Run verification to make this adapter launch-ready."}
-    if not has_projects:
-        return {"label": "Open local repo", "href": "/projects", "detail": "Connect a project workspace for project-scoped launch."}
-    return {"label": "Open task board", "href": "/board", "detail": "Adapter and model selection are launch-ready."}
-
-
-def _refresh_project_board_tasks(database_path: Path | str, project_id: str) -> list[str]:
-    refreshed_ids: list[str] = []
-    for task in project_bound_tasks(db.list_tasks(database_path), project_id):
-        if task.get("status") != "Running":
-            continue
-        try:
-            refreshed = refresh_task_from_session(database_path, task["id"])
-        except KeyError:
-            continue
-        if refreshed.get("status") != task.get("status") or refreshed.get("metadata") != task.get("metadata"):
-            refreshed_ids.append(task["id"])
-    return refreshed_ids
-
-
 def _ensure_project(database_path: Path | str, project_id: str) -> dict[str, Any]:
     try:
         return db.get_connected_project(database_path, project_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="connected project not found") from exc
+
+
+def _ensure_project_task(database_path: Path | str, project_id: str, task_id: str) -> dict[str, Any]:
+    _ensure_project(database_path, project_id)
+    try:
+        task = db.get_task(database_path, task_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="task not found") from exc
+    if task_project_id(task) != project_id:
+        raise HTTPException(status_code=404, detail="task not found for selected project")
+    return task
 
 
 def _next_eligible_task(database_path: Path | str, project_id: str) -> dict[str, Any] | None:
@@ -738,6 +631,7 @@ def _launch_project_automation_task(
         model=None,
         proxy_url=DEFAULT_PROXY_URL,
         project_id=project_id,
+        budget_since=_current_day_start_iso(request.app.state.settings.timezone),
         runner=runner,
     )
     worker_run_id = result.worker_run["id"] if result.worker_run else None
@@ -884,24 +778,11 @@ def _automation_stop_reason(task: dict[str, Any], reasons: list[str]) -> str:
     return "automation_blocked"
 
 
-def _review_actions_available(database_path: Path | str, task: dict[str, Any]) -> bool:
-    if task.get("status") != "Review":
-        return False
-    session_id = task.get("session_id")
-    if session_id:
-        try:
-            if db.get_session(database_path, session_id).get("status") == "completed":
-                return True
-        except KeyError:
-            pass
-    return any(run.get("status") == "completed" for run in db.list_worker_runs(database_path, task_id=task["id"]))
-
-
 @router.get("/settings/workers", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def worker_settings(request: Request):
     database_path = request.app.state.settings.database_path
     adapters = _worker_adapter_view_models(database_path)
-    active_adapter = _active_adapter_for_request(adapters, request)
+    active_adapter = _active_adapter_for_request(adapters, request.query_params.get("adapter_id"))
     projects = db.list_connected_projects(database_path)
     next_action = _worker_setup_next_action(active_adapter, bool(projects))
     return templates.TemplateResponse(
@@ -1163,6 +1044,7 @@ async def launch_read_only_proof_route(project_id: str, request: Request):
             adapter_id="opencode",
             model=task.get("recommended_model"),
             proxy_url=DEFAULT_PROXY_URL,
+            budget_since=_current_day_start_iso(request.app.state.settings.timezone),
             runner=getattr(request.app.state, "local_runner_proof_runner", None)
             or getattr(request.app.state, "task_launch_runner", None),
         )
@@ -1273,8 +1155,9 @@ def sessions_index(request: Request):
 
 @router.get("/sessions/{session_id}", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def session_report_view(session_id: str, request: Request):
+    database_path = request.app.state.settings.database_path
     try:
-        artifact = db.build_session_artifact(request.app.state.settings.database_path, session_id)
+        artifact = db.build_session_artifact(database_path, session_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="session not found") from exc
     artifact = dict(artifact)
@@ -1284,7 +1167,7 @@ def session_report_view(session_id: str, request: Request):
     ]
 
     token_totals = _token_totals(artifact)
-    token_breakdown = db.session_token_breakdown(request.app.state.settings.database_path, session_id)
+    token_breakdown = db.session_token_breakdown(database_path, session_id)
     requires_review = bool(artifact["alarms"]) or any(
         not checkpoint["passed"] for checkpoint in artifact["checkpoint_results"]
     )
@@ -1299,9 +1182,39 @@ def session_report_view(session_id: str, request: Request):
             "token_breakdown": token_breakdown,
             "requires_review": requires_review,
             "evidence_summary": _session_evidence_summary(artifact),
+            "related_agent_review": _related_agent_review(database_path, session_id),
             "zone_timeline": artifact["guardrail_snapshots"],
         },
     )
+
+
+def _related_agent_review(database_path: Path | str, session_id: str) -> dict[str, Any] | None:
+    for task in reversed(db.list_tasks(database_path)):
+        if task.get("session_id") != session_id:
+            continue
+        review = (task.get("metadata") or {}).get("agent_review")
+        if isinstance(review, dict):
+            return {"task_id": task.get("id"), **review, "review_total_tokens": _agent_review_total_tokens(database_path, review)}
+    return None
+
+
+def _agent_review_total_tokens(database_path: Path | str, review: dict[str, Any]) -> int | None:
+    raw_token_totals = review.get("token_totals")
+    if not isinstance(raw_token_totals, dict):
+        return None
+    total_tokens = raw_token_totals.get("total_tokens")
+    if not isinstance(total_tokens, int):
+        return None
+    review_session_id = review.get("review_session_id")
+    if not review_session_id:
+        return total_tokens
+    try:
+        artifact = db.build_session_artifact(database_path, str(review_session_id))
+    except KeyError:
+        return None
+    if not artifact.get("token_log"):
+        return None
+    return total_tokens
 
 
 async def _control_plane_payload_from_request(request: Request) -> tuple[ControlPlaneSettingsRequest, bool]:
@@ -1534,118 +1447,6 @@ def _project_settings_with_error(request: Request, error: str):
     )
 
 
-def _worker_adapter_view_models(database_path: Path | str) -> list[dict[str, Any]]:
-    adapters = []
-    for adapter in db.list_worker_adapters(database_path):
-        config = adapter.get("config") or {}
-        diag = config.get("_diagnostics") or {}
-        evidence = adapter.get("verification_evidence") or {}
-        readiness = evaluate_adapter_readiness(adapter)
-        tracking = readiness.tracking_view()
-        available_tracking_modes = _available_worker_tracking_modes(adapter)
-        adapters.append(
-            {
-                **adapter,
-                "supported_models": allowed_worker_model_ids(adapter),
-                "verification_evidence": _safe_worker_evidence(evidence),
-                "diagnostics": diag,
-                "launchable": readiness.ui_launchable,
-                "discovered_models": discovered_worker_model_ids(adapter),
-                "model_discovery": config.get("model_discovery"),
-                "tracking_modes": available_tracking_modes,
-                "tracking_mode_options": [tracking_mode_view(mode) for mode in available_tracking_modes],
-                "connection_type": _worker_connection_type(adapter),
-                "tracking": tracking,
-                "tracking_label": tracking["label"],
-            }
-        )
-    return adapters
-
-
-def _available_worker_tracking_modes(adapter: dict[str, Any]) -> list[str]:
-    config = adapter.get("config") or {}
-    configured = config.get("tracking_modes")
-    proxy_capable = _adapter_uses_harness_proxy(adapter)
-    native_capable = _adapter_can_emit_native_usage(adapter)
-    allowed = _capability_allowed_tracking_modes(proxy_capable=proxy_capable, native_capable=native_capable)
-    if configured:
-        modes = [_normalize_configured_tracking_mode(mode) for mode in configured]
-        modes = [mode for mode in modes if mode in allowed]
-        if modes:
-            return _dedupe_tracking_modes(modes)
-
-    return _dedupe_tracking_modes([mode for mode in [PROXY_GOVERNED, NATIVE_USAGE, OBSERVED_ONLY] if mode in allowed])
-
-
-def _capability_allowed_tracking_modes(*, proxy_capable: bool, native_capable: bool) -> set[str]:
-    modes: list[str] = []
-    if proxy_capable:
-        modes.append(PROXY_GOVERNED)
-    if native_capable:
-        modes.append(NATIVE_USAGE)
-    if native_capable or not proxy_capable:
-        modes.append(OBSERVED_ONLY)
-    return set(modes)
-
-
-def _normalize_configured_tracking_mode(mode: Any) -> str:
-    mode = str(mode)
-    if mode == "native":
-        return NATIVE_USAGE
-    return mode
-
-
-def _dedupe_tracking_modes(modes: list[str]) -> list[str]:
-    deduped: list[str] = []
-    for mode in modes:
-        if mode not in deduped:
-            deduped.append(mode)
-    return deduped
-
-
-def _validate_worker_tracking_mode(database_path: Path | str, adapter_id: str, requested_mode: str) -> None:
-    adapter = db.get_worker_adapter(database_path, adapter_id)
-    available = _available_worker_tracking_modes(adapter)
-    if requested_mode not in available:
-        raise ValueError(
-            f"Tracking mode {requested_mode!r} is not available for this adapter. Available modes: {', '.join(available)}."
-        )
-
-
-def _worker_connection_type(adapter: dict[str, Any]) -> str:
-    if _adapter_uses_harness_proxy(adapter) and not _adapter_can_emit_native_usage(adapter):
-        return "API / Proxy Worker"
-    if _adapter_uses_harness_proxy(adapter):
-        return "API / Proxy-capable CLI Worker"
-    return "CLI Worker"
-
-
-def _adapter_uses_harness_proxy(adapter: dict[str, Any]) -> bool:
-    config = adapter.get("config") or {}
-    template = config.get("verification_template") or []
-    serialized = " ".join(str(part) for part in template)
-    return "{proxy_url}" in serialized and "{session_api_key}" in serialized
-
-
-def _adapter_can_emit_native_usage(adapter: dict[str, Any]) -> bool:
-    config = adapter.get("config") or {}
-    if config.get("native_verification_template"):
-        return True
-    return adapter.get("kind") in {"claude_code", "opencode"}
-
-
-def _active_adapter_for_request(adapters: list[dict[str, Any]], request: Request) -> dict[str, Any] | None:
-    requested_id = request.query_params.get("adapter_id")
-    if requested_id:
-        requested = next((adapter for adapter in adapters if adapter["id"] == requested_id), None)
-        if requested:
-            return requested
-    return next(
-        (adapter for adapter in adapters if adapter.get("is_default")),
-        next((adapter for adapter in adapters if adapter.get("configured")), adapters[0] if adapters else None),
-    )
-
-
 def _effective_budget_settings(database_path: Path | str, config: Any) -> dict[str, Any]:
     stored = db.get_token_budget_settings(database_path)
     daily_cap = stored.get("daily_cap_tokens")
@@ -1659,94 +1460,6 @@ def _effective_budget_settings(database_path: Path | str, config: Any) -> dict[s
         "session_cap_tokens": session_cap,
         "confirmed": bool(stored.get("confirmed")),
     }
-
-
-def _token_totals(artifact: dict[str, Any]) -> dict[str, int]:
-    return {
-        "prompt_tokens": sum(int(turn.get("prompt_tokens", 0)) for turn in artifact["token_log"]),
-        "completion_tokens": sum(int(turn.get("completion_tokens", 0)) for turn in artifact["token_log"]),
-        "total_tokens": sum(int(turn.get("total_tokens", 0)) for turn in artifact["token_log"]),
-    }
-
-
-def _session_evidence_summary(artifact: dict[str, Any]) -> dict[str, Any]:
-    checkpoint_results = artifact.get("checkpoint_results") or []
-    worker_events = artifact.get("worker_run_events") or []
-    worker_runs = artifact.get("worker_runs") or []
-    latest_run = worker_runs[-1] if worker_runs else {}
-    command_plan = latest_run.get("command_plan") or {}
-    command = command_plan.get("command") or []
-    if isinstance(command, list):
-        launch_target = " ".join(str(part) for part in command) or "missing launch target"
-    else:
-        launch_target = str(command or "missing launch target")
-    metadata = latest_run.get("metadata") or {}
-    project_label = (
-        metadata.get("connected_project_name")
-        or metadata.get("project_name")
-        or metadata.get("project_root")
-        or metadata.get("workdir")
-        or "missing project evidence"
-    )
-    token_log = artifact.get("token_log") or []
-    token_totals = {
-        "prompt_tokens": sum(int(turn.get("prompt_tokens", 0)) for turn in token_log),
-        "completion_tokens": sum(int(turn.get("completion_tokens", 0)) for turn in token_log),
-        "total_tokens": sum(int(turn.get("total_tokens", 0)) for turn in token_log),
-    }
-    failed_checkpoints = [checkpoint for checkpoint in checkpoint_results if not checkpoint.get("passed")]
-    error_events = [event for event in worker_events if event.get("level") == "error"]
-    missing_labels = []
-    if not worker_runs:
-        missing_labels.append("missing Worker Run evidence")
-    if not token_log:
-        missing_labels.append("missing authoritative token usage")
-    if not artifact.get("alarms") and not failed_checkpoints and not error_events:
-        missing_labels.append("no review blockers recorded")
-    return {
-        "task": (artifact.get("session") or {}).get("task_description", "missing task evidence"),
-        "selected_project": project_label,
-        "launch_target": launch_target,
-        "adapter_id": latest_run.get("adapter_id") or "missing Worker Adapter evidence",
-        "worker_model": latest_run.get("model") or (artifact.get("session") or {}).get("model") or "missing Worker model evidence",
-        "tracking_mode": latest_run.get("tracking_mode") or "missing tracking-mode evidence",
-        "status": latest_run.get("status") or (artifact.get("session") or {}).get("status") or "missing status evidence",
-        "result": latest_run.get("error_message") or latest_run.get("error_type") or latest_run.get("status") or (artifact.get("session") or {}).get("status") or "missing result evidence",
-        "token_totals": token_totals,
-        "missing_labels": missing_labels,
-        "alarms": len(artifact.get("alarms") or []),
-        "checkpoints": len(checkpoint_results),
-        "failed_checkpoints": len(failed_checkpoints),
-        "worker_runs": len(worker_runs),
-        "worker_events": len(worker_events),
-        "error_events": len(error_events),
-        "requires_review": bool(artifact.get("alarms")) or bool(failed_checkpoints) or bool(error_events),
-    }
-
-
-def _daily_cap_tokens(budget: dict[str, Any], config) -> int | None:
-    if "daily_cap_tokens" in budget:
-        return int(budget["daily_cap_tokens"])
-    if config.daily_cap.enabled:
-        return config.daily_cap.tokens
-    return None
-
-
-def _safe_worker_evidence(value: Any, key_hint: str = "") -> Any:
-    secret_terms = {"key", "token", "secret", "password", "authorization"}
-    if isinstance(value, dict):
-        safe = {}
-        for key, nested in value.items():
-            if any(term in str(key).lower() for term in secret_terms):
-                continue
-            safe[key] = _safe_worker_evidence(nested, str(key))
-        return safe
-    if isinstance(value, list):
-        return [_safe_worker_evidence(item, key_hint) for item in value]
-    if isinstance(value, str):
-        if value.startswith("sk_") or "secret" in value.lower():
-            return "***REDACTED***"
-    return value
 
 
 def _current_day_start_iso(timezone: str) -> str:

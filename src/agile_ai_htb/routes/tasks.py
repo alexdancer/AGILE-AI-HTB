@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -16,8 +16,12 @@ from pydantic import ValidationError
 from agile_ai_htb import db
 from agile_ai_htb.auth import require_portal_auth
 from agile_ai_htb.estimation import EstimatorError, estimate_task
+from agile_ai_htb.evidence_reporting import completion_content as _completion_content
+from agile_ai_htb.evidence_reporting import safe_evidence as _safe_review_value
+from agile_ai_htb.evidence_reporting import token_totals
 from agile_ai_htb.llm import LLMClientError, calculate_cost, extract_usage, response_to_dict
 from agile_ai_htb.project_context import project_task_metadata, task_project_board_path
+from agile_ai_htb.repo_context import build_repo_context_brief
 from agile_ai_htb.task_launch import DEFAULT_PROXY_URL, TaskLaunchBlocked, launch_task, refresh_task_from_session
 from agile_ai_htb.task_breakdown import (
     TaskBreakdownError,
@@ -35,11 +39,6 @@ templates = Jinja2Templates(
 CANONICAL_TASK_STATUSES = {"Estimated", "Running", "Review", "Done", "Blocked"}
 PositiveStrictInt = Annotated[int, Field(strict=True, gt=0)]
 NonNegativeStrictInt = Annotated[int, Field(strict=True, ge=0)]
-TOKEN_EVIDENCE_KEYS = {"prompt_tokens", "completion_tokens", "total_tokens"}
-SECRET_TEXT_PATTERN = re.compile(
-    r"(sk-[A-Za-z0-9_.-]+|sk_[A-Za-z0-9_.-]+|Bearer\s+[A-Za-z0-9_.-]+|password\s*[:=]\s*\S+)",
-    re.IGNORECASE,
-)
 
 
 class TaskCreateRequest(BaseModel):
@@ -138,6 +137,7 @@ async def launch_task_endpoint(task_id: str, request: Request):
             estimate_tokens=payload.estimate_tokens,
             budget_override=payload.budget_override,
             native_budget_acknowledged=payload.native_budget_acknowledged,
+            budget_since=_current_day_start_iso(request.app.state.settings.timezone),
             runner=runner,
         )
     except KeyError as exc:
@@ -607,6 +607,7 @@ async def _task_breakdown_agent_updates(
     database_path = request.app.state.settings.database_path
     settings = request.app.state.settings
     model = settings.task_breakdown_model
+    repo_context, repo_context_evidence = _build_breakdown_repo_context(intake_metadata)
     try:
         result, response = await breakdown_task_source(
             description,
@@ -614,6 +615,7 @@ async def _task_breakdown_agent_updates(
             task_breakdown_model=model,
             intake_metadata=intake_metadata,
             structure_hints=_markdown_task_items(description),
+            repo_context=repo_context,
         )
         session = db.create_session(
             database_path,
@@ -648,6 +650,7 @@ async def _task_breakdown_agent_updates(
             "verification": payload["verification"],
             "non_goals": payload["non_goals"],
             "recommended_sequence": payload["recommended_sequence"],
+            "repo_context_evidence": repo_context_evidence or {},
             "confidence": payload["confidence"],
             "rationale": payload["rationale"],
             "failure_type": None,
@@ -670,11 +673,44 @@ async def _task_breakdown_agent_updates(
             "verification": [],
             "non_goals": [],
             "recommended_sequence": [],
+            "repo_context_evidence": repo_context_evidence or {},
             "confidence": None,
             "rationale": "",
             "failure_type": type(exc).__name__,
             "failure_message": failure_message,
         }
+
+
+def _build_breakdown_repo_context(intake_metadata: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    project_root = str(intake_metadata.get("project_root_path") or "").strip()
+    if not project_root:
+        return None, None
+    root = Path(project_root).expanduser()
+    if not root.is_dir():
+        return None, None
+    try:
+        brief = build_repo_context_brief(root)
+    except OSError:
+        return None, None
+    return brief, _breakdown_repo_context_evidence(brief)
+
+
+def _breakdown_repo_context_evidence(brief: dict[str, Any]) -> dict[str, Any]:
+    documents = [
+        str(document.get("path"))
+        for document in brief.get("documents", [])
+        if isinstance(document, dict) and document.get("path")
+    ]
+    return {
+        "source": "repo_context_brief",
+        "project_root": brief.get("project_root"),
+        "documents": documents[:10],
+        "manifests": list(brief.get("manifests", []))[:10],
+        "entrypoints": list(brief.get("entrypoints", []))[:10],
+        "test_commands": list(brief.get("test_commands", []))[:10],
+        "tracked_files_sample": list(brief.get("tracked_files_sample", []))[:40],
+        "text_chars": len(str(brief.get("text") or "")),
+    }
 
 
 def _accepted_breakdown_candidates(breakdown: dict[str, Any], form: Any) -> list[dict[str, Any]]:
@@ -930,7 +966,13 @@ async def _run_agent_review(request: Request, task: dict[str, Any], prompt: str 
             completion_tokens=usage["completion_tokens"],
             cost=calculate_cost(settings.control_plane_model, usage["prompt_tokens"], usage["completion_tokens"])
             or 0.0,
-            raw_usage={**usage, "spend_category": "agent_review", "response": _safe_review_value(response_body)},
+            raw_usage={
+                **usage,
+                "spend_category": "reporting_summary",
+                "usage_source": "control_plane",
+                "reporting_kind": "agent_review",
+                "response": _safe_review_value(response_body),
+            },
         )
         review = _parse_agent_review(_completion_content(response_body))
         review.update(
@@ -939,6 +981,7 @@ async def _run_agent_review(request: Request, task: dict[str, Any], prompt: str 
                 "reviewed_at": _now_iso(),
                 "review_session_id": review_session["id"],
                 "model": settings.control_plane_model,
+                "token_totals": _agent_review_token_totals(database_path, review_session["id"]),
             }
         )
     except (LLMClientError, RuntimeError, TypeError, ValueError) as exc:
@@ -951,6 +994,7 @@ async def _run_agent_review(request: Request, task: dict[str, Any], prompt: str 
             "reviewed_at": _now_iso(),
             "review_session_id": review_session["id"],
             "model": settings.control_plane_model,
+            "token_totals": _agent_review_token_totals(database_path, review_session["id"]),
             "error_type": type(exc).__name__,
             "error": _safe_review_value(str(exc)),
         }
@@ -1009,40 +1053,31 @@ def _parse_agent_review(content: str) -> dict[str, Any]:
     }
 
 
-def _completion_content(response: dict[str, Any]) -> str:
-    choices = response.get("choices") or []
-    if not choices:
-        return ""
-    first = choices[0] if isinstance(choices[0], dict) else {}
-    raw_message = first.get("message")
-    message = raw_message if isinstance(raw_message, dict) else {}
-    content = message.get("content", first.get("text", ""))
-    return content if isinstance(content, str) else str(content)
-
-
 def _agent_review_session_key_hash(task_id: str, timestamp: str) -> str:
     return hashlib.sha256(f"agent-review:v1:{task_id}:{timestamp}".encode("utf-8")).hexdigest()
+
+
+def _agent_review_token_totals(database_path: Path | str, session_id: str) -> dict[str, int]:
+    try:
+        artifact = db.build_session_artifact(database_path, session_id)
+    except KeyError:
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    return token_totals(artifact)
 
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _safe_review_value(value: Any, key_hint: str = "") -> Any:
-    secret_terms = {"api_key", "key", "secret", "password", "authorization"}
-    if isinstance(value, dict):
-        safe = {}
-        for key, nested in value.items():
-            normalized_key = str(key).lower()
-            if normalized_key not in TOKEN_EVIDENCE_KEYS and any(term in normalized_key for term in secret_terms):
-                continue
-            safe[key] = _safe_review_value(nested, str(key))
-        return safe
-    if isinstance(value, list):
-        return [_safe_review_value(item, key_hint) for item in value]
-    if isinstance(value, str):
-        return SECRET_TEXT_PATTERN.sub("***REDACTED***", value)[:1000]
-    return value
+def _current_day_start_iso(timezone: str) -> str:
+    if timezone == "local":
+        now = datetime.now().astimezone()
+    else:
+        try:
+            now = datetime.now(ZoneInfo(timezone))
+        except Exception:
+            now = datetime.now(UTC)
+    return now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC).isoformat()
 
 
 def _estimation_session_key_hash(description: str) -> str:

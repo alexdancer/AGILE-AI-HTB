@@ -1,68 +1,6 @@
-import os
-from pathlib import Path
-
-from fastapi.testclient import TestClient
-
 from agile_ai_htb import db
-from agile_ai_htb.app import create_app
-from agile_ai_htb.operator_config import CONTROL_API_KEY_PLACEHOLDER, load_operator_config
 from agile_ai_htb.project_context import project_task_metadata
-from agile_ai_htb.settings import Settings
-
-ROOT = Path(__file__).resolve().parents[2]
-PORTAL_TOKEN = "test-portal-token"
-
-
-class FakeControlPlaneLLM:
-    def __init__(self, *, exc: Exception | None = None):
-        self.exc = exc
-        self.requests = []
-
-    async def acompletion(self, request):
-        self.requests.append(request)
-        if self.exc:
-            raise self.exc
-        return {
-            "choices": [{"message": {"content": "AGILE_AI_HTB_CONTROL_PLANE_OK"}}],
-            "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10},
-            "api_key": "sk_should_not_render",
-        }
-
-
-def _client(tmp_path):
-    settings = Settings(database_path=tmp_path / "harness.db", guardrails_path=ROOT / "guardrails.yaml")
-    return TestClient(create_app(settings))
-
-
-def _client_with_control_plane_llm(tmp_path, llm, *, control_plane_model="anthropic/claude-sonnet-4-20250514"):
-    settings = Settings(
-        database_path=tmp_path / "harness.db",
-        guardrails_path=ROOT / "guardrails.yaml",
-        control_plane_model=control_plane_model,
-        control_plane_api_key_env="TEST_CONTROL_PLANE_KEY",
-    )
-    app = create_app(settings)
-    app.state.llm_client = llm
-    return TestClient(app)
-
-
-def _portal_headers():
-    return {"Authorization": f"Bearer {PORTAL_TOKEN}"}
-
-
-def _connect_project(database_path: Path, root: Path) -> dict:
-    root.mkdir(exist_ok=True)
-    return db.upsert_connected_project(
-        database_path,
-        name=root.name,
-        root_path=str(root.resolve()),
-        profile={"name": root.name, "root_path": str(root.resolve()), "test_command": "pytest"},
-        capability={"state": "launch_ready", "can_launch": True},
-    )
-
-
-def _project_metadata(database_path: Path, root: Path) -> dict:
-    return project_task_metadata(_connect_project(database_path, root))
+from tests.portal.helpers import PORTAL_TOKEN, _client, _connect_project, _portal_headers, _project_metadata
 
 
 def _task_card(html: str, task_id: str) -> str:
@@ -169,7 +107,7 @@ def test_board_renders_columns_and_task_cards(tmp_path, monkeypatch):
     assert "Backlog" not in html
     assert "Other" not in html
     assert "max-width: none" in html
-    assert "repeat(6, minmax(260px, 1fr))" in html
+    assert "repeat(6, minmax(340px, 1fr))" in html
     assert "task-title" in html
     assert "task-meta" in html
     assert '<details class="task-details">' in html
@@ -208,6 +146,8 @@ def test_board_shows_launched_model_before_recommendation(tmp_path, monkeypatch)
     card = _task_card(response.text, task["id"])
     assert "Run: openai/gpt-5.5 --variant high" in card
     assert "Estimate recommendation: gpt-5.4-mini" in card
+    assert f'action="/tasks/{task["id"]}/refresh"' in card
+    assert "Refresh status" in card
     assert card.index("Run: openai/gpt-5.5 --variant high") < card.index("Estimate recommendation: gpt-5.4-mini")
     assert task["id"] in card
 
@@ -451,3 +391,212 @@ def test_board_filter_input_is_present(tmp_path, monkeypatch):
     if response.status_code == 200:
         assert 'id="board-filter"' in response.text
         assert 'id="filter-indicator"' in response.text
+
+
+def test_mark_done_keeps_task_visible_until_archived(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "connected-project")
+        session = db.create_session(
+            database_path,
+            task_description="Accepted review task",
+            model="gpt-5.1-codex",
+            session_key_hash="a" * 64,
+            guardrail_overrides={},
+            status="completed",
+        )
+        task = db.create_task(
+            database_path,
+            description="Accepted review task",
+            status="Review",
+            estimate_tokens=8000,
+            recommended_model="gpt-5.1-codex",
+            actual_tokens=4200,
+            session_id=session["id"],
+            metadata=project_task_metadata(project),
+        )
+
+        response = client.post(
+            f"/tasks/{task['id']}/review",
+            headers={**_portal_headers(), "Accept": "text/html"},
+            data={"action": "mark_done", "project_id": project["id"]},
+            follow_redirects=False,
+        )
+        board = client.get(f"/projects/{project['id']}/board", headers=_portal_headers())
+
+    updated = db.get_task(database_path, task["id"])
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/projects/{project['id']}/board"
+    assert updated["status"] == "Done"
+    assert "archived_at" not in updated["metadata"]
+    assert board.status_code == 200
+    card = _task_card(board.text, task["id"])
+    assert "Accepted review task" in card
+    assert "Archive" in card
+
+
+def test_archive_done_task_hides_from_board_and_preserves_history_evidence(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "connected-project")
+        session = db.create_session(
+            database_path,
+            task_description="Archived done task",
+            model="gpt-5.1-codex",
+            session_key_hash="b" * 64,
+            guardrail_overrides={},
+            status="completed",
+        )
+        task = db.create_task(
+            database_path,
+            description="Archived done task",
+            status="Done",
+            estimate_tokens=9000,
+            recommended_model="gpt-5.1-codex",
+            actual_tokens=4500,
+            session_id=session["id"],
+            metadata={**project_task_metadata(project), "active_worker_run_id": "wr_DEMO_999"},
+        )
+
+        archive_response = client.post(
+            f"/projects/{project['id']}/tasks/{task['id']}/archive",
+            headers=_portal_headers(),
+            follow_redirects=False,
+        )
+        board = client.get(f"/projects/{project['id']}/board", headers=_portal_headers())
+        history = client.get(f"/projects/{project['id']}/task-history", headers=_portal_headers())
+
+    archived = db.get_task(database_path, task["id"])
+    assert archive_response.status_code == 303
+    assert archive_response.headers["location"] == f"/projects/{project['id']}/board"
+    assert archived["status"] == "Done"
+    assert archived["actual_tokens"] == 4500
+    assert archived["session_id"] == session["id"]
+    assert archived["metadata"]["archived_at"]
+    assert board.status_code == 200
+    assert "Archived done task" not in board.text
+    assert "History 1 · Archived 1" in board.text
+    assert history.status_code == 200
+    assert "Archived done task" in history.text
+    assert "Archived" in history.text
+    assert "Actual: 4,500" in history.text
+    assert f"/sessions/{session['id']}" in history.text
+    assert "Worker Run: wr_DEMO_999" in history.text
+    assert "Unarchive" in history.text
+
+
+def test_archive_all_done_is_project_scoped_and_keeps_estimation_accuracy(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        first_project = _connect_project(database_path, tmp_path / "first-project")
+        second_project = _connect_project(database_path, tmp_path / "second-project")
+        first_done = db.create_task(
+            database_path,
+            description="First done task",
+            status="Done",
+            estimate_tokens=1000,
+            actual_tokens=500,
+            metadata=project_task_metadata(first_project),
+        )
+        second_done = db.create_task(
+            database_path,
+            description="Second done task",
+            status="Done",
+            estimate_tokens=2000,
+            actual_tokens=4000,
+            metadata=project_task_metadata(first_project),
+        )
+        first_estimated = db.create_task(
+            database_path,
+            description="First estimated task",
+            status="Estimated",
+            estimate_tokens=3000,
+            recommended_model="gpt-5.1-codex",
+            metadata=project_task_metadata(first_project),
+        )
+        other_done = db.create_task(
+            database_path,
+            description="Other project done task",
+            status="Done",
+            estimate_tokens=1000,
+            actual_tokens=1000,
+            metadata=project_task_metadata(second_project),
+        )
+
+        response = client.post(
+            f"/projects/{first_project['id']}/tasks/archive-done",
+            headers=_portal_headers(),
+            follow_redirects=False,
+        )
+        first_board = client.get(f"/projects/{first_project['id']}/board", headers=_portal_headers())
+        other_board = client.get(f"/projects/{second_project['id']}/board", headers=_portal_headers())
+
+    assert response.status_code == 303
+    assert db.get_task(database_path, first_done["id"])["metadata"].get("archived_at")
+    assert db.get_task(database_path, second_done["id"])["metadata"].get("archived_at")
+    assert not db.get_task(database_path, first_estimated["id"])["metadata"].get("archived_at")
+    assert not db.get_task(database_path, other_done["id"])["metadata"].get("archived_at")
+    assert "First done task" not in first_board.text
+    assert "Second done task" not in first_board.text
+    assert "First estimated task" in first_board.text
+    assert "Other project done task" in other_board.text
+    assert db.estimation_accuracy(database_path)["completed_count"] == 3
+
+
+def test_unarchive_restores_done_task_to_project_board(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "connected-project")
+        task = db.create_task(
+            database_path,
+            description="Return archived task",
+            status="Done",
+            estimate_tokens=9000,
+            actual_tokens=4500,
+            metadata={**project_task_metadata(project), "archived_at": "2099-01-01T00:00:00+00:00"},
+        )
+
+        response = client.post(
+            f"/projects/{project['id']}/tasks/{task['id']}/unarchive",
+            headers=_portal_headers(),
+            follow_redirects=False,
+        )
+        board = client.get(f"/projects/{project['id']}/board", headers=_portal_headers())
+
+    updated = db.get_task(database_path, task["id"])
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/projects/{project['id']}/task-history"
+    assert updated["status"] == "Done"
+    assert "archived_at" not in updated["metadata"]
+    assert board.status_code == 200
+    assert "Return archived task" in board.text
+
+
+def test_archive_rejects_non_done_task(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "connected-project")
+        task = db.create_task(
+            database_path,
+            description="Estimated task cannot archive",
+            status="Estimated",
+            estimate_tokens=9000,
+            recommended_model="gpt-5.1-codex",
+            metadata=project_task_metadata(project),
+        )
+
+        response = client.post(
+            f"/projects/{project['id']}/tasks/{task['id']}/archive",
+            headers=_portal_headers(),
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith(f"/projects/{project['id']}/board?error=")
+    assert not db.get_task(database_path, task["id"])["metadata"].get("archived_at")
+

@@ -1,68 +1,7 @@
-import os
-from pathlib import Path
-
-from fastapi.testclient import TestClient
+import json
 
 from agile_ai_htb import db
-from agile_ai_htb.app import create_app
-from agile_ai_htb.operator_config import CONTROL_API_KEY_PLACEHOLDER, load_operator_config
-from agile_ai_htb.project_context import project_task_metadata
-from agile_ai_htb.settings import Settings
-
-ROOT = Path(__file__).resolve().parents[2]
-PORTAL_TOKEN = "test-portal-token"
-
-
-class FakeControlPlaneLLM:
-    def __init__(self, *, exc: Exception | None = None):
-        self.exc = exc
-        self.requests = []
-
-    async def acompletion(self, request):
-        self.requests.append(request)
-        if self.exc:
-            raise self.exc
-        return {
-            "choices": [{"message": {"content": "AGILE_AI_HTB_CONTROL_PLANE_OK"}}],
-            "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10},
-            "api_key": "sk_sho...nder",
-        }
-
-
-def _client(tmp_path):
-    settings = Settings(database_path=tmp_path / "harness.db", guardrails_path=ROOT / "guardrails.yaml")
-    return TestClient(create_app(settings))
-
-
-def _client_with_control_plane_llm(tmp_path, llm, *, control_plane_model="anthropic/claude-sonnet-4-20250514"):
-    settings = Settings(
-        database_path=tmp_path / "harness.db",
-        guardrails_path=ROOT / "guardrails.yaml",
-        control_plane_model=control_plane_model,
-        control_plane_api_key_env="TEST_CONTROL_PLANE_KEY",
-    )
-    app = create_app(settings)
-    app.state.llm_client = llm
-    return TestClient(app)
-
-
-def _portal_headers():
-    return {"Authorization": f"Bearer {PORTAL_TOKEN}"}
-
-
-def _connect_project(database_path: Path, root: Path) -> dict:
-    root.mkdir(exist_ok=True)
-    return db.upsert_connected_project(
-        database_path,
-        name=root.name,
-        root_path=str(root.resolve()),
-        profile={"name": root.name, "root_path": str(root.resolve()), "test_command": "pytest"},
-        capability={"state": "launch_ready", "can_launch": True},
-    )
-
-
-def _project_metadata(database_path: Path, root: Path) -> dict:
-    return project_task_metadata(_connect_project(database_path, root))
+from tests.portal.helpers import PORTAL_TOKEN, _client, _portal_headers, _project_metadata
 
 
 def test_sessions_index_renders_mockup_style_session_table(tmp_path, monkeypatch):
@@ -133,6 +72,201 @@ def test_sessions_index_compacts_long_task_text_preserves_scan_fields(tmp_path, 
     assert "zone:" in html
     assert report.status_code == 200
     assert "FULL_TASK_TAIL_2099" in report.text
+
+
+def test_sessions_index_and_report_label_agent_review_accounting(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    db.init_db(tmp_path / "harness.db")
+    review_session = db.create_session(
+        tmp_path / "harness.db",
+        task_description="Agent review for task DEMO_TASK_999",
+        model="anthropic/claude-sonnet-4-20250514",
+        session_key_hash="a" * 64,
+        guardrail_overrides={"spend_category": "agent_review", "task_id": "DEMO_TASK_999"},
+        status="completed",
+    )
+    db.record_token_turn(
+        tmp_path / "harness.db",
+        session_id=review_session["id"],
+        usage_kind="reporting",
+        model="anthropic/claude-sonnet-4-20250514",
+        prompt_tokens=70,
+        completion_tokens=30,
+        cost=0.01,
+        raw_usage={
+            "total_tokens": 100,
+            "spend_category": "agent_review",
+            "response": {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "summary": "DEMO review summary 2099.",
+                                    "recommendation": "approve",
+                                    "findings": [],
+                                }
+                            )
+                        }
+                    }
+                ]
+            },
+        },
+    )
+
+    with _client(tmp_path) as client:
+        index = client.get("/sessions", headers=_portal_headers())
+        report = client.get(f"/sessions/{review_session['id']}", headers=_portal_headers())
+
+    assert index.status_code == 200
+    assert "Agent Review" in index.text
+    assert "100" in index.text
+    assert "0 runs" in index.text
+    assert report.status_code == 200
+    assert "Agent Review" in report.text
+    assert "Review source" in report.text
+    assert "Control Plane" in report.text
+    assert "reporting_summary" in report.text
+    assert "approve · DEMO review summary 2099." in report.text
+    assert "Agent Review for task DEMO_TASK_999" in report.text
+    assert "missing Worker Run evidence" not in report.text
+    breakdown = db.session_token_breakdown(tmp_path / "harness.db", review_session["id"])
+    assert breakdown["by_category"]["reporting_summary"] == 100
+    assert breakdown["by_source"]["control_plane"] == 100
+
+
+def test_worker_session_report_shows_related_agent_review_results_and_tokens(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    db.init_db(database_path)
+    worker_session = db.create_session(
+        database_path,
+        task_description="DEMO reviewed worker session 2099",
+        model="opencode/gpt-5.5",
+        session_key_hash="w" * 64,
+        guardrail_overrides={},
+        status="completed",
+    )
+    review_session = db.create_session(
+        database_path,
+        task_description="Agent review for DEMO_TASK_999",
+        model="anthropic/claude-sonnet-4-20250514",
+        session_key_hash="r" * 64,
+        guardrail_overrides={"spend_category": "agent_review", "task_id": "DEMO_TASK_999"},
+        status="completed",
+    )
+    db.record_token_turn(
+        database_path,
+        session_id=worker_session["id"],
+        model="opencode/gpt-5.5",
+        prompt_tokens=300,
+        completion_tokens=200,
+        cost=0.02,
+        raw_usage={"total_tokens": 500, "spend_category": "worker_execution", "usage_source": "harness_proxy"},
+    )
+    db.record_token_turn(
+        database_path,
+        session_id=review_session["id"],
+        usage_kind="reporting",
+        model="anthropic/claude-sonnet-4-20250514",
+        prompt_tokens=40,
+        completion_tokens=9,
+        cost=0.01,
+        raw_usage={"total_tokens": 49, "spend_category": "reporting_summary", "usage_source": "control_plane", "reporting_kind": "agent_review"},
+    )
+    task = db.create_task(
+        database_path,
+        description="DEMO reviewed worker session 2099",
+        status="Review",
+        actual_tokens=500,
+        session_id=worker_session["id"],
+        metadata={
+            "agent_review": {
+                "status": "completed",
+                "summary": "DEMO Agent Review summary 2099",
+                "recommendation": "approve",
+                "findings": [{"severity": "low", "message": "DEMO finding 2099"}],
+                "reviewed_at": "2099-01-02T03:04:05+00:00",
+                "review_session_id": review_session["id"],
+                "model": "anthropic/claude-sonnet-4-20250514",
+                "token_totals": {"prompt_tokens": 40, "completion_tokens": 9, "total_tokens": 49},
+            }
+        },
+    )
+
+    with _client(tmp_path) as client:
+        response = client.get(f"/sessions/{worker_session['id']}", headers=_portal_headers())
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Agent Review results" in html
+    assert "completed · approve" in html
+    assert "DEMO Agent Review summary 2099" in html
+    assert "DEMO finding 2099" in html
+    assert "reviewed: 2099-01-02T03:04:05+00:00" in html
+    assert "anthropic/claude-sonnet-4-20250514" in html
+    assert "49 review/control-plane tokens" in html
+    assert f'/sessions/{review_session["id"]}' in html
+    assert "500" in html
+    worker_breakdown = db.session_token_breakdown(database_path, worker_session["id"])
+    assert worker_breakdown["by_category"]["worker_execution"] == 500
+    assert worker_breakdown["by_category"]["reporting_summary"] == 0
+    assert db.get_task(database_path, task["id"])["actual_tokens"] == 500
+
+
+def test_worker_session_report_shows_failed_agent_review_without_fabricated_zero_tokens(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    db.init_db(database_path)
+    worker_session = db.create_session(
+        database_path,
+        task_description="DEMO failed review worker session 2099",
+        model="opencode/gpt-5.5",
+        session_key_hash="w" * 64,
+        guardrail_overrides={},
+        status="completed",
+    )
+    review_session = db.create_session(
+        database_path,
+        task_description="Failed Agent review for DEMO_TASK_999",
+        model="anthropic/claude-sonnet-4-20250514",
+        session_key_hash="r" * 64,
+        guardrail_overrides={"spend_category": "agent_review", "task_id": "DEMO_TASK_999"},
+        status="failed",
+    )
+    db.create_task(
+        database_path,
+        description="DEMO failed review worker session 2099",
+        status="Review",
+        actual_tokens=500,
+        session_id=worker_session["id"],
+        metadata={
+            "agent_review": {
+                "status": "failed",
+                "summary": "Agent Review failed; operator can still mark done or block manually.",
+                "recommendation": "needs_changes",
+                "findings": [],
+                "reviewed_at": "2099-01-02T03:04:05+00:00",
+                "review_session_id": review_session["id"],
+                "model": "anthropic/claude-sonnet-4-20250514",
+                "token_totals": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                "error": "DEMO provider timeout 2099",
+            }
+        },
+    )
+
+    with _client(tmp_path) as client:
+        response = client.get(f"/sessions/{worker_session['id']}", headers=_portal_headers())
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Agent Review results" in html
+    assert "failed · needs_changes" in html
+    assert "Agent Review failed; operator can still mark done or block manually." in html
+    assert "DEMO provider timeout 2099" in html
+    assert "reviewed: 2099-01-02T03:04:05+00:00" in html
+    assert "review tokens unavailable" in html
+    assert "0 review/control-plane tokens" not in html
 
 
 def test_session_report_renders_totals_alarm_checkpoint_without_internal_artifact_link(tmp_path, monkeypatch):
@@ -250,6 +384,8 @@ def test_session_report_renders_totals_alarm_checkpoint_without_internal_artifac
     assert "Repo Context Brief" in html
     assert "AGENTS.md" in html
     assert "pyproject.toml" in html
+    assert "Agent Review results" not in html
+    assert "review/control-plane tokens" not in html
     assert "***" not in html
 
 

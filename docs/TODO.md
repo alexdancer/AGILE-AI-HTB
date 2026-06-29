@@ -9,6 +9,7 @@ Parking lot for ideas I actually want to revisit. This is not a roadmap or a pro
 - [ ] **MCP facade:** explore using this project as an MCP server so other agents can list projects, inspect boards, create/estimate tasks, launch guarded runs, and fetch artifacts without bypassing Harness guardrails.
 - [ ] **Tool/token map:** visualize which tools and commands a coding agent used, such as `git status`, `grep`, or `rm`, and show token usage tied to those actions.
 - [ ] **Personal token stats:** show a person's token usage by day, with room for useful rollups later.
+- [ ] **Diff Viewer:** Have a diff viewer included
 
 ## Fix the sharp edges
 

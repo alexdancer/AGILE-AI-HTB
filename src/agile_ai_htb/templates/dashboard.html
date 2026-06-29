@@ -19,12 +19,17 @@
   </div>
 </section>
 
+{% set categories = token_breakdown.by_category %}
+{% set review_reporting_tokens = categories.get('reporting_summary', 0) %}
+{% set planning_tokens = categories.get('task_breakdown', 0) + categories.get('control_plane', 0) %}
+{% set setup_tokens = categories.get('adapter_verification', 0) %}
+{% set other_tokens = categories.get('other', 0) %}
 <section class="grid cols-4" style="margin-bottom:20px">
   <article class="kpi">
-    <div class="label">Daily budget (Worker execution)</div>
-    <div class="value mono">{{ "{:,}".format(worker_token_total) }}{% if daily_cap %} / {{ "{:,}".format(daily_cap) }}{% endif %}</div>
-    <div class="sub">zone: {{ current_zone }} · control-plane/setup spend is separate</div>
-    {% if daily_cap %}<div class="bar"><span style="width:{{ [100, ((worker_token_total / daily_cap) * 100)|round(1)]|min }}%"></span></div>{% endif %}
+    <div class="label">Daily governed budget</div>
+    <div class="value mono">{{ "{:,}".format(budget_token_total) }}{% if daily_cap %} / {{ "{:,}".format(daily_cap) }}{% endif %}</div>
+    <div class="sub">zone: {{ current_zone }} · total governed model spend</div>
+    {% if daily_cap %}<div class="bar"><span style="width:{{ [100, ((budget_token_total / daily_cap) * 100)|round(1)]|min }}%"></span></div>{% endif %}
   </article>
   <article class="kpi">
     <div class="label">Active sessions</div>
@@ -37,10 +42,21 @@
     <div class="sub">{{ critical_alarm_count }} critical</div>
   </article>
   <article class="kpi">
-    <div class="label">Tokens used</div>
-    <div class="value mono">{{ "{:,}".format(token_total) }}</div>
-    <div class="sub">control-plane {{ "{:,}".format(token_breakdown.by_category.control_plane) }} · worker {{ "{:,}".format(token_breakdown.by_category.worker_execution) }}</div>
+    <div class="label">Worker execution tokens</div>
+    <div class="value mono">{{ "{:,}".format(worker_token_total) }}</div>
+    <div class="sub">Worker-only task actuals and coding harness evidence</div>
   </article>
+</section>
+
+<section class="panel">
+  <div class="panel-header"><h3>Budget spend breakdown</h3></div>
+  <div class="panel-body grid cols-4">
+    <div class="card"><div class="label">Worker execution</div><div class="value mono">{{ "{:,}".format(worker_token_total) }}</div></div>
+    <div class="card"><div class="label">Agent Review/reporting</div><div class="value mono">{{ "{:,}".format(review_reporting_tokens) }}</div><p class="muted mono">Agent Review/reporting {{ "{:,}".format(review_reporting_tokens) }}</p></div>
+    <div class="card"><div class="label">Planning/estimation</div><div class="value mono">{{ "{:,}".format(planning_tokens) }}</div><p class="muted mono">Planning/estimation {{ "{:,}".format(planning_tokens) }}</p></div>
+    <div class="card"><div class="label">Setup/verification</div><div class="value mono">{{ "{:,}".format(setup_tokens) }}</div></div>
+    {% if other_tokens %}<div class="card"><div class="label">Other tracked spend</div><div class="value mono">{{ "{:,}".format(other_tokens) }}</div></div>{% endif %}
+  </div>
 </section>
 
 <section class="panel">

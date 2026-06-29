@@ -4,18 +4,21 @@ A portal-first token-budget governance harness for AI coding agents. AGILE-AI-HT
 
 Agent-agnostic. Proxy-governed mode works with OpenAI-compatible agents through the Harness Proxy and direct upstream provider clients. Native Worker mode uses the installed Worker CLI's own config/auth and imports trustworthy usage evidence when available.
 
+AGILE-AI-HTB works best with spec-driven development: start from a written spec or Markdown plan, break it into governed vertical slices, and keep a human-reviewable Acceptance Verification task at the end.
+
+AGILE-AI-HTB is not a replacement for Claude Code, Codex, OpenCode, Hermes, or whatever agent-coding harness you already use. It is a governance and orchestration layer around your current workflow: bring your existing Worker CLI/auth/config, then use AGILE-AI-HTB to estimate, budget, launch, and review the work.
+
 Current public path: install the `htb` operator CLI, run the local Control Plane/Portal, configure the control-plane model in the Portal, connect a local repo, verify one Worker Adapter, then launch a tiny governed task. Contributor `uv run ...` commands are for repo development, not normal operator setup.
 
-## Four pillars
+## What you get
 
-| Pillar | What it does |
-|---|---|
-| **Guardrails** | 6 declared constraints enforced at launch, transport, or review depending on tracking mode: daily cap, session cap, budget zones (green/yellow/red), loop detection, session timeout, tool-category limits. Proxy-governed runs can apply transport controls; native-usage runs reconcile after the CLI reports usage. |
-| **Checkpoints** | 4 pass/fail evaluations at session boundaries: budget health, stuck-loop score, tool diversity, timeout respect. Stateless — replayable from any session artifact. |
-| **Material Handling** | Clean interfaces: AGILE board (Estimated → Running → Review → Done → Blocked), dashboard, session reports, REST API. Launch creates an auditable asynchronous Worker Run; retryable runtime failures return to Estimated with inline evidence. No unestimated Backlog — task intake estimates and budgets before launch. |
-| **Alarms** | 7 named alarm types with severity and recommended actions: BUDGET_YELLOW, BUDGET_RED, DAILY_CAP_EXCEEDED, SESSION_CAP_EXCEEDED, LOOP_DETECTED, SESSION_TIMEOUT, TOOL_CATEGORY_BIAS, CHECKPOINT_FAIL. |
+- **Portal-first setup** for the local Control Plane: configure the control-plane model, connect a project, select a Worker Adapter, approve discovered Worker models, and launch from the browser.
+- **Project-scoped AGILE boards** with `Estimated → Running → Review → Done → Blocked`, task history/archive, session evidence, and async Worker Runs that keep the board responsive while a Worker CLI runs.
+- **Task planning before launch**: manual task intake, Markdown task breakdown into vertical slices, model recommendations, budget estimates, and a human-reviewable final Acceptance Verification task for integrated work.
+- **Worker Adapter separation**: the Control Plane uses its own model/API key for estimates and reports; local Worker CLIs such as OpenCode, Claude Code, Codex, and Hermes keep their own auth/config unless you intentionally use proxy-governed mode.
+- **Token evidence by spend category** so Worker execution, planning/breakdown, setup verification, and Agent Review/reporting are visible separately instead of being hidden inside one total.
 
-**Human-in-the-loop**: the harness constrains the agent, not the human. Every escalation presents a decision — continue, abort, raise budget, adjust guardrail.
+**Human-in-the-loop by design**: AGILE-AI-HTB can estimate, launch, queue, report, and review, but final acceptance, budget overrides, and blocker decisions stay with the operator.
 
 ## Quick start: first 10 minutes
 
@@ -23,9 +26,6 @@ Current public path: install the `htb` operator CLI, run the local Control Plane
 # 1. Install the operator CLI.
 # Current source install, before PyPI release:
 pipx install "git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git"
-
-# After PyPI release this becomes:
-# pipx install agile-ai-htb
 
 # One-line bootstrap alternative:
 # curl -fsSL https://raw.githubusercontent.com/alexdancer/AI-Harness-Token-Tracker/main/install.sh | sh
@@ -61,6 +61,30 @@ AGILE-AI-HTB governs work launched through its AGILE Board and a verified Worker
 
 It does not govern arbitrary external-agent spend unless traffic goes through the Harness Proxy or the native CLI emits trustworthy usage evidence bound to the launched Worker Run.
 
+## Current status and limits
+
+- **Install path today**: `pipx install "git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git"` or the curl bootstrapper. PyPI and Homebrew are planned but not public release channels yet.
+- **Execution path today**: local all-in-one Control Plane/Portal with an in-process Local Runner. Hosted workspaces/sandboxes, a fuller CLI, and MCP access are future work tracked in [TODO](docs/TODO.md).
+- **Most proven Worker path**: OpenCode with trustworthy `native_usage` evidence. Claude Code, Codex, and Hermes can be configured; custom adapter commands are an extensibility path. Board launch stays blocked until the selected adapter proves budget-authoritative usage evidence.
+- **Docker path**: useful for proving the Control Plane/Portal image, `/health`, `/login`, and SQLite persistence. It does not automatically inherit host Worker CLIs, local repo paths, or native CLI credentials.
+
+
+
+## Governance model
+
+The harness uses the four original governance primitives, but they are surfaced through setup, launch, reports, and review rather than as a separate workflow operators need to manage by hand.
+
+
+| Primitive             | What it does                                                                                                                                                                                                                                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Material Handling** | Clean interfaces: project workspace, AGILE board, dashboard, task history, session reports, setup screens, and REST API. Launch creates an auditable asynchronous Worker Run; retryable runtime failures return to Estimated with inline evidence.                                                      |
+| **Checkpoints**       | 4 pass/fail evaluations at session boundaries: budget health, stuck-loop score, tool diversity, timeout respect. Stateless — replayable from any session artifact.                                                                                                                                      |
+| **Alarms**            | 9 named alarm types with severity and recommended actions: BUDGET_YELLOW, BUDGET_RED, DAILY_CAP_EXCEEDED, SESSION_CAP_EXCEEDED, BUDGET_OVERRUN, LOOP_DETECTED, SESSION_TIMEOUT, TOOL_CATEGORY_BIAS, CHECKPOINT_FAIL.                                                                                    |
+| **Guardrails**        | 6 declared constraints enforced at launch, transport, or review depending on tracking mode: daily cap, session cap, budget zones, loop detection, session timeout, and tool-category limits. Proxy-governed runs can apply transport controls; native-usage runs reconcile after the CLI reports usage. |
+
+
+
+
 ## Docker: no-secret Control Plane trial
 
 ```bash
@@ -95,6 +119,8 @@ More setup details:
 - [Worker Adapter setup matrix](docs/WORKER_ADAPTER_SETUP.md)
 - [Setup support checklist](docs/SETUP_SUPPORT_CHECKLIST.md)
 
+
+
 ## The demo loop
 
 1. **Type a task** — "Add a save command to the CLI" in the board intake form
@@ -124,38 +150,42 @@ Flow: tests control-plane connection → discovers OpenCode Worker models from t
 
 For the long comparison demo, run the same synthetic task directly through OpenCode and then through AGILE-AI-HTB:
 
-- Task: [`demo_tasks/DEMO_2099_LONG_OPENCODE_COMPARISON_TASK.md`](demo_tasks/DEMO_2099_LONG_OPENCODE_COMPARISON_TASK.md)
-- Runbook: [`docs/DEMO_2099_OPENCODE_COMPARISON_RUNBOOK.md`](docs/DEMO_2099_OPENCODE_COMPARISON_RUNBOOK.md)
+- Task: `[demo_tasks/DEMO_2099_LONG_OPENCODE_COMPARISON_TASK.md](demo_tasks/DEMO_2099_LONG_OPENCODE_COMPARISON_TASK.md)`
+- Runbook: `[docs/DEMO_2099_OPENCODE_COMPARISON_RUNBOOK.md](docs/DEMO_2099_OPENCODE_COMPARISON_RUNBOOK.md)`
 - Direct baseline evidence: `.demo/opencode-comparison/evidence/direct-opencode-raw-events.jsonl`
 
 Direct OpenCode baseline already recorded from `openai/gpt-5.5` with `--variant high`:
 
-| Metric | Result |
-|---|---:|
-| Raw JSONL events | 134 |
-| Evidence size | 330,303 bytes |
-| Session | `ses_113fd6d71ffeE3YVEEQk7PvcDA` |
-| Usage records | 36 |
-| Cumulative token units | 1,601,736 |
-| Input tokens | 63,303 |
-| Output tokens | 22,078 |
-| Reasoning tokens | 5,955 |
-| Generated target tests | 16 passed |
+
+| Metric                 | Result                           |
+| ---------------------- | -------------------------------- |
+| Raw JSONL events       | 134                              |
+| Evidence size          | 330,303 bytes                    |
+| Session                | `ses_113fd6d71ffeE3YVEEQk7PvcDA` |
+| Usage records          | 36                               |
+| Cumulative token units | 1,601,736                        |
+| Input tokens           | 63,303                           |
+| Output tokens          | 22,078                           |
+| Reasoning tokens       | 5,955                            |
+| Generated target tests | 16 passed                        |
+
 
 AGILE-AI-HTB portal run recorded in `.demo/opencode-comparison/harness.db`:
 
-| Metric | Result |
-|---|---:|
-| Task breakdown reviews accepted | 1 |
-| Board tasks created | 7 |
-| Completed Worker runs | 6 |
-| Final board state | 6 Review, 1 Blocked |
-| Worker budget configured | 2,500,000 daily / 400,000 session |
-| Control-plane/task-breakdown tokens | 15,776 |
-| Worker execution tokens | 76,740 |
-| Total ledger tokens | 92,516 |
-| Alarms generated | 0 |
-| Harness target tests | 5 passed |
+
+| Metric                              | Result                            |
+| ----------------------------------- | --------------------------------- |
+| Task breakdown reviews accepted     | 1                                 |
+| Board tasks created                 | 7                                 |
+| Completed Worker runs               | 6                                 |
+| Final board state                   | 6 Review, 1 Blocked               |
+| Worker budget configured            | 2,500,000 daily / 400,000 session |
+| Control-plane/task-breakdown tokens | 15,776                            |
+| Worker execution tokens             | 76,740                            |
+| Total ledger tokens                 | 92,516                            |
+| Alarms generated                    | 0                                 |
+| Harness target tests                | 5 passed                          |
+
 
 Competency comparison is measured by an external smoke check, not by either project's self-written tests:
 
@@ -163,13 +193,15 @@ Competency comparison is measured by an external smoke check, not by either proj
 python3 scripts/compare-opencode-demo-projects.py
 ```
 
-| Criterion | Direct OpenCode | AGILE-AI-HTB OpenCode |
-|---|---:|---:|
-| External acceptance checks | 15/15 passed | 15/15 passed |
-| Project self-tests | 16 passed | 5 passed |
-| Python files | 14 | 6 |
-| Test files | 7 | 1 |
-| Recorded token usage | 1,601,736 cumulative OpenCode units | 92,516 ledger tokens |
+
+| Criterion                  | Direct OpenCode                     | AGILE-AI-HTB OpenCode |
+| -------------------------- | ----------------------------------- | --------------------- |
+| External acceptance checks | 15/15 passed                        | 15/15 passed          |
+| Project self-tests         | 16 passed                           | 5 passed              |
+| Python files               | 14                                  | 6                     |
+| Test files                 | 7                                   | 1                     |
+| Recorded token usage       | 1,601,736 cumulative OpenCode units | 92,516 ledger tokens  |
+
 
 Result: both projects satisfy the external smoke acceptance path, but deeper review found Direct OpenCode materially stronger on implementation quality. Direct produced the broader, more spec-complete project and test suite; AGILE-AI-HTB produced a smaller happy-path implementation while adding estimate, budget, launch, ledger, and review evidence around the run.
 
@@ -183,13 +215,15 @@ For normal local runs, use `/settings/control-plane` to change the control-plane
 
 Use environment variables mainly for Docker, CI, or headless operation:
 
-| Setting | Purpose |
-|---|---|
-| `TOKEN_TRACKER_PORTAL_TOKEN` | Portal login token |
-| `AGILE_AI_HTB_CONTROL_PROVIDER` | Control-plane provider: `openai`, `anthropic`, or `openai-compatible` |
-| `AGILE_AI_HTB_CONTROL_MODEL` | Control-plane model for estimates, breakdowns, recommendations, and reports |
-| `AGILE_AI_HTB_CONTROL_BASE_URL` | Required for OpenAI-compatible endpoints; optional otherwise |
-| `AGILE_AI_HTB_CONTROL_API_KEY` | Control-plane provider API key |
+
+| Setting                         | Purpose                                                                     |
+| ------------------------------- | --------------------------------------------------------------------------- |
+| `TOKEN_TRACKER_PORTAL_TOKEN`    | Portal login token                                                          |
+| `AGILE_AI_HTB_CONTROL_PROVIDER` | Control-plane provider: `openai`, `anthropic`, or `openai-compatible`       |
+| `AGILE_AI_HTB_CONTROL_MODEL`    | Control-plane model for estimates, breakdowns, recommendations, and reports |
+| `AGILE_AI_HTB_CONTROL_BASE_URL` | Required for OpenAI-compatible endpoints; optional otherwise                |
+| `AGILE_AI_HTB_CONTROL_API_KEY`  | Control-plane provider API key                                              |
+
 
 Native Worker CLIs keep their own auth/config. See [Getting started](docs/GETTING_STARTED.md) and [Worker Adapter setup](docs/WORKER_ADAPTER_SETUP.md) for setup details.
 
@@ -210,45 +244,3 @@ uv run pytest tests/smoke -q
 
 All tests use fake LLM clients. Zero provider calls. Zero cost.
 
-## Project structure
-
-```
-src/agile_ai_htb/
-  app.py              FastAPI app factory + /health
-  cli.py              htb operator CLI (init, serve, check, seed-demo)
-  db.py               SQLite persistence, schema, migrations
-  auth.py             Portal cookie auth
-  settings.py         Env-var settings
-  guardrails.py       Guardrail config loader + zone math
-  operator_config.py  .htb config/secrets helpers
-  governance.py       Three-layer enforcement engine
-  alarms.py           7 alarm types + detection logic
-  checkpoints.py      4 stateless checkpoint evaluators
-  estimation.py       Estimator LLM with structured output
-  task_launch.py      Task → session orchestration
-  launch_guardrails.py Pre-launch validation
-  worker_adapters.py  Adapter presets + subprocess runner
-  routes/             FastAPI route modules
-  templates/          Jinja2 HTML templates
-  defaults/           Default guardrail YAML bundled in package
-tests/
-  api/                REST/API behavior tests
-  portal/             Server-rendered Portal tests
-  workers/            Worker adapter and launch tests
-  budgeting/          Budget, guardrail, alarm, checkpoint tests
-  evals/              Behavioral evals
-  demo/               Synthetic demo invariant tests
-  smoke/              End-to-end smoke tests
-CONTEXT.md            Domain glossary
-docs/
-  GETTING_STARTED.md  First-run operator guide
-  INSTALL.md          pipx, curl installer, and Homebrew status
-  WORKER_ADAPTER_SETUP.md
-  SETUP_SUPPORT_CHECKLIST.md
-  TODO.md             Human-readable next work
-  MCP_AGENT_HARNESS_TODO.md
-  HARNESS.md          Architecture reference
-  DEMO_2099_OPENCODE_COMPARISON_RUNBOOK.md
-install.sh            uv-tool/pipx bootstrap installer
-packaging/homebrew/   Future Homebrew formula scaffold
-```

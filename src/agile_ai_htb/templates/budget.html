@@ -2,7 +2,7 @@
 {% block title %}Token budget | AGILE-AI-HTB{% endblock %}
 {% block content %}
 <h1 class="page-title">Token budget</h1>
-<p class="page-sub">Worker execution spend is enforced; control-plane/setup spend is informational.</p>
+<p class="page-sub">Daily governed model spend is enforced from the token ledger; Worker execution actuals stay separate.</p>
 
 <section class="panel">
   <div class="panel-header"><h3>Configure launch guardrails</h3></div>
@@ -10,9 +10,9 @@
     {% if error %}<p class="pill red">{{ error }}</p>{% endif %}
     <form method="post" action="/settings/budget" class="grid cols-2">
       <div>
-        <label for="daily-cap">Daily Worker execution cap</label>
+        <label for="daily-cap">Daily governed model-spend cap</label>
         <input id="daily-cap" name="daily_cap_tokens" type="number" min="1" step="1" value="{{ budget.daily_cap_tokens or '' }}" required>
-        <p class="muted">Applied to Worker execution tokens only. Estimation, setup checks, and reporting are shown separately.</p>
+        <p class="muted">Applied to total governed model spend: Worker execution, control-plane estimation, task breakdown, adapter verification, Agent Review/reporting, and other tracked token rows.</p>
       </div>
       <div>
         <label for="session-cap">Per-session Worker execution cap</label>
@@ -31,14 +31,14 @@
   <div class="panel-header"><h3>Spend authority</h3></div>
   <div class="panel-body grid cols-2">
     <div class="card">
-      <h3>Enforced</h3>
-      <p><span class="pill green">worker_execution</span></p>
-      <p class="muted">Coding harness model calls through the Harness Proxy, or native Worker runs that emit trustworthy per-session usage evidence.</p>
+      <h3>Daily budgeted spend</h3>
+      <p><span class="pill green">worker_execution</span> <span class="pill green">control_plane</span> <span class="pill green">reporting_summary</span> <span class="pill green">task_breakdown</span> <span class="pill green">adapter_verification</span> <span class="pill green">other</span></p>
+      <p class="muted">Daily guardrails and alarms count all governed token-ledger rows, including Agent Review and setup/orchestration spend.</p>
     </div>
     <div class="card">
-      <h3>Informational</h3>
-      <p><span class="pill muted">control_plane</span> <span class="pill muted">adapter_verification</span> <span class="pill muted">reporting_summary</span></p>
-      <p class="muted">Setup and orchestration costs are reported separately so they do not hide Worker execution spend.</p>
+      <h3>Worker-only evidence</h3>
+      <p><span class="pill blue">per-session Worker cap</span> <span class="pill blue">task actual_tokens</span></p>
+      <p class="muted">Per-session Worker execution caps and task actuals remain based on Worker execution evidence, not Agent Review/reporting tokens.</p>
     </div>
   </div>
 </section>

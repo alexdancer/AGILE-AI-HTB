@@ -31,7 +31,10 @@ ENTRYPOINT_CANDIDATES = (
     "docker-compose.yml",
 )
 SECRET_NAMES = {".env", ".env.local", ".env.production", "id_rsa", "id_ed25519"}
-SECRET_VALUE_PATTERN = re.compile(r"sk_[A-Za-z0-9_\-.]+")
+SECRET_VALUE_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9])(sk-[A-Za-z0-9_.-]+|sk_[A-Za-z0-9_.-]+|Bearer\s+[A-Za-z0-9_.-]+)",
+    re.IGNORECASE,
+)
 SECRET_ASSIGNMENT_PATTERNS = (
     re.compile(r"(?i)(authorization\s*[:=]\s*(?:bearer\s+)?)[^\s,;]+"),
     re.compile(r"(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|session[_-]?token|password|secret)\s*[:=]\s*)[^\s,;]+"),

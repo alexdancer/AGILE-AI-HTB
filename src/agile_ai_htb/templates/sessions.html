@@ -10,7 +10,7 @@
     <table>
       <thead>
         <tr>
-          <th>session</th><th>task</th><th>model</th><th>status</th><th class="right">prompt</th><th class="right">completion</th><th class="right">total</th><th>evidence</th><th>zone</th><th>alarms</th>
+          <th>session</th><th>kind</th><th>task</th><th>model</th><th>status</th><th class="right">prompt</th><th class="right">completion</th><th class="right">total</th><th>evidence</th><th>zone</th><th>alarms</th>
         </tr>
       </thead>
       <tbody>
@@ -19,6 +19,7 @@
         {% set task_preview = task_text[:160] ~ ('…' if task_text|length > 160 else '') %}
         <tr>
           <td class="mono muted"><a href="/sessions/{{ item.session.id }}">{{ item.session.id }}</a></td>
+          <td><span class="pill {% if item.evidence_summary.session_kind == 'Agent Review' %}blue{% else %}muted{% endif %}">{{ item.evidence_summary.session_kind }}</span></td>
           <td><div class="compact-text lines-2">{{ task_preview }}</div></td>
           <td class="mono">{{ item.session.model }}</td>
           <td><span class="pill {% if item.session.status in ['active', 'running'] %}blue{% elif item.session.status == 'completed' %}green{% else %}muted{% endif %}">{{ item.session.status }}</span></td>
@@ -30,7 +31,7 @@
           <td><span class="pill {% if item.alarms|length %}red{% else %}muted{% endif %}">{{ item.alarms|length }}</span></td>
         </tr>
         {% else %}
-        <tr><td colspan="10"><div class="empty-state">No sessions yet. Launch a task from a project board to create evidence.</div></td></tr>
+        <tr><td colspan="11"><div class="empty-state">No sessions yet. Launch a task from a project board to create evidence.</div></td></tr>
         {% endfor %}
       </tbody>
     </table>

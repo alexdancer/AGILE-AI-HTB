@@ -1,4 +1,5 @@
 import json
+import shutil
 import time
 from pathlib import Path
 
@@ -166,7 +167,7 @@ class FakeEstimatorLLM:
         }
 
 
-def _client_with_llm(tmp_path, llm):
+def _client_with_llm(tmp_path, llm, *, connected_project: bool = True):
     settings = Settings(
         database_path=tmp_path / "harness.db",
         guardrails_path=ROOT / "guardrails.yaml",
@@ -175,15 +176,16 @@ def _client_with_llm(tmp_path, llm):
     app = create_app(settings)
     db.init_db(settings.database_path)
     app.state.llm_client = llm
-    project_root = tmp_path / "connected-project"
-    project_root.mkdir(exist_ok=True)
-    db.upsert_connected_project(
-        settings.database_path,
-        name=project_root.name,
-        root_path=str(project_root.resolve()),
-        profile={"name": project_root.name, "root_path": str(project_root.resolve()), "test_command": "pytest"},
-        capability={"state": "launch_ready", "can_launch": True},
-    )
+    if connected_project:
+        project_root = tmp_path / "connected-project"
+        project_root.mkdir(exist_ok=True)
+        db.upsert_connected_project(
+            settings.database_path,
+            name=project_root.name,
+            root_path=str(project_root.resolve()),
+            profile={"name": project_root.name, "root_path": str(project_root.resolve()), "test_command": "pytest"},
+            capability={"state": "launch_ready", "can_launch": True},
+        )
     return TestClient(app)
 
 def test_create_task_with_estimate_defaults_to_estimated(tmp_path):
@@ -229,6 +231,106 @@ def test_project_estimate_form_stamps_connected_project_metadata(tmp_path, monke
     assert len(tasks) == 1
     assert tasks[0]["metadata"]["connected_project_id"] == project["id"]
     assert tasks[0]["metadata"]["project_root_path"] == project_task_metadata(project)["project_root_path"]
+
+
+def test_project_markdown_breakdown_request_includes_separate_repo_context_and_stores_evidence(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeSequentialLLM([_breakdown_content("Ground DEMO_ROUTE_2099 in repo context")])
+    markdown = "# DEMO_TASK_2099 repo-grounded intake\n\n- [ ] Ground DEMO_ROUTE_2099 in repo context"
+
+    with _client_with_llm(tmp_path, llm) as client:
+        project = db.list_connected_projects(tmp_path / "harness.db")[0]
+        project_root = Path(project["root_path"])
+        (project_root / "AGENTS.md").write_text(
+            "Use pytest for DEMO_TASK_2099. "
+            "api_key=DEMO_SECRET_2099_VALUE "
+            "sk-DEMO_PROVIDER_TOKEN_2099 "
+            "Bearer DEMO_BEARER_TOKEN_2099",
+            encoding="utf-8",
+        )
+        (project_root / "pyproject.toml").write_text("[project]\nname = 'demo-2099'\n", encoding="utf-8")
+        (project_root / "src").mkdir()
+        (project_root / ".env").write_text("password=DEMO_PASSWORD_2099", encoding="utf-8")
+
+        response = client.post(
+            f"/projects/{project['id']}/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={"description": markdown},
+            follow_redirects=False,
+        )
+        breakdown_id = response.headers["location"].split("/")[2]
+        breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
+
+    request_payload = json.loads(llm.requests[0]["messages"][1]["content"])
+    repo_context = request_payload["repo_context"]
+    stored_evidence = breakdown["repo_context_evidence"]
+
+    assert response.status_code == 303
+    assert request_payload["source_text"] == markdown
+    assert repo_context["text"] != request_payload["source_text"]
+    assert "Use pytest for DEMO_TASK_2099" in repo_context["text"]
+    assert "DEMO_SECRET_2099_VALUE" not in json.dumps(repo_context)
+    assert "DEMO_PROVIDER_TOKEN_2099" not in json.dumps(repo_context)
+    assert "DEMO_BEARER_TOKEN_2099" not in json.dumps(repo_context)
+    assert "DEMO_PASSWORD_2099" not in json.dumps(repo_context)
+    assert "pyproject.toml" in repo_context["manifests"]
+    assert "src" in repo_context["entrypoints"]
+    assert "pytest" in repo_context["test_commands"]
+    assert stored_evidence["source"] == "repo_context_brief"
+    assert stored_evidence["documents"] == ["AGENTS.md"]
+    assert "pyproject.toml" in stored_evidence["manifests"]
+    assert ".env" not in json.dumps(stored_evidence)
+    assert "DEMO_SECRET_2099_VALUE" not in json.dumps(stored_evidence)
+    assert "DEMO_PROVIDER_TOKEN_2099" not in json.dumps(stored_evidence)
+    assert "DEMO_BEARER_TOKEN_2099" not in json.dumps(stored_evidence)
+
+
+def test_global_markdown_breakdown_request_sends_no_repo_context(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeSequentialLLM([_breakdown_content("Keep DEMO_TASK_2099 global")])
+    markdown = "# DEMO_TASK_2099 global intake\n\n- [ ] Keep DEMO_TASK_2099 global"
+
+    with _client_with_llm(tmp_path, llm, connected_project=False) as client:
+        response = client.post(
+            "/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={"description": markdown},
+            follow_redirects=False,
+        )
+        breakdown_id = response.headers["location"].split("/")[2]
+        breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
+
+    request_payload = json.loads(llm.requests[0]["messages"][1]["content"])
+    assert response.status_code == 303
+    assert "repo_context" not in request_payload
+    assert breakdown["repo_context_evidence"] == {}
+
+
+def test_project_markdown_breakdown_missing_root_falls_back_without_repo_context(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeSequentialLLM([_breakdown_content("Fallback DEMO_TASK_2099 without context")])
+    markdown = "# DEMO_TASK_2099 missing root\n\n- [ ] Fallback DEMO_TASK_2099 without context"
+
+    with _client_with_llm(tmp_path, llm) as client:
+        project = db.list_connected_projects(tmp_path / "harness.db")[0]
+        shutil.rmtree(Path(project["root_path"]))
+        response = client.post(
+            f"/projects/{project['id']}/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={"description": markdown},
+            follow_redirects=False,
+        )
+        breakdown_id = response.headers["location"].split("/")[2]
+        breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
+
+    request_payload = json.loads(llm.requests[0]["messages"][1]["content"])
+    assert response.status_code == 303
+    assert request_payload["source_text"] == markdown
+    assert "repo_context" not in request_payload
+    assert breakdown["repo_context_evidence"] == {}
+
 
 def test_create_task_blocks_explicit_estimated_without_estimate(tmp_path):
     with _client(tmp_path) as client:

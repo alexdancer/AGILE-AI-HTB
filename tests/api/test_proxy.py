@@ -81,6 +81,60 @@ def test_chat_completions_governs_forwards_persists_usage_snapshot_and_alarms(tm
     assert {alarm["type"] for alarm in artifact["alarms"]} == {"BUDGET_RED", "SESSION_CAP_EXCEEDED"}
 
 
+def test_chat_completions_budget_zone_counts_prior_agent_review_spend(tmp_path):
+    client, fake = _client(tmp_path)
+    with client:
+        review_session = db.create_session(
+            tmp_path / "harness.db",
+            task_description="Agent Review spend",
+            model="control-plane",
+            session_key_hash="d" * 64,
+            guardrail_overrides={"spend_category": "agent_review"},
+            status="completed",
+        )
+        db.record_token_turn(
+            tmp_path / "harness.db",
+            session_id=review_session["id"],
+            usage_kind="reporting",
+            model="control-plane",
+            prompt_tokens=1300,
+            completion_tokens=0,
+            cost=0,
+            raw_usage={
+                "total_tokens": 1300,
+                "spend_category": "reporting_summary",
+                "usage_source": "control_plane",
+                "reporting_kind": "agent_review",
+            },
+        )
+        started = client.post(
+            "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
+            json={
+                "task_description": "Worker request after review spend",
+                "model": "claude-haiku",
+                "budget": {"daily_cap_tokens": 2_000, "session_cap_tokens": 5_000},
+            },
+        ).json()
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {started['session_api_key']}"},
+            json={
+                "model": "claude-haiku",
+                "messages": [{"role": "user", "content": "finish"}],
+                "max_tokens": 4096,
+                "tools": [{"type": "function", "function": {"name": "web_search"}}],
+            },
+        )
+
+    assert response.status_code == 200
+    forwarded = fake.requests[0]
+    assert forwarded["max_tokens"] == 2048
+    assert forwarded["tools"] == []
+    artifact = db.build_session_artifact(tmp_path / "harness.db", started["session_id"])
+    assert artifact["guardrail_snapshots"][0]["zone"] == "yellow"
+
+
 def test_chat_completions_uses_request_model_for_cost_calculation(tmp_path, monkeypatch):
     seen = {}
 

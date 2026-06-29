@@ -1,68 +1,9 @@
-import os
-from pathlib import Path
-
 from fastapi.testclient import TestClient
 
 from agile_ai_htb import db
 from agile_ai_htb.app import create_app
-from agile_ai_htb.operator_config import CONTROL_API_KEY_PLACEHOLDER, load_operator_config
-from agile_ai_htb.project_context import project_task_metadata
 from agile_ai_htb.settings import Settings
-
-ROOT = Path(__file__).resolve().parents[2]
-PORTAL_TOKEN = "test-portal-token"
-
-
-class FakeControlPlaneLLM:
-    def __init__(self, *, exc: Exception | None = None):
-        self.exc = exc
-        self.requests = []
-
-    async def acompletion(self, request):
-        self.requests.append(request)
-        if self.exc:
-            raise self.exc
-        return {
-            "choices": [{"message": {"content": "AGILE_AI_HTB_CONTROL_PLANE_OK"}}],
-            "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10},
-            "api_key": "sk_should_not_render",
-        }
-
-
-def _client(tmp_path):
-    settings = Settings(database_path=tmp_path / "harness.db", guardrails_path=ROOT / "guardrails.yaml")
-    return TestClient(create_app(settings))
-
-
-def _client_with_control_plane_llm(tmp_path, llm, *, control_plane_model="anthropic/claude-sonnet-4-20250514"):
-    settings = Settings(
-        database_path=tmp_path / "harness.db",
-        guardrails_path=ROOT / "guardrails.yaml",
-        control_plane_model=control_plane_model,
-        control_plane_api_key_env="TEST_CONTROL_PLANE_KEY",
-    )
-    app = create_app(settings)
-    app.state.llm_client = llm
-    return TestClient(app)
-
-
-def _portal_headers():
-    return {"Authorization": f"Bearer {PORTAL_TOKEN}"}
-
-
-def _connect_project(database_path: Path, root: Path) -> dict:
-    root.mkdir(exist_ok=True)
-    return db.upsert_connected_project(
-        database_path,
-        name=root.name,
-        root_path=str(root.resolve()),
-        profile={"name": root.name, "root_path": str(root.resolve()), "test_command": "pytest"},
-        capability={"state": "launch_ready", "can_launch": True},
-    )
-
-
-def _project_metadata(database_path: Path, root: Path) -> dict:
-    return project_task_metadata(_connect_project(database_path, root))
+from tests.portal.helpers import ROOT, PORTAL_TOKEN, _client, _portal_headers
 
 def test_dashboard_renders_budget_alarm_and_navigation_sections(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
@@ -98,7 +39,7 @@ def test_dashboard_renders_budget_alarm_and_navigation_sections(tmp_path, monkey
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
     html = response.text
-    assert "Daily budget" in html
+    assert "Daily governed budget" in html
     assert "Operator next actions" in html
     assert "Set up Worker adapter" in html
     assert 'href="/settings/workers"' in html
@@ -252,6 +193,56 @@ def test_dashboard_budget_ignores_previous_day_usage(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert "999,000" not in response.text
     assert "15" in response.text
+
+
+def test_dashboard_daily_budget_counts_agent_review_reporting_tokens(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        db.set_token_budget_settings(database_path, daily_cap_tokens=1000, session_cap_tokens=500)
+        review_session = db.create_session(
+            database_path,
+            task_description="Agent Review spend",
+            model="control-plane",
+            session_key_hash="r" * 64,
+            guardrail_overrides={"spend_category": "agent_review"},
+            status="completed",
+        )
+        db.record_token_turn(
+            database_path,
+            session_id=review_session["id"],
+            usage_kind="reporting",
+            model="control-plane",
+            prompt_tokens=900,
+            completion_tokens=0,
+            cost=0,
+            raw_usage={
+                "total_tokens": 900,
+                "spend_category": "reporting_summary",
+                "usage_source": "control_plane",
+                "reporting_kind": "agent_review",
+            },
+        )
+        db.record_token_turn(
+            database_path,
+            session_id=review_session["id"],
+            usage_kind="estimation",
+            model="control-plane",
+            prompt_tokens=50,
+            completion_tokens=0,
+            cost=0,
+            raw_usage={"total_tokens": 50},
+        )
+
+        response = client.get("/dashboard", headers=_portal_headers())
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Daily governed budget" in html
+    assert "950 / 1,000" in html
+    assert "zone: red" in html
+    assert "Agent Review/reporting 900" in html
+    assert "Planning/estimation 50" in html
 
 
 def test_dashboard_shows_accuracy_with_enough_completed_tasks(tmp_path, monkeypatch):

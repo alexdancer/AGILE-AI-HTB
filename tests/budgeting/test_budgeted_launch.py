@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import json
 import threading
 import time
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import pytest
 
 from agile_ai_htb import db
 from agile_ai_htb.project_context import project_task_metadata
+from agile_ai_htb.routes.tasks import _current_day_start_iso as _portal_launch_day_start_iso
 from agile_ai_htb.task_launch import TaskLaunchBlocked, abort_worker_session, launch_task
 
 
@@ -698,39 +703,72 @@ def test_token_usage_breakdown_classifies_control_worker_verification_and_report
     assert breakdown["by_source"]["harness_proxy"] == 25
 
 
-def test_worker_budget_overrun_ignores_control_plane_spend(tmp_path):
+def test_launch_budget_counts_prior_control_plane_reporting_spend(tmp_path):
     db_path = tmp_path / "harness.db"
     db.init_db(db_path)
-    control_session = db.create_session(
+    review_session = db.create_session(
         db_path,
-        task_description="control spend",
+        task_description="Agent Review spend",
         model="control-plane",
         session_key_hash="c" * 64,
-        guardrail_overrides={},
+        guardrail_overrides={"spend_category": "agent_review"},
         status="completed",
     )
     db.record_token_turn(
         db_path,
-        session_id=control_session["id"],
-        usage_kind="estimation",
+        session_id=review_session["id"],
+        usage_kind="reporting",
         model="control-plane",
         prompt_tokens=1000,
         completion_tokens=0,
         cost=0,
-        raw_usage={"total_tokens": 1000},
+        raw_usage={
+            "total_tokens": 1000,
+            "spend_category": "reporting_summary",
+            "usage_source": "control_plane",
+            "reporting_kind": "agent_review",
+        },
     )
     task = _verified_budget_task(
         db_path,
         tmp_path,
         estimate=10,
-        budget={"daily_used_tokens": 0, "daily_cap_tokens": 20, "session_cap_tokens": 20},
+        budget={"daily_used_tokens": 0, "daily_cap_tokens": 1005, "session_cap_tokens": 20},
     )
+    calls = []
 
-    result = launch_task(db_path, task["id"], adapter_id="opencode", model=None, proxy_url=None, runner=_runner_recording(db_path, total_tokens=10))
+    try:
+        launch_task(db_path, task["id"], adapter_id="opencode", model=None, proxy_url=None, runner=lambda plan: calls.append(plan))
+    except TaskLaunchBlocked as exc:
+        blocked = exc.task
+    else:
+        raise AssertionError("expected Agent Review spend to consume remaining daily budget")
 
-    assert result.task["status"] == "Running"
-    assert result.session is not None
-    assert db.list_alarms(db_path, session_id=result.session["id"], alarm_type="BUDGET_OVERRUN") == []
+    assert blocked["status"] == "Estimated"
+    budget_check = blocked["metadata"]["budget_check"]
+    assert budget_check["passed"] is False
+    assert budget_check["current_recorded_tokens"] == 1000
+    assert budget_check["current_worker_execution_tokens"] == 0
+    assert budget_check["remaining_tokens"] == 5
+    assert calls == []
+
+
+def test_portal_launch_day_start_uses_local_midnight(monkeypatch):
+    if not hasattr(time, "tzset"):
+        pytest.skip("tzset is required to verify local timezone day starts")
+    monkeypatch.setenv("TZ", "America/Los_Angeles")
+    time.tzset()
+    try:
+        day_start = _portal_launch_day_start_iso("local")
+    finally:
+        monkeypatch.delenv("TZ", raising=False)
+        time.tzset()
+
+    parsed = datetime.fromisoformat(day_start)
+    local = parsed.astimezone(ZoneInfo("America/Los_Angeles"))
+    assert parsed.utcoffset() == UTC.utcoffset(None)
+    assert local.hour == 0
+    assert local.minute == 0
 
 
 def test_estimate_over_budget_blocks_without_runner_and_shows_override(tmp_path):

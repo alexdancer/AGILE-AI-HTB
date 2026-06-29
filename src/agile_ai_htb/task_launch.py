@@ -7,8 +7,10 @@ import secrets
 import subprocess
 import threading
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from agile_ai_htb import db
 from agile_ai_htb.adapter_readiness import evaluate_adapter_readiness
@@ -73,6 +75,7 @@ def launch_task(
     estimate_tokens: int | None = None,
     budget_override: bool = False,
     native_budget_acknowledged: bool = False,
+    budget_since: str | None = None,
     runner: Runner | None = None,
 ) -> TaskLaunchResult:
     with _LAUNCH_START_LOCK:
@@ -86,6 +89,7 @@ def launch_task(
             estimate_tokens=estimate_tokens,
             budget_override=budget_override,
             native_budget_acknowledged=native_budget_acknowledged,
+            budget_since=budget_since,
             runner=runner,
         )
 
@@ -101,6 +105,7 @@ def _launch_task_unlocked(
     estimate_tokens: int | None = None,
     budget_override: bool = False,
     native_budget_acknowledged: bool = False,
+    budget_since: str | None = None,
     runner: Runner | None = None,
 ) -> TaskLaunchResult:
     db.mark_stale_worker_runs_interrupted(database_path)
@@ -193,7 +198,7 @@ def _launch_task_unlocked(
     tracking_mode = (guardrails.adapter.get("verification_evidence") or {}).get("tracking_mode") or PROXY_GOVERNED
     usage_source = NATIVE_USAGE if tracking_mode == NATIVE_USAGE else "harness_proxy"
 
-    budget_check = _evaluate_launch_budget(database_path, task)
+    budget_check = _evaluate_launch_budget(database_path, task, budget_since=budget_since)
     if not budget_check["passed"] and not budget_override:
         blocked = _mark_budget_launch_blocked(database_path, task, budget_check, tracking_mode=tracking_mode)
         raise TaskLaunchBlocked(blocked, [budget_check["reason"]])
@@ -987,15 +992,24 @@ def abort_worker_session(database_path: Path | str, session_id: str, *, reason: 
     return {"session": session, "tasks": affected_tasks}
 
 
-def _evaluate_launch_budget(database_path: Path | str, task: dict[str, Any]) -> dict[str, Any]:
+def _evaluate_launch_budget(database_path: Path | str, task: dict[str, Any], *, budget_since: str | None = None) -> dict[str, Any]:
     budget = dict(db.get_token_budget_settings(database_path))
     budget.update((task.get("metadata") or {}).get("budget") or {})
+    budget_since = budget_since or str(budget.get("budget_since") or _current_day_start_iso("local"))
     daily_cap = _optional_int(budget.get("daily_cap_tokens"))
     session_cap = _optional_int(budget.get("session_cap_tokens"))
     daily_used = _optional_int(budget.get("daily_used_tokens")) or 0
     if daily_cap is None:
-        return {"passed": True, "reason": None, "estimate_tokens": task.get("estimate_tokens"), "remaining_tokens": None}
-    current_used = db.token_usage_breakdown(database_path)["by_category"]["worker_execution"]
+        return {
+            "passed": True,
+            "reason": None,
+            "estimate_tokens": task.get("estimate_tokens"),
+            "remaining_tokens": None,
+            "budget_since": budget_since,
+        }
+    current_breakdown = db.token_usage_breakdown(database_path, since=budget_since)
+    current_used = int(current_breakdown["total_tokens"])
+    current_worker_used = int(current_breakdown["by_category"]["worker_execution"])
     remaining = max(daily_cap - daily_used - current_used, 0)
     estimate = int(task.get("estimate_tokens") or 0)
     passed = estimate <= remaining
@@ -1007,6 +1021,9 @@ def _evaluate_launch_budget(database_path: Path | str, task: dict[str, Any]) -> 
         "session_cap_tokens": session_cap,
         "daily_used_tokens": daily_used,
         "current_recorded_tokens": current_used,
+        "current_worker_execution_tokens": current_worker_used,
+        "current_token_breakdown": current_breakdown["by_category"],
+        "budget_since": budget_since,
         "remaining_tokens": remaining,
     }
 
@@ -1044,7 +1061,7 @@ def _mark_budget_launch_blocked(
 
 def _session_budget_overrides(task: dict[str, Any], budget_check: dict[str, Any], budget_override: bool) -> dict[str, Any]:
     budget = dict((task.get("metadata") or {}).get("budget") or {})
-    for key in ("daily_cap_tokens", "session_cap_tokens", "daily_used_tokens"):
+    for key in ("daily_cap_tokens", "session_cap_tokens", "daily_used_tokens", "budget_since"):
         if budget_check.get(key) is not None:
             budget.setdefault(key, budget_check[key])
     budget["launch_budget_check"] = budget_check
@@ -1060,9 +1077,10 @@ def _record_budget_overrun_if_needed(database_path: Path | str, session_id: str)
     session_cap = _optional_int(budget.get("session_cap_tokens"))
     daily_cap = _optional_int(budget.get("daily_cap_tokens"))
     daily_used = _optional_int(budget.get("daily_used_tokens")) or 0
-    worker_breakdown = db.token_usage_breakdown(database_path)["by_category"]
+    budget_since = str(budget.get("budget_since") or _current_day_start_iso("local"))
+    daily_budgeted_tokens = db.budgeted_token_usage(database_path, since=budget_since)
     session_used = db.session_token_breakdown(database_path, session_id)["by_category"]["worker_execution"]
-    daily_total = daily_used + worker_breakdown["worker_execution"]
+    daily_total = daily_used + daily_budgeted_tokens
     overrun = None
     if session_cap is not None and session_used > session_cap:
         overrun = {"scope": "session", "used_tokens": session_used, "cap_tokens": session_cap}
@@ -1084,6 +1102,17 @@ def _record_budget_overrun_if_needed(database_path: Path | str, session_id: str)
             "recommended_action": "Review budget overrun; session was not automatically killed.",
         },
     )
+
+
+def _current_day_start_iso(timezone: str) -> str:
+    if timezone == "local":
+        now = datetime.now().astimezone()
+    else:
+        try:
+            now = datetime.now(ZoneInfo(timezone))
+        except Exception:
+            now = datetime.now(UTC)
+    return now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC).isoformat()
 
 
 def _optional_int(value: Any) -> int | None:

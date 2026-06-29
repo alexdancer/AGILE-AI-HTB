@@ -348,6 +348,7 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
                 verification_json text not null default '[]',
                 non_goals_json text not null default '[]',
                 recommended_sequence_json text not null default '[]',
+                repo_context_evidence_json text not null default '{}',
                 confidence real,
                 rationale text not null default '',
                 failure_type text,
@@ -364,6 +365,8 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         }
         if "global_contract_summary" not in task_breakdown_columns:
             conn.execute("alter table task_breakdowns add column global_contract_summary text not null default ''")
+        if "repo_context_evidence_json" not in task_breakdown_columns:
+            conn.execute("alter table task_breakdowns add column repo_context_evidence_json text not null default '{}'")
     conn.execute("create index if not exists idx_worker_runs_task_status on worker_runs(task_id, status)")
     conn.execute("create index if not exists idx_worker_runs_session on worker_runs(session_id)")
     conn.execute("create index if not exists idx_task_breakdowns_status on task_breakdowns(status, created_at)")
@@ -617,6 +620,7 @@ def create_task_breakdown(
     verification: list[str] | None = None,
     non_goals: list[str] | None = None,
     recommended_sequence: list[str] | None = None,
+    repo_context_evidence: dict[str, Any] | None = None,
     confidence: float | None = None,
     rationale: str = "",
     failure_type: str | None = None,
@@ -630,9 +634,9 @@ def create_task_breakdown(
             insert into task_breakdowns (
                 id, source_text, source_sha256, intake_metadata_json, status, decision, model, session_id,
                 candidates_json, rejected_items_json, global_contract_summary, global_constraints_json, verification_json,
-                non_goals_json, recommended_sequence_json, confidence, rationale, failure_type,
+                non_goals_json, recommended_sequence_json, repo_context_evidence_json, confidence, rationale, failure_type,
                 failure_message, created_task_ids_json, created_at, updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 breakdown_id,
@@ -650,6 +654,7 @@ def create_task_breakdown(
                 _to_json_list(verification or []),
                 _to_json_list(non_goals or []),
                 _to_json_list(recommended_sequence or []),
+                _to_json(repo_context_evidence or {}),
                 confidence,
                 rationale,
                 failure_type,
@@ -683,13 +688,14 @@ def update_task_breakdown(path: Path | str, breakdown_id: str, updates: dict[str
         "verification": "verification_json",
         "non_goals": "non_goals_json",
         "recommended_sequence": "recommended_sequence_json",
+        "repo_context_evidence": "repo_context_evidence_json",
         "confidence": "confidence",
         "rationale": "rationale",
         "failure_type": "failure_type",
         "failure_message": "failure_message",
         "created_task_ids": "created_task_ids_json",
     }
-    json_fields = {
+    json_list_fields = {
         "candidates",
         "rejected_items",
         "global_constraints",
@@ -698,13 +704,19 @@ def update_task_breakdown(path: Path | str, breakdown_id: str, updates: dict[str
         "recommended_sequence",
         "created_task_ids",
     }
+    json_object_fields = {"repo_context_evidence"}
     assignments: list[str] = []
     values: list[Any] = []
     for key, value in updates.items():
         if key not in allowed:
             continue
         assignments.append(f"{allowed[key]} = ?")
-        values.append(_to_json_list(value) if key in json_fields else value)
+        if key in json_list_fields:
+            values.append(_to_json_list(value))
+        elif key in json_object_fields:
+            values.append(_to_json(value or {}))
+        else:
+            values.append(value)
     if not assignments:
         return get_task_breakdown(path, breakdown_id)
     assignments.append("updated_at = ?")
@@ -757,6 +769,52 @@ def update_task(path: Path | str, task_id: str, updates: dict[str, Any]) -> dict
         if cursor.rowcount == 0:
             raise KeyError(f"task not found: {task_id}")
     return get_task(path, task_id)
+
+
+def task_is_archived(task: dict[str, Any]) -> bool:
+    return bool((task.get("metadata") or {}).get("archived_at"))
+
+
+def archive_task(path: Path | str, task_id: str) -> dict[str, Any]:
+    task = get_task(path, task_id)
+    if task.get("status") != "Done":
+        raise ValueError("Only Done tasks can be archived.")
+    metadata = {**task.get("metadata", {})}
+    if metadata.get("archived_at"):
+        return task
+    metadata["archived_at"] = _now_iso()
+    metadata["archived_by"] = "operator"
+    return update_task(path, task_id, {"metadata": metadata})
+
+
+def unarchive_task(path: Path | str, task_id: str) -> dict[str, Any]:
+    task = get_task(path, task_id)
+    metadata = {**task.get("metadata", {})}
+    metadata.pop("archived_at", None)
+    metadata.pop("archived_by", None)
+    return update_task(path, task_id, {"metadata": metadata})
+
+
+def archive_done_tasks_for_project(path: Path | str, project_id: str) -> list[dict[str, Any]]:
+    now = _now_iso()
+    archived_ids: list[str] = []
+    with connect(path) as conn:
+        rows = conn.execute("select * from tasks where status = 'Done' order by created_at, id").fetchall()
+        for row in rows:
+            task = _task_from_row(row)
+            metadata = {**task.get("metadata", {})}
+            if str(metadata.get("connected_project_id") or "") != str(project_id):
+                continue
+            if metadata.get("archived_at"):
+                continue
+            metadata["archived_at"] = now
+            metadata["archived_by"] = "operator"
+            conn.execute(
+                "update tasks set metadata_json = ? where id = ?",
+                (_to_json(metadata), task["id"]),
+            )
+            archived_ids.append(task["id"])
+    return [get_task(path, task_id) for task_id in archived_ids]
 
 
 def claim_task_agent_review(path: Path | str, task_id: str, claim: dict[str, Any]) -> dict[str, Any] | None:
@@ -1545,6 +1603,11 @@ def total_token_usage(path: Path | str, *, since: str | None = None) -> int:
     return int(row["total"])
 
 
+def budgeted_token_usage(path: Path | str, *, since: str | None = None) -> int:
+    """Total governed model-spend tokens from the token ledger."""
+    return total_token_usage(path, since=since)
+
+
 def estimation_accuracy(path: Path | str) -> dict[str, Any]:
     """Compute estimation accuracy from completed tasks.
 
@@ -1624,7 +1687,7 @@ def _spend_category_for_usage_kind(usage_kind: str) -> str:
 
 
 def _usage_source_for_usage_kind(usage_kind: str, spend_category: str) -> str:
-    if spend_category in {"control_plane", "task_breakdown"}:
+    if spend_category in {"control_plane", "task_breakdown", "agent_review"}:
         return "control_plane"
     if spend_category == "adapter_verification":
         return "harness_proxy"
@@ -1671,6 +1734,10 @@ def _summarize_token_turns(turns: list[dict[str, Any]]) -> dict[str, Any]:
         raw_usage = turn.get("raw_usage") or {}
         category = str(raw_usage.get("spend_category") or _spend_category_for_usage_kind(str(turn.get("usage_kind") or "")))
         source = str(raw_usage.get("usage_source") or _usage_source_for_usage_kind(str(turn.get("usage_kind") or ""), category))
+        if category == "agent_review":
+            category = "reporting_summary"
+            if source == "unspecified":
+                source = "control_plane"
         if category not in by_category:
             category = "other"
         by_category[category] += tokens
@@ -1722,6 +1789,7 @@ def _task_breakdown_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "verification": _from_json_list(row["verification_json"]),
         "non_goals": _from_json_list(row["non_goals_json"]),
         "recommended_sequence": _from_json_list(row["recommended_sequence_json"]),
+        "repo_context_evidence": _from_json(row["repo_context_evidence_json"]),
         "confidence": row["confidence"],
         "rationale": row["rationale"],
         "failure_type": row["failure_type"],

@@ -306,8 +306,12 @@ def test_review_action_agent_review_uses_control_plane_and_stays_in_review(tmp_p
             status="Review",
             estimate_tokens=8000,
             recommended_model="gpt-5.1-codex",
+            actual_tokens=133,
             session_id=session["id"],
-            metadata={"launch_stdout": "DEMO worker stdout 2099 with password=bad"},
+            metadata={
+                **project_task_metadata(db.list_connected_projects(database_path)[0]),
+                "launch_stdout": "DEMO worker stdout 2099 with password=bad",
+            },
         )
 
         response = client.post(
@@ -315,6 +319,7 @@ def test_review_action_agent_review_uses_control_plane_and_stays_in_review(tmp_p
             headers=_auth_headers(),
             json={"action": "agent_review", "review_prompt": "Check DEMO edge case 2099."},
         )
+        board = client.get(f"/projects/{task['metadata']['connected_project_id']}/board", headers=_auth_headers())
 
     assert response.status_code == 200
     body = response.json()
@@ -324,8 +329,10 @@ def test_review_action_agent_review_uses_control_plane_and_stays_in_review(tmp_p
     assert review["status"] == "completed"
     assert review["summary"] == "DEMO review says the task is acceptable."
     assert review["recommendation"] == "approve"
+    assert review["token_totals"]["total_tokens"] == 49
     assert review["findings"][0]["message"] == "DEMO finding only."
     assert review["review_session_id"] != session["id"]
+    assert body["actual_tokens"] == 133
     assert llm.requests
     review_context = llm.requests[0]["messages"][1]["content"]
     assert "Check DEMO edge case 2099." in review_context
@@ -335,6 +342,22 @@ def test_review_action_agent_review_uses_control_plane_and_stays_in_review(tmp_p
     artifact = db.build_session_artifact(database_path, review["review_session_id"])
     assert artifact["token_log"][0]["usage_kind"] == "reporting"
     assert artifact["token_log"][0]["total_tokens"] == 49
+    raw_usage = artifact["token_log"][0]["raw_usage"]
+    assert raw_usage["spend_category"] == "reporting_summary"
+    assert raw_usage["usage_source"] == "control_plane"
+    assert raw_usage["reporting_kind"] == "agent_review"
+    review_breakdown = db.session_token_breakdown(database_path, review["review_session_id"])
+    assert review_breakdown["by_category"]["reporting_summary"] == 49
+    assert review_breakdown["by_category"]["worker_execution"] == 0
+    assert review_breakdown["by_source"]["control_plane"] == 49
+    all_breakdown = db.token_usage_breakdown(database_path)
+    assert all_breakdown["total_tokens"] == 182
+    assert all_breakdown["by_category"]["worker_execution"] == 133
+    assert all_breakdown["by_category"]["reporting_summary"] == 49
+    assert db.session_token_breakdown(database_path, session["id"])["by_category"]["worker_execution"] == body["actual_tokens"]
+    assert "Agent Review completed · approve · 49 tokens" in board.text
+    assert f"review session {review['review_session_id']}" in board.text
+    assert f"/sessions/{review['review_session_id']}" in board.text
 
 def test_review_action_accepts_completed_worker_run_evidence_when_session_is_not_completed(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
@@ -434,6 +457,7 @@ def test_review_action_agent_review_failure_is_stored_and_task_remains_review(tm
     assert body["status"] == "Review"
     review = body["metadata"]["agent_review"]
     assert review["status"] == "failed"
+    assert review["token_totals"]["total_tokens"] == 0
     assert review["error_type"] == "RuntimeError"
     assert "DEMO control-plane outage 2099" in review["error"]
     assert db.get_session(database_path, review["review_session_id"])["status"] == "failed"

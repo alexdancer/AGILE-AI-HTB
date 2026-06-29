@@ -1,68 +1,19 @@
 import os
-from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from agile_ai_htb import db
 from agile_ai_htb.app import create_app
 from agile_ai_htb.operator_config import CONTROL_API_KEY_PLACEHOLDER, load_operator_config
-from agile_ai_htb.project_context import project_task_metadata
 from agile_ai_htb.settings import Settings
-
-ROOT = Path(__file__).resolve().parents[2]
-PORTAL_TOKEN = "test-portal-token"
-
-
-class FakeControlPlaneLLM:
-    def __init__(self, *, exc: Exception | None = None):
-        self.exc = exc
-        self.requests = []
-
-    async def acompletion(self, request):
-        self.requests.append(request)
-        if self.exc:
-            raise self.exc
-        return {
-            "choices": [{"message": {"content": "AGILE_AI_HTB_CONTROL_PLANE_OK"}}],
-            "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10},
-            "api_key": "sk_should_not_render",
-        }
-
-
-def _client(tmp_path):
-    settings = Settings(database_path=tmp_path / "harness.db", guardrails_path=ROOT / "guardrails.yaml")
-    return TestClient(create_app(settings))
-
-
-def _client_with_control_plane_llm(tmp_path, llm, *, control_plane_model="anthropic/claude-sonnet-4-20250514"):
-    settings = Settings(
-        database_path=tmp_path / "harness.db",
-        guardrails_path=ROOT / "guardrails.yaml",
-        control_plane_model=control_plane_model,
-        control_plane_api_key_env="TEST_CONTROL_PLANE_KEY",
-    )
-    app = create_app(settings)
-    app.state.llm_client = llm
-    return TestClient(app)
-
-
-def _portal_headers():
-    return {"Authorization": f"Bearer {PORTAL_TOKEN}"}
-
-
-def _connect_project(database_path: Path, root: Path) -> dict:
-    root.mkdir(exist_ok=True)
-    return db.upsert_connected_project(
-        database_path,
-        name=root.name,
-        root_path=str(root.resolve()),
-        profile={"name": root.name, "root_path": str(root.resolve()), "test_command": "pytest"},
-        capability={"state": "launch_ready", "can_launch": True},
-    )
-
-
-def _project_metadata(database_path: Path, root: Path) -> dict:
-    return project_task_metadata(_connect_project(database_path, root))
+from tests.portal.helpers import (
+    ROOT,
+    PORTAL_TOKEN,
+    FakeControlPlaneLLM,
+    _client,
+    _client_with_control_plane_llm,
+    _portal_headers,
+)
 
 def test_control_plane_save_persists_and_hot_swaps_settings(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)

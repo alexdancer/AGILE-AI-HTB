@@ -26,7 +26,7 @@ async def chat_completions(payload: dict[str, Any], request: Request):
     config = request.app.state.guardrails
     budget = session.get("guardrail_overrides", {}).get("budget", {})
 
-    daily_used_before = int(budget.get("daily_used_tokens", 0)) + _current_day_worker_token_usage(request)
+    daily_used_before = int(budget.get("daily_used_tokens", 0)) + _current_day_budgeted_token_usage(request)
     zone = get_budget_zone(daily_used_before, _daily_cap_tokens(budget, config, database_path), config)
     decision = apply_governance(payload, zone, config)
 
@@ -118,7 +118,7 @@ def _persist_turn(
 def _persist_budget_alarms(request: Request, session: dict[str, Any], budget: dict[str, Any]) -> None:
     database_path = request.app.state.settings.database_path
     config = request.app.state.guardrails
-    daily_used_tokens = int(budget.get("daily_used_tokens", 0)) + _current_day_worker_token_usage(request)
+    daily_used_tokens = int(budget.get("daily_used_tokens", 0)) + _current_day_budgeted_token_usage(request)
     session_used_tokens = db.session_token_breakdown(database_path, session["id"])["by_category"]["worker_execution"]
     daily_cap_tokens = _daily_cap_tokens(budget, config, database_path)
     zone = get_budget_zone(daily_used_tokens, daily_cap_tokens, config)
@@ -151,12 +151,11 @@ def _daily_cap_tokens(budget: dict[str, Any], config, database_path=None) -> int
     return None
 
 
-def _current_day_worker_token_usage(request: Request) -> int:
-    breakdown = db.token_usage_breakdown(
+def _current_day_budgeted_token_usage(request: Request) -> int:
+    return db.budgeted_token_usage(
         request.app.state.settings.database_path,
         since=_current_day_start_iso(request.app.state.settings.timezone),
     )
-    return int(breakdown["by_category"]["worker_execution"])
 
 
 def _current_day_start_iso(timezone: str) -> str:

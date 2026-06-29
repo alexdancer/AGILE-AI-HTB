@@ -13,17 +13,18 @@
   <div class="session-head">
     <div>
       <div class="id">{{ session.id }}</div>
-      <div class="meta compact-text lines-2">{{ task_preview }} · model={{ session.model }} · status={{ session.status }}</div>
+      <div class="meta compact-text lines-2">{{ evidence_summary.session_kind }} · {{ task_preview }} · model={{ session.model }} · status={{ session.status }}</div>
     </div>
     <div class="flex">
       <span class="pill blue">{{ session.status }}</span>
+      <span class="pill {% if evidence_summary.session_kind == 'Agent Review' %}blue{% else %}muted{% endif %}">{{ evidence_summary.session_kind }}</span>
       {% if requires_review %}<span class="pill yellow">Requires review</span>{% endif %}
     </div>
   </div>
   <div class="panel-body">
     <div class="evidence-summary" style="margin-bottom:16px">
       <div class="item"><p class="section-label">Task / project</p><p class="mono muted compact-text lines-3">{{ task_preview }} · {{ evidence_summary.selected_project }}</p></div>
-      <div class="item"><p class="section-label">Worker launch</p><p class="mono muted compact-text lines-2">{{ evidence_summary.adapter_id }} · {{ evidence_summary.worker_model }} · {{ evidence_summary.tracking_mode }}</p><p class="mono muted compact-text lines-2">target: {{ launch_preview }}</p></div>
+      <div class="item"><p class="section-label">{% if evidence_summary.session_kind == 'Agent Review' %}Review source{% else %}Worker launch{% endif %}</p><p class="mono muted compact-text lines-2">{{ evidence_summary.adapter_id }} · {{ evidence_summary.worker_model }} · {{ evidence_summary.tracking_mode }}</p><p class="mono muted compact-text lines-2">target: {{ launch_preview }}</p></div>
       <div class="item"><p class="section-label">Status / result</p><span class="pill {% if evidence_summary.requires_review %}yellow{% else %}green{% endif %}">{% if evidence_summary.requires_review %}review needed{% else %}clear{% endif %}</span><p class="mono muted compact-text lines-2">{{ evidence_summary.status }} · {{ result_text }}</p>{% if result_text %}<details class="task-details"><summary>Full status/result</summary><pre class="mono raw-evidence">{{ evidence_summary.status }} · {{ result_text }}</pre></details>{% endif %}</div>
       <div class="item"><p class="section-label">Usage / guardrails</p><p class="mono muted">{{ "{:,}".format(evidence_summary.token_totals.total_tokens) }} tokens · {{ evidence_summary.alarms }} alarms · {{ evidence_summary.failed_checkpoints }} failed checks</p></div>
       <div class="item"><p class="section-label">Evidence coverage</p><p class="mono muted">{{ evidence_summary.worker_runs }} runs · {{ evidence_summary.worker_events }} timeline events · {{ evidence_summary.error_events }} errors</p>{% if evidence_summary.missing_labels %}<p class="mono muted compact-text lines-2">{{ evidence_summary.missing_labels|join(' · ') }}</p>{% endif %}</div>
@@ -34,6 +35,28 @@
       <p class="section-label mt-12">Full launch target</p>
       <pre class="mono raw-evidence">{{ launch_target }}</pre>
     </details>
+    {% if related_agent_review %}
+    <section class="panel">
+      <div class="panel-header"><h3>Agent Review results</h3><span class="mono muted">review/control-plane usage</span></div>
+      <div class="panel-body">
+        <div class="evidence-summary">
+          <div class="item"><p class="section-label">Status</p><p class="mono muted">{{ related_agent_review.status or 'unknown' }} · {{ related_agent_review.recommendation or 'no recommendation' }}</p></div>
+          <div class="item"><p class="section-label">Review tokens</p><p class="mono muted">{% if related_agent_review.review_total_tokens is not none %}{{ "{:,}".format(related_agent_review.review_total_tokens) }} review/control-plane tokens{% else %}review tokens unavailable{% endif %}</p></div>
+          <div class="item"><p class="section-label">Review model</p><p class="mono muted compact-text lines-2">{{ related_agent_review.model or 'unknown model' }}</p></div>
+          <div class="item"><p class="section-label">Review session</p><p class="mono muted">{% if related_agent_review.review_session_id %}<a href="/sessions/{{ related_agent_review.review_session_id }}">{{ related_agent_review.review_session_id }}</a>{% else %}not recorded{% endif %}</p></div>
+        </div>
+        <p class="mono muted compact-text lines-3 mt-12">{{ related_agent_review.summary or related_agent_review.error or 'No review summary recorded.' }}</p>
+        {% if related_agent_review.reviewed_at %}<p class="mono muted">reviewed: {{ related_agent_review.reviewed_at }}</p>{% endif %}
+        {% if related_agent_review.error %}<pre class="mono raw-evidence">{{ related_agent_review.error }}</pre>{% endif %}
+        {% if related_agent_review.findings %}
+        <details class="task-details">
+          <summary>Review findings</summary>
+          <pre class="mono raw-evidence">{{ related_agent_review.findings|tojson(indent=2) }}</pre>
+        </details>
+        {% endif %}
+      </div>
+    </section>
+    {% endif %}
     <div class="grid cols-2">
       <div>
         <h3 class="section-label">Token totals</h3>

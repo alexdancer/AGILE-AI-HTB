@@ -116,6 +116,13 @@ The board SHALL use Running for active Worker Runs and Review for completed Work
 #### Scenario: Review card displays Agent Review response
 - **WHEN** a Review task has a completed Agent Review result
 - **THEN** the Review task card displays the latest Agent Review summary or response
+- **AND** the response includes a visible completion indicator without requiring the operator to expand raw details
+
+#### Scenario: Agent Review action returns to visible result
+- **WHEN** an operator submits Agent Review from a Review task card
+- **AND** the Agent Review action completes or fails
+- **THEN** the board response after redirect or refresh shows a visible Agent Review status line on that task card
+- **AND** the line includes the review recommendation or failure state, review session id when available, and token total when available
 
 ### Requirement: Board shows tracking mode strength
 The board SHALL show tracking-mode-specific launch copy for the selected Worker Adapter without collapsing all launchable adapters into a generic governed state.

@@ -268,8 +268,8 @@ def test_eval_alarm_budget_red_visible_on_dashboard_and_session_report(tmp_path,
     assert "Agent is in red budget zone" in report.text
 
 
-def test_eval_alarm_budget_ignores_control_plane_spend_for_worker_caps(tmp_path):
-    """Control-plane spend is reported separately and must not trip Worker execution alarms."""
+def test_eval_alarm_budget_counts_control_plane_spend_for_daily_caps_only(tmp_path):
+    """Control-plane spend counts toward daily governed budget but not Worker session caps."""
     client = _client(tmp_path)
     with client:
         started = _start_session(client, daily_used_tokens=0, daily_cap_tokens=10_000, session_cap_tokens=10_000)
@@ -289,4 +289,4 @@ def test_eval_alarm_budget_ignores_control_plane_spend_for_worker_caps(tmp_path)
     totals = {entry["usage_kind"]: entry["total_tokens"] for entry in artifact["token_log"]}
     assert totals["control_plane"] == 25_000
     assert totals["worker"] == 700
-    assert {alarm["type"] for alarm in artifact["alarms"]} == set()
+    assert {alarm["type"] for alarm in artifact["alarms"]} == {"BUDGET_RED", "DAILY_CAP_EXCEEDED"}
