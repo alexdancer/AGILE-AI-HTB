@@ -19,7 +19,7 @@
       {% if backend_status and backend_status.online %}<span class="pill green">online</span>{% endif %}
     {% else %}
       <span class="pill yellow">disabled</span>
-      <p class="muted mono">Run <code>htb init</code>, edit <code>.htb/secrets.env</code>, then start with <code>htb serve</code>.</p>
+      <p class="muted mono">Run <code>htb init</code>, enable Local Runner in <code>.htb/config.toml</code> or with <code>htb serve --enable-local-runner</code>, then add the control-plane key in <code>/settings/control-plane</code> if needed.</p>
     {% endif %}
   </div>
 </section>
@@ -36,7 +36,7 @@
 </section>
 
 <section class="panel">
-  <div class="panel-header"><h3>Project Profile</h3></div>
+  <div class="panel-header"><h3>Active Project Profile</h3></div>
   <div class="panel-body">
     {% for project in projects %}
     <article class="card">
@@ -66,9 +66,36 @@
         <button type="submit" class="primary">Run read-only proof</button>
       </form>
       {% endif %}
+      <form method="post" action="/projects/{{ project.id }}/archive" style="margin-top:10px">
+        <button type="submit">Archive project</button>
+      </form>
     </article>
     {% else %}
-    <p class="muted">No projects yet.</p>
+    <p class="muted">No active projects.</p>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-header"><h3>Archived Projects</h3></div>
+  <div class="panel-body">
+    {% for project in archived_projects %}
+    <article class="card">
+      <div class="flex" style="justify-content:space-between;align-items:flex-start">
+        <h2 class="mono" style="font-size:16px;margin:0 0 10px"><a href="/projects/{{ project.id }}">{{ project.name }}</a></h2>
+        <span class="pill muted">archived</span>
+      </div>
+      <div class="kv">
+        <div class="k">Root</div><div class="v">{{ project.root_path }}</div>
+        <div class="k">Archived</div><div class="v">{{ project.archived_at }}</div>
+        <div class="k">Archived by</div><div class="v">{{ project.archived_by or 'operator' }}</div>
+      </div>
+      <form method="post" action="/projects/{{ project.id }}/restore" style="margin-top:14px">
+        <button type="submit" class="primary">Restore project</button>
+      </form>
+    </article>
+    {% else %}
+    <p class="muted">No archived projects.</p>
     {% endfor %}
   </div>
 </section>

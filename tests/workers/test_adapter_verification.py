@@ -6,8 +6,9 @@ from fastapi.testclient import TestClient
 
 from agile_ai_htb import db
 from agile_ai_htb.app import create_app
+from agile_ai_htb.native_usage import parse_native_usage_evidence
 from agile_ai_htb.settings import Settings
-from agile_ai_htb.worker_adapters import SENTINEL_RESPONSE, _parse_native_usage_evidence, verify_worker_adapter
+from agile_ai_htb.worker_adapters import SENTINEL_RESPONSE, verify_worker_adapter
 
 ROOT = Path(__file__).resolve().parents[2]
 PORTAL_TOKEN = "test-portal-token"
@@ -186,21 +187,21 @@ def test_verify_worker_adapter_fails_for_wrong_sentinel_without_real_cli(tmp_pat
         db_path,
         "claude_code",
         workdir=str(tmp_path),
-        config={"verification_template": ["claude", "-p", "{prompt}"]},
-        supported_models=["claude-3-5-sonnet-latest"],
+        config={"verification_template": ["claude", "-p", "{prompt}"], "allowed_models_configured": True},
+        supported_models=["claude-opus-4-8"],
     )
 
     result = verify_worker_adapter(
         db_path,
         "claude_code",
-        model="claude-3-5-sonnet-latest",
+        model="claude-opus-4-8",
         proxy_url="http://127.0.0.1:8000/v1",
         runner=FakeRunner(stdout="not ok"),
         token_recorder=lambda session_id: db.record_token_turn(
             db_path,
             session_id=session_id,
             usage_kind="adapter_verification",
-            model="claude-3-5-sonnet-latest",
+            model="claude-opus-4-8",
             prompt_tokens=5,
             completion_tokens=1,
             cost=0,
@@ -358,7 +359,7 @@ def test_parse_claude_code_native_usage_counts_cache_tokens_and_cost():
         }
     )
 
-    evidence = _parse_native_usage_evidence(stdout, model="sonnet", returncode=0)
+    evidence = parse_native_usage_evidence(stdout, model="sonnet", returncode=0)
 
     assert evidence is not None
     assert evidence.prompt_tokens == 21574
@@ -378,7 +379,7 @@ def test_parse_claude_code_native_usage_requires_cost_evidence():
         }
     )
 
-    evidence = _parse_native_usage_evidence(stdout, model="sonnet", returncode=0)
+    evidence = parse_native_usage_evidence(stdout, model="sonnet", returncode=0)
 
     assert evidence is None
 
@@ -393,7 +394,7 @@ def test_parse_claude_code_native_usage_rejects_unrelated_model_usage_cost():
         }
     )
 
-    evidence = _parse_native_usage_evidence(stdout, model="sonnet", returncode=0)
+    evidence = parse_native_usage_evidence(stdout, model="sonnet", returncode=0)
 
     assert evidence is None
 
@@ -410,7 +411,7 @@ def test_parse_native_usage_rejects_unrelated_model_usage_with_top_level_cost():
         }
     )
 
-    evidence = _parse_native_usage_evidence(stdout, model="sonnet", returncode=0)
+    evidence = parse_native_usage_evidence(stdout, model="sonnet", returncode=0)
 
     assert evidence is None
 
@@ -424,7 +425,7 @@ def test_parse_native_usage_rejects_missing_model_evidence():
         }
     )
 
-    evidence = _parse_native_usage_evidence(stdout, model="sonnet", returncode=0)
+    evidence = parse_native_usage_evidence(stdout, model="sonnet", returncode=0)
 
     assert evidence is None
 

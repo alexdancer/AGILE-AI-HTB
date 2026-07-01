@@ -32,12 +32,21 @@ def _client(tmp_path):
     return TestClient(create_app(settings))
 
 
-def _client_with_control_plane_llm(tmp_path, llm, *, control_plane_model="anthropic/claude-sonnet-4-20250514"):
+def _client_with_control_plane_llm(
+    tmp_path,
+    llm,
+    *,
+    control_plane_provider="anthropic",
+    control_plane_model="claude-sonnet-4-6",
+    control_plane_base_url="",
+):
     settings = Settings(
         database_path=tmp_path / "harness.db",
         guardrails_path=ROOT / "guardrails.yaml",
+        control_plane_provider=control_plane_provider,
         control_plane_model=control_plane_model,
         control_plane_api_key_env="TEST_CONTROL_PLANE_KEY",
+        control_plane_base_url=control_plane_base_url,
     )
     app = create_app(settings)
     app.state.llm_client = llm

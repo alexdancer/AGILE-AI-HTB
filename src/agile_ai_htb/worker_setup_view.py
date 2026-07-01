@@ -27,6 +27,7 @@ def worker_adapter_view_models(database_path: Path | str) -> list[dict[str, Any]
                 "launchable": readiness.ui_launchable,
                 "discovered_models": discovered_worker_model_ids(adapter),
                 "model_discovery": config.get("model_discovery"),
+                "model_discovery_label": worker_model_discovery_label(config.get("model_discovery")),
                 "tracking_modes": available_tracking_modes,
                 "tracking_mode_options": [tracking_mode_view(mode) for mode in available_tracking_modes],
                 "connection_type": worker_connection_type(adapter),
@@ -43,7 +44,7 @@ def worker_setup_next_action(active_adapter: dict[str, Any] | None, has_projects
     if not active_adapter.get("configured"):
         return {"label": "Choose active adapter", "href": f"/settings/workers?adapter_id={active_adapter['id']}", "detail": "Mark an adapter as the active default before launch."}
     if not active_adapter.get("discovered_models"):
-        return {"label": "Discover models", "href": f"/settings/workers?adapter_id={active_adapter['id']}", "detail": "Run native discovery so launch controls show approved Worker models."}
+        return {"label": "Discover models", "href": f"/settings/workers?adapter_id={active_adapter['id']}", "detail": "Run model discovery so launch controls show approved Worker models."}
     if not active_adapter.get("supported_models"):
         return {"label": "Approve Worker models", "href": f"/settings/workers?adapter_id={active_adapter['id']}", "detail": "Select at least one discovered model for governed launch."}
     if not active_adapter.get("launchable"):
@@ -51,6 +52,14 @@ def worker_setup_next_action(active_adapter: dict[str, Any] | None, has_projects
     if not has_projects:
         return {"label": "Open local repo", "href": "/projects", "detail": "Connect a project workspace for project-scoped launch."}
     return {"label": "Open task board", "href": "/board", "detail": "Adapter and model selection are launch-ready."}
+
+
+def worker_model_discovery_label(discovery: dict[str, Any] | None) -> str:
+    if not discovery:
+        return "not run"
+    if discovery.get("tracking_mode") == "curated":
+        return "Curated model inventory"
+    return "Native model discovery"
 
 
 def active_adapter_for_request(adapters: list[dict[str, Any]], requested_id: str | None) -> dict[str, Any] | None:

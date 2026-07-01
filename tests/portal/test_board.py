@@ -487,6 +487,68 @@ def test_archive_done_task_hides_from_board_and_preserves_history_evidence(tmp_p
     assert "Unarchive" in history.text
 
 
+def test_archive_blocked_task_hides_from_board_and_preserves_history_evidence(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "connected-project")
+        session = db.create_session(
+            database_path,
+            task_description="Archived blocked task",
+            model="gpt-5.1-codex",
+            session_key_hash="c" * 64,
+            guardrail_overrides={},
+            status="completed",
+        )
+        task = db.create_task(
+            database_path,
+            description="Archived blocked task",
+            status="Blocked",
+            estimate_tokens=7000,
+            recommended_model="gpt-5.1-codex",
+            actual_tokens=2100,
+            session_id=session["id"],
+            metadata={
+                **project_task_metadata(project),
+                "blocked_reason": "Needs product decision",
+                "requires_manual_estimate": True,
+                "active_worker_run_id": "wr_DEMO_999_BLOCKED",
+            },
+        )
+
+        archive_response = client.post(
+            f"/projects/{project['id']}/tasks/{task['id']}/archive",
+            headers=_portal_headers(),
+            follow_redirects=False,
+        )
+        board = client.get(f"/projects/{project['id']}/board", headers=_portal_headers())
+        history = client.get(f"/projects/{project['id']}/task-history?filter=archived", headers=_portal_headers())
+
+    archived = db.get_task(database_path, task["id"])
+    assert archive_response.status_code == 303
+    assert archive_response.headers["location"] == f"/projects/{project['id']}/board"
+    assert archived["status"] == "Blocked"
+    assert archived["actual_tokens"] == 2100
+    assert archived["session_id"] == session["id"]
+    assert archived["metadata"]["blocked_reason"] == "Needs product decision"
+    assert archived["metadata"]["requires_manual_estimate"] is True
+    assert archived["metadata"]["active_worker_run_id"] == "wr_DEMO_999_BLOCKED"
+    assert archived["metadata"]["archived_at"]
+    assert board.status_code == 200
+    assert "Archived blocked task" not in board.text
+    assert "History 1 · Archived 1" in board.text
+    assert history.status_code == 200
+    assert "Archived blocked task" in history.text
+    assert "Blocked" in history.text
+    assert "Archived" in history.text
+    assert "Actual: 2,100" in history.text
+    assert f"/sessions/{session['id']}" in history.text
+    assert "Worker Run: wr_DEMO_999_BLOCKED" in history.text
+    assert "Blocked: Needs product decision" in history.text
+    assert "Manual estimate required" in history.text
+    assert "Unarchive" in history.text
+
+
 def test_archive_all_done_is_project_scoped_and_keeps_estimation_accuracy(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
@@ -576,27 +638,72 @@ def test_unarchive_restores_done_task_to_project_board(tmp_path, monkeypatch):
     assert "Return archived task" in board.text
 
 
-def test_archive_rejects_non_done_task(tmp_path, monkeypatch):
+def test_unarchive_restores_blocked_task_to_project_board(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
     with _client(tmp_path) as client:
         project = _connect_project(database_path, tmp_path / "connected-project")
         task = db.create_task(
             database_path,
-            description="Estimated task cannot archive",
-            status="Estimated",
+            description="Return blocked task",
+            status="Blocked",
+            estimate_tokens=9000,
+            metadata={
+                **project_task_metadata(project),
+                "blocked_reason": "Needs operator",
+                "archived_at": "2099-01-01T00:00:00+00:00",
+            },
+        )
+
+        response = client.post(
+            f"/projects/{project['id']}/tasks/{task['id']}/unarchive",
+            headers=_portal_headers(),
+            follow_redirects=False,
+        )
+        board = client.get(f"/projects/{project['id']}/board", headers=_portal_headers())
+
+    updated = db.get_task(database_path, task["id"])
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/projects/{project['id']}/task-history"
+    assert updated["status"] == "Blocked"
+    assert updated["metadata"]["blocked_reason"] == "Needs operator"
+    assert "archived_at" not in updated["metadata"]
+    assert board.status_code == 200
+    card = _task_card(board.text, task["id"])
+    assert "Return blocked task" in card
+    assert "Archive" in card
+
+
+def test_archive_rejects_active_non_archivable_tasks(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    db.init_db(database_path)
+    project = _connect_project(database_path, tmp_path / "connected-project")
+    task_ids = []
+    for blocked_status in ["Estimated", "Running", "Review"]:
+        task = db.create_task(
+            database_path,
+            description=f"{blocked_status} task cannot archive",
+            status=blocked_status,
             estimate_tokens=9000,
             recommended_model="gpt-5.1-codex",
             metadata=project_task_metadata(project),
         )
+        task_ids.append(task["id"])
 
-        response = client.post(
-            f"/projects/{project['id']}/tasks/{task['id']}/archive",
-            headers=_portal_headers(),
-            follow_redirects=False,
-        )
+    with _client(tmp_path) as client:
+        responses = [
+            client.post(
+                f"/projects/{project['id']}/tasks/{task_id}/archive",
+                headers=_portal_headers(),
+                follow_redirects=False,
+            )
+            for task_id in task_ids
+        ]
 
-    assert response.status_code == 303
-    assert response.headers["location"].startswith(f"/projects/{project['id']}/board?error=")
-    assert not db.get_task(database_path, task["id"])["metadata"].get("archived_at")
+    for response, task_id in zip(responses, task_ids):
+        assert response.status_code == 303
+        assert response.headers["location"].startswith(f"/projects/{project['id']}/board?error=")
+        assert "Only%20Done%20or%20Blocked%20tasks%20can%20be%20archived" in response.headers["location"]
+        assert not db.get_task(database_path, task_id)["metadata"].get("archived_at")
 

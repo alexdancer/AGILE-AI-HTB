@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import secrets
@@ -15,12 +16,12 @@ from zoneinfo import ZoneInfo
 from agile_ai_htb import db
 from agile_ai_htb.adapter_readiness import evaluate_adapter_readiness
 from agile_ai_htb.launch_guardrails import evaluate_launch_guardrails
+from agile_ai_htb.native_usage import NativeUsageEvidence, parse_native_usage_evidence
 from agile_ai_htb.project_context import project_task_metadata, resolve_task_project
 from agile_ai_htb.repo_context import build_repo_context_brief, repo_context_prompt
 from agile_ai_htb.tracking_modes import NATIVE_USAGE, PROXY_GOVERNED
 from agile_ai_htb.worker_adapters import (
     Runner,
-    _parse_native_usage_evidence,
     get_adapter_builder,
     redact_command_plan,
     subprocess_runner,
@@ -62,6 +63,27 @@ class TaskLaunchResult:
             "launch_guardrails": self.launch_guardrails,
             "worker_run": self.worker_run,
         }
+
+
+@dataclass(frozen=True)
+class WorkerProcessResult:
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+@dataclass(frozen=True)
+class WorkerRunOutcome:
+    kind: str
+    error_type: str | None = None
+    reason: str | None = None
+    native_evidence: NativeUsageEvidence | None = None
+    workdir_evidence: dict[str, Any] | None = None
+    readonly_diff_evidence: dict[str, Any] | None = None
+    marker_stdout: str = ""
+    marker_stderr: str = ""
+    evidence: dict[str, Any] | None = None
+    guardrail_reasons: tuple[str, ...] = ()
 
 
 def launch_task(
@@ -530,6 +552,38 @@ def _execute_worker_run(
         title="Worker adapter started",
         detail={"adapter_id": selected_adapter_id, "model": selected_model, "tracking_mode": tracking_mode},
     )
+    result = _run_worker_adapter(plan, runner)
+    outcome = _classify_worker_run_result(
+        database_path=database_path,
+        session=session,
+        plan=plan,
+        selected_model=selected_model,
+        tracking_mode=tracking_mode,
+        project_root=project_root,
+        before_tree=before_tree,
+        read_only=read_only,
+        write_capable=write_capable,
+        result=result,
+    )
+    _apply_worker_run_outcome(
+        database_path=database_path,
+        worker_run_id=worker_run_id,
+        worker_run=worker_run,
+        task=task,
+        claimed=claimed,
+        session=session,
+        selected_model=selected_model,
+        tracking_mode=tracking_mode,
+        usage_source=usage_source,
+        project_root=project_root,
+        read_only=read_only,
+        write_capable=write_capable,
+        result=result,
+        outcome=outcome,
+    )
+
+
+def _run_worker_adapter(plan: Any, runner: Runner | None) -> WorkerProcessResult:
     try:
         completed = (runner or subprocess_runner)(plan)
     except Exception as exc:
@@ -539,75 +593,150 @@ def _execute_worker_run(
             stdout="",
             stderr=f"Failed to launch adapter runner: {type(exc).__name__}",
         )
-    returncode = int(_result_field(completed, "returncode", 0) or 0)
-    stdout = str(_result_field(completed, "stdout", ""))
-    stderr = str(_result_field(completed, "stderr", ""))
-    if returncode != 0:
-        db.update_session_status(database_path, session["id"], "failed")
-        failed = _mark_recoverable_launch_failure(
-            database_path,
-            task=task,
-            claimed=claimed,
-            session_id=session["id"],
-            reason="Worker adapter launch failed.",
-            failure_type="worker_adapter_failure",
-            returncode=returncode,
-            stderr=stderr,
-            project_root=project_root,
-            write_capable=write_capable,
-        )
-        db.mark_worker_run_failed(
-            database_path,
-            worker_run_id,
-            error_type="worker_adapter_failure",
-            error_message="Worker adapter launch failed.",
-            returncode=returncode,
-            stdout=stdout,
-            stderr=stderr,
-            metadata={"task_status": failed["status"]},
-        )
-        return
+    return WorkerProcessResult(
+        returncode=int(_result_field(completed, "returncode", 0) or 0),
+        stdout=str(_result_field(completed, "stdout", "")),
+        stderr=str(_result_field(completed, "stderr", "")),
+    )
 
+
+def _classify_worker_run_result(
+    *,
+    database_path: Path | str,
+    session: dict[str, Any],
+    plan: Any,
+    selected_model: str,
+    tracking_mode: str,
+    project_root: str | None,
+    before_tree: str | None,
+    read_only: bool,
+    write_capable: bool,
+    result: WorkerProcessResult,
+) -> WorkerRunOutcome:
+    native_evidence = None
     if tracking_mode == NATIVE_USAGE:
-        native_evidence = _parse_native_usage_evidence(stdout, model=selected_model, returncode=returncode)
+        native_evidence = parse_native_usage_evidence(
+            result.stdout,
+            model=selected_model,
+            returncode=result.returncode,
+            allow_failed_returncode=result.returncode != 0,
+        )
+    if result.returncode != 0:
+        return WorkerRunOutcome(
+            kind="recoverable_failure",
+            error_type="worker_adapter_failure",
+            reason="Worker adapter launch failed.",
+            native_evidence=native_evidence,
+            marker_stdout=result.stdout,
+            marker_stderr=result.stderr,
+        )
+
+    permission_denials = _permission_denial_tools(result.stdout)
+    if tracking_mode == NATIVE_USAGE:
         if native_evidence is None:
+            if permission_denials:
+                reason = f"Worker was denied required tool permissions: {', '.join(permission_denials)}."
+                return WorkerRunOutcome(
+                    kind="recoverable_failure",
+                    error_type="worker_permission_denied",
+                    reason=reason,
+                    marker_stdout=result.stdout,
+                    guardrail_reasons=(reason,),
+                    evidence={"permission_denials": permission_denials},
+                )
             reason = "No budget-authoritative native Worker usage evidence was emitted by the adapter."
-            db.update_session_status(database_path, session["id"], "failed")
-            failed = _mark_recoverable_launch_failure(
-                database_path,
-                task=task,
-                claimed=claimed,
-                session_id=session["id"],
-                reason=reason,
-                failure_type="missing_native_usage_evidence",
-                returncode=returncode,
-                stdout=stdout,
-                project_root=project_root,
-                write_capable=write_capable,
-                guardrail_reasons=[reason],
-            )
-            db.mark_worker_run_failed(
-                database_path,
-                worker_run_id,
+            return WorkerRunOutcome(
+                kind="recoverable_failure",
                 error_type="missing_native_usage_evidence",
-                error_message=reason,
-                returncode=returncode,
-                stdout=stdout,
-                stderr=stderr,
-                metadata={"task_status": failed["status"]},
+                reason=reason,
+                marker_stdout=result.stdout,
+                guardrail_reasons=(reason,),
             )
-            return
+
+    if tracking_mode == PROXY_GOVERNED and not _session_has_worker_token_usage(database_path, session["id"]):
+        reason = "No Worker model call was observed through the Harness Proxy."
+        return WorkerRunOutcome(
+            kind="recoverable_failure",
+            error_type="missing_proxy_worker_usage",
+            reason=reason,
+            native_evidence=native_evidence,
+            marker_stdout=result.stdout,
+            guardrail_reasons=(reason,),
+        )
+
+    if permission_denials:
+        reason = f"Worker was denied required tool permissions: {', '.join(permission_denials)}."
+        return WorkerRunOutcome(
+            kind="recoverable_failure",
+            error_type="worker_permission_denied",
+            reason=reason,
+            native_evidence=native_evidence,
+            marker_stdout=result.stdout,
+            guardrail_reasons=(reason,),
+            evidence={"permission_denials": permission_denials},
+        )
+
+    workdir_evidence = _workdir_run_evidence(plan, stdout=result.stdout, stderr=result.stderr)
+    workdir_mismatch = _workdir_mismatch_failure(workdir_evidence)
+    if workdir_mismatch is not None:
+        return WorkerRunOutcome(
+            kind="recoverable_failure",
+            error_type="workdir_mismatch",
+            reason=workdir_mismatch,
+            native_evidence=native_evidence,
+            workdir_evidence=workdir_evidence,
+            marker_stdout=result.stdout,
+            marker_stderr=result.stderr,
+            guardrail_reasons=(workdir_mismatch,),
+            evidence={"workdir_evidence": workdir_evidence},
+        )
+
+    if write_capable:
+        return WorkerRunOutcome(kind="write_capable", native_evidence=native_evidence, workdir_evidence=workdir_evidence)
+
+    after_tree = _git_porcelain(project_root) if project_root else before_tree
+    if read_only and before_tree != after_tree:
+        return WorkerRunOutcome(
+            kind="read_only_mutation",
+            error_type="read_only_mutation",
+            reason="Read-only Worker session modified the connected project.",
+            native_evidence=native_evidence,
+            workdir_evidence=workdir_evidence,
+            readonly_diff_evidence={"before": before_tree, "after": after_tree},
+        )
+
+    return WorkerRunOutcome(kind="completed", native_evidence=native_evidence, workdir_evidence=workdir_evidence)
+
+
+def _apply_worker_run_outcome(
+    *,
+    database_path: Path | str,
+    worker_run_id: str,
+    worker_run: dict[str, Any],
+    task: dict[str, Any],
+    claimed: dict[str, Any],
+    session: dict[str, Any],
+    selected_model: str,
+    tracking_mode: str,
+    usage_source: str,
+    project_root: str | None,
+    read_only: bool,
+    write_capable: bool,
+    result: WorkerProcessResult,
+    outcome: WorkerRunOutcome,
+) -> None:
+    if outcome.native_evidence is not None:
         db.record_token_turn(
             database_path,
             session_id=session["id"],
             usage_kind="task_execution",
             model=selected_model,
-            prompt_tokens=native_evidence.prompt_tokens,
-            completion_tokens=native_evidence.completion_tokens,
-            cost=native_evidence.cost,
+            prompt_tokens=outcome.native_evidence.prompt_tokens,
+            completion_tokens=outcome.native_evidence.completion_tokens,
+            cost=outcome.native_evidence.cost,
             raw_usage={
-                **native_evidence.raw_usage,
-                "total_tokens": native_evidence.total_tokens,
+                **outcome.native_evidence.raw_usage,
+                "total_tokens": outcome.native_evidence.total_tokens,
                 "usage_source": usage_source,
                 "tracking_mode": tracking_mode,
             },
@@ -617,38 +746,10 @@ def _execute_worker_run(
             worker_run,
             kind="token",
             title="Native usage evidence recorded",
-            detail={"total_tokens": native_evidence.total_tokens, "usage_source": usage_source},
+            detail={"total_tokens": outcome.native_evidence.total_tokens, "usage_source": usage_source},
         )
 
-    if tracking_mode == "proxy_governed" and not _session_has_worker_token_usage(database_path, session["id"]):
-        reason = "No Worker model call was observed through the Harness Proxy."
-        db.update_session_status(database_path, session["id"], "failed")
-        failed = _mark_recoverable_launch_failure(
-            database_path,
-            task=task,
-            claimed=claimed,
-            session_id=session["id"],
-            reason=reason,
-            failure_type="missing_proxy_worker_usage",
-            returncode=returncode,
-            stdout=stdout,
-            project_root=project_root,
-            write_capable=write_capable,
-            guardrail_reasons=[reason],
-        )
-        db.mark_worker_run_failed(
-            database_path,
-            worker_run_id,
-            error_type="missing_proxy_worker_usage",
-            error_message=reason,
-            returncode=returncode,
-            stdout=stdout,
-            stderr=stderr,
-            metadata={"task_status": failed["status"]},
-        )
-        return
-
-    if tracking_mode == "proxy_governed":
+    if tracking_mode == PROXY_GOVERNED and outcome.workdir_evidence is not None:
         _record_worker_event(
             database_path,
             worker_run,
@@ -657,45 +758,48 @@ def _execute_worker_run(
             detail={"total_tokens": db.session_token_usage(database_path, session["id"]), "usage_source": usage_source},
         )
 
-    workdir_evidence = _workdir_run_evidence(plan, stdout=stdout, stderr=stderr)
-    _record_worker_event(
-        database_path,
-        worker_run,
-        kind="file",
-        title="Workdir evidence captured",
-        detail={"workdir_evidence": workdir_evidence},
-    )
-    workdir_mismatch = _workdir_mismatch_failure(workdir_evidence)
-    if workdir_mismatch is not None:
+    if outcome.workdir_evidence is not None:
+        _record_worker_event(
+            database_path,
+            worker_run,
+            kind="file",
+            title="Workdir evidence captured",
+            detail={"workdir_evidence": outcome.workdir_evidence},
+        )
+
+    if outcome.kind == "recoverable_failure":
         db.update_session_status(database_path, session["id"], "failed")
         failed = _mark_recoverable_launch_failure(
             database_path,
             task=task,
             claimed=claimed,
             session_id=session["id"],
-            reason=workdir_mismatch,
-            failure_type="workdir_mismatch",
-            returncode=returncode,
-            stdout=stdout,
-            stderr=stderr,
+            reason=str(outcome.reason),
+            failure_type=str(outcome.error_type),
+            returncode=result.returncode,
+            stdout=outcome.marker_stdout,
+            stderr=outcome.marker_stderr,
             project_root=project_root,
             write_capable=write_capable,
-            guardrail_reasons=[workdir_mismatch],
-            evidence={"workdir_evidence": workdir_evidence},
+            guardrail_reasons=list(outcome.guardrail_reasons),
+            evidence=outcome.evidence,
         )
+        metadata = {"task_status": failed["status"]}
+        if outcome.workdir_evidence is not None:
+            metadata["workdir_evidence"] = outcome.workdir_evidence
         db.mark_worker_run_failed(
             database_path,
             worker_run_id,
-            error_type="workdir_mismatch",
-            error_message=workdir_mismatch,
-            returncode=returncode,
-            stdout=stdout,
-            stderr=stderr,
-            metadata={"task_status": failed["status"], "workdir_evidence": workdir_evidence},
+            error_type=str(outcome.error_type),
+            error_message=str(outcome.reason),
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            metadata=metadata,
         )
         return
 
-    if write_capable:
+    if outcome.kind == "write_capable":
         try:
             write_result = _finalize_write_capable_launch(
                 database_path=database_path,
@@ -704,8 +808,8 @@ def _execute_worker_run(
                 claimed=claimed,
                 session=session,
                 project_root=project_root,
-                returncode=returncode,
-                stdout=stdout,
+                returncode=result.returncode,
+                stdout=result.stdout,
             )
         except TaskLaunchBlocked as exc:
             db.mark_worker_run_failed(
@@ -713,24 +817,23 @@ def _execute_worker_run(
                 worker_run_id,
                 error_type="hard_safety_failure",
                 error_message="; ".join(exc.reasons),
-                returncode=returncode,
-                stdout=stdout,
-                stderr=stderr,
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
                 metadata={"task_status": exc.task["status"]},
             )
             return
         db.mark_worker_run_completed(
             database_path,
             worker_run_id,
-            returncode=returncode,
-            stdout=stdout,
-            stderr=stderr,
-            metadata={"task_status": write_result["status"], "workdir_evidence": workdir_evidence},
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            metadata={"task_status": write_result["status"], "workdir_evidence": outcome.workdir_evidence},
         )
         return
 
-    after_tree = _git_porcelain(project_root) if project_root else before_tree
-    if read_only and before_tree != after_tree:
+    if outcome.kind == "read_only_mutation":
         db.update_session_status(database_path, session["id"], "failed")
         failed = db.update_task(
             database_path,
@@ -742,9 +845,9 @@ def _execute_worker_run(
                     **claimed.get("metadata", {}),
                     "launch_blocked_reason": "Read-only Worker session modified the connected project.",
                     "launch_guardrail_reasons": ["Read-only Worker session modified the connected project."],
-                    "readonly_diff_evidence": {"before": before_tree, "after": after_tree},
-                    "launch_returncode": returncode,
-                    "launch_stdout": _safe_text(stdout),
+                    "readonly_diff_evidence": outcome.readonly_diff_evidence,
+                    "launch_returncode": result.returncode,
+                    "launch_stdout": _safe_text(result.stdout),
                 },
             },
         )
@@ -753,9 +856,9 @@ def _execute_worker_run(
             worker_run_id,
             error_type="read_only_mutation",
             error_message="Read-only Worker session modified the connected project.",
-            returncode=returncode,
-            stdout=stdout,
-            stderr=stderr,
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
             metadata={"task_status": failed["status"]},
         )
         return
@@ -772,12 +875,12 @@ def _execute_worker_run(
             "actual_tokens": actual_tokens,
             "metadata": {
                 **claimed.get("metadata", {}),
-                "launch_returncode": returncode,
-                "launch_stdout": _safe_text(stdout),
-                "launch_stderr": _safe_text(stderr),
+                "launch_returncode": result.returncode,
+                "launch_stdout": _safe_text(result.stdout),
+                "launch_stderr": _safe_text(result.stderr),
                 "worker_run_status": "completed",
                 "active_worker_run_id": worker_run_id,
-                "workdir_evidence": workdir_evidence,
+                "workdir_evidence": outcome.workdir_evidence,
                 **({"diff_summary": _git_diff_summary(project_root)} if project_root else {}),
                 **(_read_only_report_metadata(task) if read_only else {}),
             },
@@ -786,10 +889,10 @@ def _execute_worker_run(
     db.mark_worker_run_completed(
         database_path,
         worker_run_id,
-        returncode=returncode,
-        stdout=stdout,
-        stderr=stderr,
-        metadata={"task_status": launched["status"], "workdir_evidence": workdir_evidence},
+        returncode=result.returncode,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        metadata={"task_status": launched["status"], "workdir_evidence": outcome.workdir_evidence},
     )
 
 
@@ -1312,6 +1415,27 @@ def _session_has_worker_token_usage(database_path: Path | str, session_id: str) 
 def _worker_execution_token_total(database_path: Path | str, session_id: str) -> int:
     breakdown = db.session_token_breakdown(database_path, session_id)
     return int((breakdown.get("by_category") or {}).get("worker_execution") or 0)
+
+
+def _permission_denial_tools(stdout: str) -> list[str]:
+    tools: list[str] = []
+    seen: set[str] = set()
+    for line in stdout.splitlines():
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        denials = payload.get("permission_denials") if isinstance(payload, dict) else None
+        if not isinstance(denials, list):
+            continue
+        for denial in denials:
+            if not isinstance(denial, dict):
+                continue
+            tool = _safe_text(str(denial.get("tool_name") or ""), limit=100)
+            if tool and tool not in seen:
+                seen.add(tool)
+                tools.append(tool)
+    return tools[:20]
 
 
 def _workdir_run_evidence(plan: Any, *, stdout: str, stderr: str) -> dict[str, Any]:

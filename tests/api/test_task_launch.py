@@ -482,7 +482,7 @@ def test_project_board_live_refresh_controls_and_status_endpoint(tmp_path, monke
     assert task["status"] == "Running"
     assert board.status_code == 200
     assert "Run automation" in board.text
-    assert "Policy: project-scoped · one-at-a-time" in board.text
+    assert "Eligible Estimated:" in board.text
     assert "Auto Agent Review" in board.text
     assert "Live refresh active" in board.text
     assert f"/projects/{project['id']}/board/status" in board.text
@@ -810,7 +810,7 @@ def test_project_run_queue_no_eligible_and_operator_stop_reasons(tmp_path, monke
     assert stop.status_code == 303
     assert stopped["queue"]["latest_stop_reason"] == "operator_stop"
     assert "operator_stop" in board.text
-    assert "Latest: Run automation stopped" in board.text
+    assert "Queue: stopped" in board.text
 
 
 def test_launch_accepts_manual_estimate_payload_before_guardrails(tmp_path, monkeypatch):

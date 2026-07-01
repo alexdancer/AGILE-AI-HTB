@@ -4,9 +4,23 @@
 <h1 class="page-title">{{ project.name }}</h1>
 <p class="page-sub">workspace · task board · sessions · Worker setup</p>
 
+{% if error %}
+<section class="notice warning">{{ error }}</section>
+{% endif %}
+
+{% if project.archived_at %}
+<section class="notice warning">
+  <strong>Archived project</strong>
+  <p class="muted mono" style="margin:6px 0 0">Archived {{ project.archived_at }}. History and evidence stay available, but active board launch controls are hidden until restore.</p>
+  <form method="post" action="/projects/{{ project.id }}/restore" style="margin-top:10px">
+    <button type="submit" class="primary">Restore project</button>
+  </form>
+</section>
+{% endif %}
+
 <section class="status-toolbar">
   <div class="status-group">
-    <span class="pill {% if summary.launch_ready %}green{% else %}yellow{% endif %}">{% if summary.launch_ready %}launch ready{% else %}setup needed{% endif %}</span>
+    <span class="pill {% if project.archived_at %}muted{% elif summary.launch_ready %}green{% else %}yellow{% endif %}">{% if project.archived_at %}archived{% elif summary.launch_ready %}launch ready{% else %}setup needed{% endif %}</span>
     <span class="status-item">{{ summary.total_tasks }} tasks</span>
     <span class="status-item">{{ summary.counts.Estimated }} estimated</span>
     <span class="status-item">{{ summary.counts.Review }} review</span>
@@ -25,11 +39,13 @@
 </section>
 
 <section class="grid cols-4" style="margin-bottom:20px">
+  {% if not project.archived_at %}
   <a class="kpi surface-link" href="/projects/{{ project.id }}/board">
     <div class="label">Task board</div>
     <div class="value mono">Open</div>
     <div class="sub">estimate, launch, review</div>
   </a>
+  {% endif %}
   <a class="kpi surface-link" href="/sessions">
     <div class="label">Sessions</div>
     <div class="value mono">Open</div>
@@ -55,7 +71,7 @@
 <section class="panel">
   <div class="panel-header"><h3>Project readiness</h3></div>
   <div class="panel-body">
-    {% if project.capability.state == 'launch_ready' %}<span class="pill green">{{ project.capability.label }}</span>{% elif project.capability.state == 'analysis_ready' %}<span class="pill blue">{{ project.capability.label }}</span>{% else %}<span class="pill red">{{ project.capability.label or 'Blocked' }}</span>{% endif %}
+    {% if project.archived_at %}<span class="pill muted">archived</span>{% elif project.capability.state == 'launch_ready' %}<span class="pill green">{{ project.capability.label }}</span>{% elif project.capability.state == 'analysis_ready' %}<span class="pill blue">{{ project.capability.label }}</span>{% else %}<span class="pill red">{{ project.capability.label or 'Blocked' }}</span>{% endif %}
     {% if project.capability.reasons %}
     <ul class="mono muted">
       {% for reason in project.capability.reasons %}<li>{{ reason }}</li>{% endfor %}

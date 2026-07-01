@@ -69,6 +69,66 @@ def test_worker_model_discovery_route_uses_native_harness_and_updates_portal(tmp
     assert "CLI Worker" in page.text
     assert "native_usage, observed_only" in page.text
 
+
+def test_claude_code_discovery_route_uses_curated_inventory_and_preserves_adapter_context(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        db.update_worker_adapter(database_path, "codex", is_default=True)
+        calls = []
+
+        def fake_discovery_runner(plan):
+            calls.append(plan)
+            return {"returncode": 0, "stdout": "claude fable\n", "stderr": ""}
+
+        getattr(client.app, "state").worker_model_discovery_runner = fake_discovery_runner
+        response = client.post(
+            "/settings/workers/claude_code/discover-models",
+            headers={**_portal_headers(), "Accept": "text/html"},
+            follow_redirects=False,
+        )
+        page = client.get(response.headers["location"], headers=_portal_headers())
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings/workers?adapter_id=claude_code"
+    assert calls == []
+    assert "Claude Code setup" in page.text
+    assert "claude-opus-4-8" in page.text
+    assert "claude-opus-4-7" in page.text
+    assert "claude-opus-4-6" in page.text
+    assert "claude-sonnet-4-6" in page.text
+    assert "claude-haiku-4-5" in page.text
+    assert "claude fable" not in page.text
+    assert "claude-haiku-4-5-20251001" not in page.text
+
+
+def test_hermes_discovery_route_uses_curated_inventory_and_preserves_adapter_context(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        db.update_worker_adapter(database_path, "codex", is_default=True)
+        calls = []
+
+        def fake_discovery_runner(plan):
+            calls.append(plan)
+            raise AssertionError("hermes discovery must not launch a subprocess")
+
+        getattr(client.app, "state").worker_model_discovery_runner = fake_discovery_runner
+        response = client.post(
+            "/settings/workers/hermes/discover-models",
+            headers={**_portal_headers(), "Accept": "text/html"},
+            follow_redirects=False,
+        )
+        page = client.get(response.headers["location"], headers=_portal_headers())
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings/workers?adapter_id=hermes"
+    assert calls == []
+    assert "Hermes setup" in page.text
+    assert "anthropic/claude-sonnet-4" in page.text
+    assert "openai/gpt-5.1" in page.text
+
+
 def test_worker_allowed_models_route_saves_only_discovered_models(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
@@ -96,6 +156,34 @@ def test_worker_allowed_models_route_saves_only_discovered_models(tmp_path, monk
     assert db.get_worker_adapter(database_path, "opencode")["supported_models"] == ["opencode/big-pickle"]
     assert rejected.status_code == 422
     assert db.get_worker_adapter(database_path, "opencode")["supported_models"] == ["opencode/big-pickle"]
+
+
+def test_hermes_allowed_models_route_rejects_stale_persisted_native_discovery(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        db.update_worker_adapter(
+            database_path,
+            "hermes",
+            config={"model_discovery": {"tracking_mode": "native", "models": ["stale/model"]}},
+        )
+        rejected = client.post(
+            "/settings/workers/hermes/allowed-models",
+            headers=_portal_headers(),
+            data={"allowed_models": "stale/model"},
+            follow_redirects=False,
+        )
+        accepted = client.post(
+            "/settings/workers/hermes/allowed-models",
+            headers=_portal_headers(),
+            data={"allowed_models": "anthropic/claude-sonnet-4"},
+            follow_redirects=False,
+        )
+
+    assert rejected.status_code == 422
+    assert accepted.status_code == 303
+    assert db.get_worker_adapter(database_path, "hermes")["supported_models"] == ["anthropic/claude-sonnet-4"]
+
 
 def test_workers_page_shows_allowed_model_checkboxes_after_discovery(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
@@ -179,7 +267,7 @@ def test_configure_route_sets_adapter_default_without_workdir(tmp_path, monkeypa
             follow_redirects=False,
         )
     assert response.status_code == 303
-    assert response.headers["location"] == "/settings/workers"
+    assert response.headers["location"] == "/settings/workers?adapter_id=opencode"
     adapter = db.get_worker_adapter(tmp_path / "harness.db", "opencode")
     assert adapter["workdir"] is None
     assert adapter["is_default"] is True
@@ -333,5 +421,5 @@ def test_refresh_diagnostics_route_forces_redetection(tmp_path, monkeypatch):
             follow_redirects=False,
         )
     assert response.status_code == 303
-    assert response.headers["location"] == "/settings/workers"
+    assert response.headers["location"] == "/settings/workers?adapter_id=opencode"
 

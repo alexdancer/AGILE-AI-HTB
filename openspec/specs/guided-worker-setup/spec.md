@@ -3,9 +3,7 @@
 ## Purpose
 
 Define the simplified Worker Setup experience that guides operators through configuring one active Worker Adapter, verifying token tracking, and understanding launch readiness without exposing raw debug data as primary UI.
-
 ## Requirements
-
 ### Requirement: Worker Adapter public setup matrix
 The public onboarding documentation SHALL provide a Worker Adapter setup matrix for first-class adapter families.
 
@@ -136,3 +134,22 @@ Worker/setup diagnostics SHALL remain available without overwhelming the first s
 #### Scenario: Primary setup path is readable
 - **WHEN** an operator is completing setup for the first time
 - **THEN** advanced diagnostics SHALL NOT be required reading before the next missing action is visible
+
+### Requirement: Worker Setup actions preserve active adapter context
+Worker Setup SHALL return the operator to the adapter they acted on after adapter-scoped POST actions.
+
+#### Scenario: Discovery returns to selected adapter
+- **WHEN** an operator selects Claude Code on `/settings/workers`
+- **AND** submits model discovery for Claude Code
+- **THEN** the response SHALL return to `/settings/workers?adapter_id=claude_code`
+- **AND** the guided setup workflow SHALL show Claude Code as the active adapter
+
+#### Scenario: Allowed-model save returns to selected adapter
+- **WHEN** an operator saves allowed models for a non-default Worker Adapter
+- **THEN** the response SHALL return to `/settings/workers?adapter_id={adapter_id}` for that adapter
+- **AND** the page SHALL NOT fall back to rendering another default adapter as if it were the target of the action
+
+#### Scenario: Verification returns to selected adapter
+- **WHEN** an operator verifies tracking for a Worker Adapter
+- **THEN** the response SHALL return to `/settings/workers?adapter_id={adapter_id}` for that adapter
+- **AND** verification status and model inventory shown in the guided workflow SHALL correspond to that adapter

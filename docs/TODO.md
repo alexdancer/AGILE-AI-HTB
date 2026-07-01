@@ -14,7 +14,6 @@ Parking lot for ideas I actually want to revisit. This is not a roadmap or a pro
 
 ## Fix the sharp edges
 
-- [ ] Keep OpenCode as the proven local launch path; add Claude Code, Codex, and Hermes launchability only when usage evidence is trustworthy.
 - [ ] Make budget reporting more useful: estimated vs. actual tokens, orchestration vs. Worker tokens, and native-usage override evidence.
 - [ ] Keep Task Breakdown focused on small vertical slices plus a final Acceptance Verification task for integrated features.
 - [ ] Make Agent Review and Worker Run evidence easier to compare from the Portal and CLI.

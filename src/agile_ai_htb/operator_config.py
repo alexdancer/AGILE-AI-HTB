@@ -46,8 +46,10 @@ def write_default_operator_config(path: Path | str = DEFAULT_CONFIG_PATH) -> dic
     return config
 
 
-def write_default_guardrails_file(config: dict[str, Any]) -> Path:
+def write_default_guardrails_file(config: dict[str, Any], base_dir: Path | str | None = None) -> Path:
     guardrails_path = Path(str(config.get("guardrails_path") or DEFAULT_LOCAL_CONFIG["guardrails_path"]))
+    if base_dir is not None and not guardrails_path.is_absolute():
+        guardrails_path = Path(base_dir) / guardrails_path
     guardrails_path.parent.mkdir(parents=True, exist_ok=True)
     if not guardrails_path.exists():
         default_text = (

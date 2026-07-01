@@ -42,16 +42,17 @@ The system SHALL preserve selected project binding through markdown/paste task b
 - **AND** the operator SHALL return to `/projects/{project_id}/board`
 
 ### Requirement: Global board route is safe compatibility entry
-The system SHALL avoid presenting `/board` as an ambiguous launch surface when project workspaces exist.
+The system SHALL avoid presenting `/board` as an ambiguous launch surface when active, non-archived project workspaces exist.
 
-#### Scenario: Global board redirects to recent project board
+#### Scenario: Global board redirects to recent active project board
 - **WHEN** an authenticated operator opens `/board`
-- **AND** at least one connected project exists
-- **THEN** the system SHALL redirect to `/projects/{project_id}/board` for the most recently updated connected project
+- **AND** at least one non-archived connected project exists
+- **THEN** the system SHALL redirect to `/projects/{project_id}/board` for the most recently updated non-archived connected project
+- **AND** archived connected projects SHALL NOT be selected for this default redirect
 
-#### Scenario: Global board redirects to projects without connected projects
+#### Scenario: Global board redirects to projects without active connected projects
 - **WHEN** an authenticated operator opens `/board`
-- **AND** no connected projects exist
+- **AND** no non-archived connected projects exist
 - **THEN** the system SHALL redirect to `/projects`
 
 ### Requirement: Run automation remains bound to selected project board
@@ -108,7 +109,7 @@ The project board SHALL keep newly completed tasks in the Done column until an o
 - **AND** the task SHALL NOT be archived automatically
 
 ### Requirement: Project board can archive Done cards
-The project board SHALL provide archive actions for Done cards without changing task lifecycle status or deleting task evidence.
+The project board SHALL provide archive actions for Done and Blocked cards without changing task lifecycle status or deleting task evidence.
 
 #### Scenario: Archive one Done card
 - **WHEN** an authenticated operator chooses Archive on an unarchived Done card from `/projects/{project_id}/board`
@@ -117,10 +118,18 @@ The project board SHALL provide archive actions for Done cards without changing 
 - **AND** existing Worker Run, session, token, actual token, launch, and review evidence SHALL remain linked to the task
 - **AND** the response SHALL return the operator to the selected project board or task history page
 
-#### Scenario: Archive rejects non-Done task
-- **WHEN** an authenticated operator requests Archive for a task that is not `Done`
+#### Scenario: Archive one Blocked card
+- **WHEN** an authenticated operator chooses Archive on an unarchived Blocked card from `/projects/{project_id}/board`
+- **THEN** the task SHALL record archive state in task metadata
+- **AND** the task SHALL remain `Blocked`
+- **AND** blocked reason, manual-estimate, launch, Worker Run, session, token, and review evidence present on the task SHALL remain linked to the task
+- **AND** the archived task SHALL be hidden from the selected project's active board columns
+- **AND** the response SHALL return the operator to the selected project board or task history page
+
+#### Scenario: Archive rejects active non-archivable task
+- **WHEN** an authenticated operator requests Archive for a task whose status is not `Done` or `Blocked`
 - **THEN** the system SHALL reject the action without recording archive state
-- **AND** the response SHALL explain that only Done tasks can be archived
+- **AND** the response SHALL explain that only Done or Blocked tasks can be archived
 
 ### Requirement: Project board can archive all Done cards
 The project board SHALL provide an Archive all Done action scoped to the selected connected project.

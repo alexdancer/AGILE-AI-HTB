@@ -59,6 +59,22 @@ def test_project_setup_rejects_disabled_local_runner(tmp_path, monkeypatch):
     assert "htb serve" in response.json()["detail"]
 
 
+def test_project_pages_explain_current_local_runner_enablement_flow(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+
+    with _client(tmp_path, local_runner_enabled=False) as client:
+        projects = client.get("/projects", headers=_headers())
+        settings_project = client.get("/settings/project", headers=_headers())
+
+    for response in (projects, settings_project):
+        assert response.status_code == 200
+        assert "enable Local Runner" in response.text
+        assert ".htb/config.toml" in response.text
+        assert "htb serve --enable-local-runner" in response.text
+        assert "/settings/control-plane" in response.text
+        assert "edit <code>.htb/secrets.env</code>" not in response.text
+
+
 def test_project_setup_api_connects_valid_path_and_returns_detected_profile(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     root = _project_root(tmp_path)

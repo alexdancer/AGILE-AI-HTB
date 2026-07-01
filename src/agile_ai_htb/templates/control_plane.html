@@ -6,17 +6,19 @@
 
 {% if error %}<p class="pill red">{{ error }}</p>{% endif %}
 {% set curated_control_plane_models = [
-  ('gpt-5.4-mini', 'OpenAI · gpt-5.4-mini'),
-  ('gpt-5.5', 'OpenAI · gpt-5.5'),
-  ('claude-haiku-4-5', 'Anthropic · Claude Haiku 4.5'),
-  ('anthropic/claude-sonnet-4-20250514', 'Anthropic · Claude Sonnet 4'),
+  ('openai', 'gpt-5.4-mini', 'OpenAI · gpt-5.4-mini'),
+  ('openai', 'gpt-5.5', 'OpenAI · gpt-5.5'),
+  ('anthropic', 'claude-fable-5', 'Anthropic · Claude Fable 5'),
+  ('anthropic', 'claude-opus-4-8', 'Anthropic · Claude Opus 4.8'),
+  ('anthropic', 'claude-sonnet-4-6', 'Anthropic · Claude Sonnet 4.6'),
+  ('anthropic', 'claude-haiku-4-5', 'Anthropic · Claude Haiku 4.5'),
 ] %}
-{% set current_model_is_curated = settings.control_plane_model in [
-  'gpt-5.4-mini',
-  'gpt-5.5',
-  'claude-haiku-4-5',
-  'anthropic/claude-sonnet-4-20250514',
-] %}
+{% set curated_state = namespace(is_current=false) %}
+{% for provider, model, label in curated_control_plane_models %}
+  {% if settings.control_plane_provider == provider and settings.control_plane_model == model %}
+    {% set curated_state.is_current = true %}
+  {% endif %}
+{% endfor %}
 
 <section class="grid cols-2">
   <article class="panel">
@@ -31,7 +33,7 @@
         </div>
 
         <label>Provider
-          <select id="control_plane_provider" name="control_plane_provider">
+          <select id="control_plane_provider" name="control_plane_provider" onchange="syncControlPlaneModelControls()">
             {% for provider in ['openai', 'anthropic', 'openai-compatible'] %}
             <option value="{{ provider }}" {% if settings.control_plane_provider == provider %}selected{% endif %}>{{ provider }}</option>
             {% endfor %}
@@ -39,14 +41,14 @@
         </label>
         <label>Model
           <select id="control_plane_model" name="control_plane_model" required onchange="syncControlPlaneModelControls()">
-            {% for model, label in curated_control_plane_models %}
-            <option value="{{ model }}" {% if settings.control_plane_model == model %}selected{% endif %}>{{ label }}</option>
+            {% for provider, model, label in curated_control_plane_models %}
+            <option value="{{ model }}" data-provider="{{ provider }}" {% if settings.control_plane_provider != provider %}hidden disabled{% endif %} {% if settings.control_plane_provider == provider and settings.control_plane_model == model %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
-            <option value="__custom__" {% if not current_model_is_curated %}selected{% endif %}>Custom model…</option>
+            <option value="__custom__" {% if not curated_state.is_current %}selected{% endif %}>Custom model…</option>
           </select>
         </label>
         <label id="custom_control_plane_model_row">Custom model
-          <input id="custom_control_plane_model" name="custom_control_plane_model" value="{% if not current_model_is_curated %}{{ settings.control_plane_model }}{% endif %}" placeholder="model id for OpenAI-compatible or future providers" oninput="syncControlPlaneModelControls()">
+          <input id="custom_control_plane_model" name="custom_control_plane_model" value="{% if not curated_state.is_current %}{{ settings.control_plane_model }}{% endif %}" placeholder="model id for OpenAI-compatible or future providers" oninput="syncControlPlaneModelControls()">
         </label>
         <p class="muted">Use Custom model for OpenAI-compatible endpoints or provider model IDs that are not in the curated dropdown.</p>
         <label>Base URL
@@ -99,11 +101,21 @@
     <div class="panel-header"><h3>Last connection test</h3></div>
     <div class="panel-body">
       {% if connection_status %}
+      {% set details = connection_status.details or {} %}
       <p>
-        {% if connection_status.details.status == 'needs_test' %}<span class="pill muted">needs test</span>{% elif connection_status.online %}<span class="pill green">online</span>{% else %}<span class="pill red">offline</span>{% endif %}
+        {% if details.status == 'needs_test' %}<span class="pill muted">needs test</span>{% elif connection_status.online %}<span class="pill green">online</span>{% else %}<span class="pill red">offline</span>{% endif %}
         <span class="pill muted">{{ connection_status.checked_at }}</span>
       </p>
-      <pre class="mono" style="white-space:pre-wrap;background:var(--bg-0);border:1px solid var(--line);padding:10px;border-radius:4px;max-height:260px;overflow:auto">{{ connection_status.details }}</pre>
+      <div class="kv">
+        <div class="k">Provider</div><div class="v">{{ details.provider or 'not recorded' }}</div>
+        <div class="k">Model</div><div class="v">{{ details.model or 'not recorded' }}</div>
+        {% if details.usage %}<div class="k">Total tokens</div><div class="v">{{ details.usage.total_tokens or 0 }}</div>{% endif %}
+        {% if details.error %}<div class="k">Error</div><div class="v">{{ details.error }}</div>{% endif %}
+      </div>
+      <details style="margin-top:10px">
+        <summary>Raw sanitized details</summary>
+        <pre class="mono" style="white-space:pre-wrap;background:var(--bg-0);border:1px solid var(--line);padding:10px;border-radius:4px;max-height:260px;overflow:auto">{{ details }}</pre>
+      </details>
       {% else %}
       <p class="muted">No control-plane connection test has been recorded yet.</p>
       {% endif %}
@@ -128,9 +140,34 @@ function setControlPlanePreset(provider, model, baseUrl) {
 }
 
 function syncControlPlaneModelControls() {
+  const provider = document.getElementById('control_plane_provider').value;
   const modelSelect = document.getElementById('control_plane_model');
   const customRow = document.getElementById('custom_control_plane_model_row');
   const customModel = document.getElementById('custom_control_plane_model');
+  let firstCompatible = null;
+  for (const option of modelSelect.options) {
+    const optionProvider = option.dataset.provider;
+    if (!optionProvider) {
+      option.hidden = false;
+      option.disabled = false;
+      continue;
+    }
+    const compatible = optionProvider === provider;
+    option.hidden = !compatible;
+    option.disabled = !compatible;
+    if (compatible && firstCompatible === null) {
+      firstCompatible = option;
+    }
+  }
+  if (modelSelect.selectedOptions[0]?.disabled) {
+    if (provider === 'openai-compatible' || customModel.value.trim()) {
+      modelSelect.value = '__custom__';
+    } else if (firstCompatible) {
+      modelSelect.value = firstCompatible.value;
+    } else {
+      modelSelect.value = '__custom__';
+    }
+  }
   const customSelected = modelSelect.value === '__custom__';
   customRow.style.display = customSelected ? 'block' : 'none';
   customModel.required = customSelected;

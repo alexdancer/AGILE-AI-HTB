@@ -12,6 +12,17 @@ from agile_ai_htb.worker_adapters import (
     redact_command_plan,
     subprocess_runner,
 )
+from agile_ai_htb.worker_model_allowlist import allowed_worker_model_ids
+
+
+CLAUDE_CODE_CURATED_MODELS = [
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+]
+HERMES_CURATED_MODELS = ["anthropic/claude-sonnet-4", "openai/gpt-5.1"]
 
 
 def test_init_db_seeds_worker_adapter_presets_idempotently_and_preserves_updates(tmp_path):
@@ -270,11 +281,16 @@ def test_claude_code_native_launch_template_uses_configured_budget_cap(tmp_path)
         "--output-format",
         "stream-json",
         "--verbose",
+        "--permission-mode",
+        "acceptEdits",
+        "--allowedTools",
+        "Bash,Write,Edit,MultiEdit",
         "--max-budget-usd",
         "0.25",
         "Implement DEMO_2099 task.",
     ]
     assert plan.metadata["usage_source"] == "native_usage"
+    assert plan.metadata["timeout_seconds"] == 600
 
 
 def test_opencode_native_launch_template_with_dir_is_not_duplicated(tmp_path):
@@ -434,6 +450,109 @@ def test_discover_worker_models_updates_adapter_from_native_json_without_proxy_e
     assert adapter["config"]["model_discovery"]["tracking_mode"] == "native"
 
 
+def test_discover_claude_code_models_uses_curated_inventory_without_subprocess(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    calls = []
+
+    def fake_runner(plan):
+        calls.append(plan)
+        raise AssertionError("claude discovery must not launch a subprocess")
+
+    result = discover_worker_models(db_path, "claude_code", runner=fake_runner)
+
+    assert result.passed is True
+    assert result.models == CLAUDE_CODE_CURATED_MODELS
+    assert calls == []
+    adapter = db.get_worker_adapter(db_path, "claude_code")
+    assert adapter["config"]["model_discovery"]["tracking_mode"] == "curated"
+    assert adapter["config"]["model_discovery"]["models"] == CLAUDE_CODE_CURATED_MODELS
+    assert discovered_worker_model_ids(adapter) == CLAUDE_CODE_CURATED_MODELS
+
+
+def test_discover_claude_code_models_preserves_allowed_subset(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(
+        db_path,
+        "claude_code",
+        config={"allowed_models_configured": True},
+        supported_models=["claude-sonnet-4-6"],
+    )
+
+    result = discover_worker_models(db_path, "claude_code", runner=lambda plan: None)
+
+    assert result.models == CLAUDE_CODE_CURATED_MODELS
+    assert db.get_worker_adapter(db_path, "claude_code")["supported_models"] == ["claude-sonnet-4-6"]
+
+
+def test_discover_hermes_models_uses_curated_inventory_without_subprocess(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    calls = []
+
+    def fake_runner(plan):
+        calls.append(plan)
+        raise AssertionError("hermes discovery must not launch a subprocess")
+
+    result = discover_worker_models(db_path, "hermes", runner=fake_runner)
+
+    assert result.passed is True
+    assert result.models == HERMES_CURATED_MODELS
+    assert calls == []
+    adapter = db.get_worker_adapter(db_path, "hermes")
+    assert adapter["supported_models"] == []
+    assert adapter["config"]["model_discovery"]["tracking_mode"] == "curated"
+    assert adapter["config"]["model_discovery"]["source"] == "agile_ai_htb_curated_hermes_models"
+    assert adapter["config"]["model_discovery"]["models"] == HERMES_CURATED_MODELS
+    assert discovered_worker_model_ids(adapter) == HERMES_CURATED_MODELS
+
+
+def test_discover_hermes_models_preserves_allowed_subset(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(
+        db_path,
+        "hermes",
+        config={"allowed_models_configured": True},
+        supported_models=["anthropic/claude-sonnet-4", "stale/model"],
+    )
+
+    result = discover_worker_models(db_path, "hermes", runner=lambda plan: None)
+
+    assert result.models == HERMES_CURATED_MODELS
+    assert db.get_worker_adapter(db_path, "hermes")["supported_models"] == ["anthropic/claude-sonnet-4"]
+
+
+def test_discover_hermes_models_preserves_operator_subset_without_flag(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(
+        db_path,
+        "hermes",
+        supported_models=["anthropic/claude-sonnet-4"],
+    )
+
+    result = discover_worker_models(db_path, "hermes", runner=lambda plan: None)
+
+    assert result.models == HERMES_CURATED_MODELS
+    assert db.get_worker_adapter(db_path, "hermes")["supported_models"] == ["anthropic/claude-sonnet-4"]
+
+
+def test_discovered_hermes_models_ignore_stale_persisted_native_inventory(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(
+        db_path,
+        "hermes",
+        config={"model_discovery": {"tracking_mode": "native", "models": ["stale/model"]}},
+    )
+
+    adapter = db.get_worker_adapter(db_path, "hermes")
+
+    assert discovered_worker_model_ids(adapter) == HERMES_CURATED_MODELS
+
+
 def test_discover_worker_models_preserves_curated_allowed_models(tmp_path):
     db_path = tmp_path / "harness.db"
     db.init_db(db_path)
@@ -484,6 +603,44 @@ def test_discover_worker_models_preserves_empty_curated_allowed_models(tmp_path)
     assert db.get_worker_adapter(db_path, "opencode")["supported_models"] == []
 
 
+def test_discover_worker_models_rejects_successful_prose_stdout(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+
+    def fake_runner(plan):
+        return subprocess.CompletedProcess(
+            plan.command,
+            0,
+            stdout="Here's the model landscape in this codebase:\n## Control-plane models\nLet me know and I'll dig in.",
+            stderr="",
+        )
+
+    result = discover_worker_models(db_path, "opencode", runner=fake_runner)
+
+    assert result.passed is False
+    assert result.models == []
+    assert db.get_worker_adapter(db_path, "opencode")["config"]["model_discovery"]["models"] == []
+
+
+def test_discover_worker_models_accepts_valid_plain_line_output(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+
+    result = discover_worker_models(
+        db_path,
+        "opencode",
+        runner=lambda plan: subprocess.CompletedProcess(
+            plan.command,
+            0,
+            stdout="openai/gpt-5.1\nopencode/big-pickle\n",
+            stderr="",
+        ),
+    )
+
+    assert result.passed is True
+    assert result.models == ["openai/gpt-5.1", "opencode/big-pickle"]
+
+
 def test_discover_worker_models_reports_failure_without_overwriting_models(tmp_path):
     db_path = tmp_path / "harness.db"
     db.init_db(db_path)
@@ -510,18 +667,49 @@ def test_claude_code_model_discovery_failure_does_not_convert_stdout_to_models(t
     db.init_db(db_path)
     adapter = db.get_worker_adapter(db_path, "claude_code")
 
-    def fake_runner(plan):
-        return subprocess.CompletedProcess(plan.command, 1, stdout="No native model list command", stderr="")
+    result = discover_worker_models(db_path, "claude_code", runner=lambda plan: None)
 
-    result = discover_worker_models(db_path, "claude_code", runner=fake_runner)
+    assert result.passed is True
+    assert result.models == CLAUDE_CODE_CURATED_MODELS
+    assert discovered_worker_model_ids(adapter) == CLAUDE_CODE_CURATED_MODELS
 
-    assert result.passed is False
-    assert result.models == []
-    assert discovered_worker_model_ids(adapter) == [
-        "claude-3-5-sonnet-latest",
-        "claude-3-5-sonnet-20240620",
-        "claude-3-haiku-20240307",
-    ]
+
+def test_claude_code_curated_discovery_clears_unapproved_legacy_seeded_models(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    legacy_models = ["claude-3-5-sonnet-latest", "claude-3-5-sonnet-20240620", "claude-3-haiku-20240307"]
+    db.update_worker_adapter(db_path, "claude_code", supported_models=legacy_models)
+
+    before = db.get_worker_adapter(db_path, "claude_code")
+    assert before["supported_models"] == legacy_models
+    assert allowed_worker_model_ids(before) == []
+    assert get_adapter_builder(before).supports_model("claude-3-5-sonnet-latest") is False
+
+    discover_worker_models(db_path, "claude_code", runner=lambda plan: (_ for _ in ()).throw(AssertionError("must not run")))
+
+    after = db.get_worker_adapter(db_path, "claude_code")
+    assert after["supported_models"] == []
+    assert allowed_worker_model_ids(after) == []
+    assert discovered_worker_model_ids(after) == CLAUDE_CODE_CURATED_MODELS
+
+
+def test_claude_code_curated_discovery_prunes_approved_subset_to_curated_models(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    adapter = db.get_worker_adapter(db_path, "claude_code")
+    config = {**adapter["config"], "allowed_models_configured": True}
+    db.update_worker_adapter(
+        db_path,
+        "claude_code",
+        config=config,
+        supported_models=["claude-3-5-sonnet-latest", "claude-opus-4-8"],
+    )
+
+    discover_worker_models(db_path, "claude_code", runner=lambda plan: (_ for _ in ()).throw(AssertionError("must not run")))
+
+    after = db.get_worker_adapter(db_path, "claude_code")
+    assert after["supported_models"] == ["claude-opus-4-8"]
+    assert allowed_worker_model_ids(after) == ["claude-opus-4-8"]
 
 
 def test_redact_command_plan_redacts_secret_flag_values_without_over_redacting(tmp_path):

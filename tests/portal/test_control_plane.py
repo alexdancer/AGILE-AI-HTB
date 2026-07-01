@@ -1,4 +1,5 @@
 import os
+import re
 
 from fastapi.testclient import TestClient
 
@@ -14,6 +15,22 @@ from tests.portal.helpers import (
     _client_with_control_plane_llm,
     _portal_headers,
 )
+
+
+def _model_option(html: str, value: str) -> str:
+    match = re.search(rf'<option value="{re.escape(value)}"[^>]*>', html)
+    assert match, value
+    return match.group(0)
+
+
+def _assert_selectable(option: str) -> None:
+    assert "hidden" not in option
+    assert "disabled" not in option
+
+
+def _assert_not_selectable(option: str) -> None:
+    assert "hidden" in option
+    assert "disabled" in option
 
 def test_control_plane_save_persists_and_hot_swaps_settings(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
@@ -273,6 +290,7 @@ def test_control_plane_save_failure_keeps_running_settings(tmp_path, monkeypatch
     assert after.control_plane_model != "claude-haiku-4-5"
 
 def test_control_plane_settings_page_shows_presets_and_needs_test(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
     db.init_db(database_path)
@@ -295,7 +313,18 @@ def test_control_plane_settings_page_shows_presets_and_needs_test(tmp_path, monk
     assert "<datalist" not in response.text
     assert "Custom model…" in response.text
     assert 'name="custom_control_plane_model"' in response.text
+    assert "claude-fable-5" in response.text
+    assert "claude-opus-4-8" in response.text
+    assert "claude-sonnet-4-6" in response.text
     assert "claude-haiku-4-5" in response.text
+    assert "anthropic/claude-sonnet-4-20250514" not in response.text
+    assert 'data-provider="openai"' in _model_option(response.text, "gpt-5.4-mini")
+    _assert_selectable(_model_option(response.text, "gpt-5.4-mini"))
+    _assert_selectable(_model_option(response.text, "gpt-5.5"))
+    _assert_not_selectable(_model_option(response.text, "claude-fable-5"))
+    _assert_not_selectable(_model_option(response.text, "claude-opus-4-8"))
+    _assert_not_selectable(_model_option(response.text, "claude-sonnet-4-6"))
+    _assert_not_selectable(_model_option(response.text, "claude-haiku-4-5"))
     assert "Save control-plane model" in response.text
     assert 'name="control_plane_api_key" type="password"' in response.text
     assert "Leave blank to keep the existing key" in response.text
@@ -314,7 +343,14 @@ def test_control_plane_settings_page_separates_control_model_from_worker_auth(tm
     assert response.status_code == 200
     html = response.text
     assert "Control plane model" in html
-    assert "anthropic/claude-sonnet-4-20250514" in html
+    assert "claude-sonnet-4-6" in html
+    assert 'data-provider="anthropic"' in _model_option(html, "claude-sonnet-4-6")
+    _assert_selectable(_model_option(html, "claude-fable-5"))
+    _assert_selectable(_model_option(html, "claude-opus-4-8"))
+    _assert_selectable(_model_option(html, "claude-sonnet-4-6"))
+    _assert_selectable(_model_option(html, "claude-haiku-4-5"))
+    _assert_not_selectable(_model_option(html, "gpt-5.4-mini"))
+    _assert_not_selectable(_model_option(html, "gpt-5.5"))
     assert "TEST_CONTROL_PLANE_KEY" in html
     assert "AGILE-AI-HTB orchestration model" in html
     assert "Worker Harness" in html
@@ -330,6 +366,59 @@ def test_control_plane_settings_page_preserves_existing_custom_model(tmp_path, m
     html = response.text
     assert '<option value="__custom__" selected>Custom model…</option>' in html
     assert f'name="custom_control_plane_model" value="{custom_model}"' in html
+
+def test_control_plane_settings_page_preserves_openai_compatible_model_as_custom(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    custom_model = "openai-compatible/custom-control-plane-999"
+    with _client_with_control_plane_llm(
+        tmp_path,
+        FakeControlPlaneLLM(),
+        control_plane_provider="openai-compatible",
+        control_plane_model=custom_model,
+        control_plane_base_url="https://example.invalid/v1",
+    ) as client:
+        response = client.get("/settings/control-plane", headers=_portal_headers())
+
+    assert response.status_code == 200
+    html = response.text
+    assert '<option value="openai-compatible" selected>openai-compatible</option>' in html
+    assert '<option value="__custom__" selected>Custom model…</option>' in html
+    assert f'name="custom_control_plane_model" value="{custom_model}"' in html
+    _assert_not_selectable(_model_option(html, "gpt-5.4-mini"))
+    _assert_not_selectable(_model_option(html, "gpt-5.5"))
+    _assert_not_selectable(_model_option(html, "claude-sonnet-4-6"))
+
+
+def test_control_plane_settings_page_preserves_provider_incompatible_model_as_custom(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    mismatched_model = "claude-sonnet-4-6"
+    with _client_with_control_plane_llm(
+        tmp_path,
+        FakeControlPlaneLLM(),
+        control_plane_provider="openai",
+        control_plane_model=mismatched_model,
+    ) as client:
+        response = client.get("/settings/control-plane", headers=_portal_headers())
+
+    assert response.status_code == 200
+    html = response.text
+    assert '<option value="openai" selected>openai</option>' in html
+    assert '<option value="__custom__" selected>Custom model…</option>' in html
+    assert f'name="custom_control_plane_model" value="{mismatched_model}"' in html
+    _assert_selectable(_model_option(html, "gpt-5.4-mini"))
+    _assert_not_selectable(_model_option(html, mismatched_model))
+
+
+def test_control_plane_settings_page_preserves_stale_provider_prefixed_model_as_custom(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    stale_model = "anthropic/claude-sonnet-4-20250514"
+    with _client_with_control_plane_llm(tmp_path, FakeControlPlaneLLM(), control_plane_model=stale_model) as client:
+        response = client.get("/settings/control-plane", headers=_portal_headers())
+
+    assert response.status_code == 200
+    html = response.text
+    assert '<option value="__custom__" selected>Custom model…</option>' in html
+    assert f'name="custom_control_plane_model" value="{stale_model}"' in html
 
 def test_control_plane_form_custom_model_submission_uses_custom_value(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
@@ -368,15 +457,36 @@ def test_control_plane_connection_test_records_sanitized_status(tmp_path, monkey
     body = response.json()
     assert body["passed"] is True
     assert body["status"]["online"] is True
-    assert body["status"]["details"]["model"] == "anthropic/claude-sonnet-4-20250514"
+    assert body["status"]["details"]["model"] == "claude-sonnet-4-6"
     assert body["status"]["details"]["usage"]["total_tokens"] == 10
-    assert "sk_should_not_render" not in str(body)
-    assert llm.requests[0]["model"] == "anthropic/claude-sonnet-4-20250514"
+    assert "«redacted:sk_…»" not in str(body)
+    assert llm.requests[0]["model"] == "claude-sonnet-4-6"
+
+
+def test_control_plane_connection_test_browser_success_returns_to_settings_ui(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeControlPlaneLLM()
+    headers = {**_portal_headers(), "accept": "text/html"}
+    with _client_with_control_plane_llm(tmp_path, llm) as client:
+        response = client.post("/settings/control-plane/test", headers=headers, follow_redirects=False)
+        page = client.get("/settings/control-plane", headers=headers)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings/control-plane"
+    assert "online" in page.text
+    assert "Total tokens</div><div class=\"v\">10" in page.text
+    assert "Raw sanitized details" in page.text
+    assert "sk_sho...nder" not in page.text
 
 def test_control_plane_connection_test_does_not_cap_gpt5_smoke_response(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     llm = FakeControlPlaneLLM()
-    with _client_with_control_plane_llm(tmp_path, llm, control_plane_model="gpt-5.4-mini") as client:
+    with _client_with_control_plane_llm(
+        tmp_path,
+        llm,
+        control_plane_provider="openai",
+        control_plane_model="gpt-5.4-mini",
+    ) as client:
         response = client.post("/settings/control-plane/test", headers=_portal_headers())
 
     assert response.status_code == 200
@@ -396,4 +506,20 @@ def test_control_plane_connection_failure_records_no_secret_values(tmp_path, mon
     assert body["status"]["online"] is False
     assert "sk_bad_key" not in str(body)
     assert "***REDACTED***" in body["status"]["details"]["error"]
+
+
+def test_control_plane_connection_test_browser_failure_returns_to_settings_ui(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeControlPlaneLLM(exc=RuntimeError("secret sk_bad_key"))
+    headers = {**_portal_headers(), "accept": "text/html"}
+    with _client_with_control_plane_llm(tmp_path, llm) as client:
+        response = client.post("/settings/control-plane/test", headers=headers, follow_redirects=False)
+        page = client.get("/settings/control-plane", headers=headers)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings/control-plane"
+    assert "offline" in page.text
+    assert "RuntimeError" in page.text
+    assert "***REDACTED***" in page.text
+    assert "sk_bad_key" not in page.text
 

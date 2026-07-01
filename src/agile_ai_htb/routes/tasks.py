@@ -241,6 +241,7 @@ async def _estimate_and_create_task(
             remaining_daily_tokens=remaining_daily_tokens,
             daily_cap_tokens=daily_cap_tokens,
             project_root=project_root,
+            project_profile=(extra_metadata or {}).get("project_profile"),
         )
     except EstimatorError as exc:
         return db.create_task(
@@ -780,6 +781,14 @@ def _breakdown_candidate_description(
         )
         if source_text.strip():
             sections.extend(["", "Original source contract:", source_text.strip()])
+    else:
+        sections.extend(
+            [
+                "",
+                "Implementation slice scope:",
+                "Implement only this slice. Use the global contract summary and constraints as boundaries; do not rerun or re-solve the full source task.",
+            ]
+        )
     if candidate.get("acceptance_criteria"):
         sections.extend(["", "Acceptance criteria:", candidate["acceptance_criteria"]])
     combined_constraints = [*global_constraints, *candidate.get("constraints", [])]

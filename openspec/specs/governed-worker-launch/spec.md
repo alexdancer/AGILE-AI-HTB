@@ -201,13 +201,14 @@ The system SHALL label launch events so operators can distinguish control-plane/
 - **AND** adapter subprocess, native/proxy usage, and file evidence events are labeled as Worker/coding harness activity
 
 ### Requirement: Claude Code native usage launch accounting
-The system SHALL launch Claude Code Worker Sessions in `native_usage` mode through non-interactive Claude Code command templates and SHALL record cache-inclusive token usage and actual cost from Claude Code result JSON.
+The system SHALL launch Claude Code Worker Sessions in `native_usage` mode through non-interactive Claude Code command templates and SHALL record raw cache component evidence, normalized Worker actual usage, and actual cost from Claude Code result JSON.
 
 #### Scenario: Claude Code native launch records result usage
 - **WHEN** an Estimated Task is launched with the Claude Code Worker Adapter in `native_usage` mode
 - **AND** Claude Code exits successfully and emits result JSON containing `session_id`, `usage`, `modelUsage`, and `total_cost_usd`
 - **THEN** the system records Worker execution usage from the Claude Code result evidence
-- **AND** the recorded prompt-side tokens include `input_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens`
+- **AND** the recorded raw evidence includes `input_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens`
+- **AND** normalized Worker actual and budget accounting exclude cache-read/reused-context tokens while preserving them as audit evidence
 - **AND** the recorded completion tokens include `output_tokens`
 - **AND** the recorded cost uses `total_cost_usd` or matching `modelUsage` cost evidence
 - **AND** the Worker Run records native usage evidence on the Worker/coding harness layer

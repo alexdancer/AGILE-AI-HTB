@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from agile_ai_htb import db
+from agile_ai_htb import db, estimation
 from agile_ai_htb.app import create_app
 from agile_ai_htb.estimation import (
     EstimatorUnavailableError,
@@ -22,6 +22,7 @@ from agile_ai_htb.estimation import (
 from agile_ai_htb.guardrails import load_guardrails
 from agile_ai_htb.settings import Settings
 from agile_ai_htb.task_breakdown import (
+    TASK_BREAKDOWN_MAX_TOKENS,
     TaskBreakdownResult,
     TaskBreakdownValidationError,
     breakdown_task_source,
@@ -101,6 +102,20 @@ class FakeSequentialLLM:
             raise AssertionError("unexpected LLM request")
         return {
             "choices": [{"message": {"content": json.dumps(self.contents.pop(0))}}],
+            "usage": self.usage,
+        }
+
+
+class FakeRawContentLLM:
+    def __init__(self, content):
+        self.content = content
+        self.requests = []
+        self.usage = {"prompt_tokens": 111, "completion_tokens": 22, "total_tokens": 133}
+
+    async def acompletion(self, request):
+        self.requests.append(request)
+        return {
+            "choices": [{"message": {"content": self.content}}],
             "usage": self.usage,
         }
 
@@ -281,6 +296,61 @@ async def test_eval_task_breakdown_accepts_common_model_json_variants():
     assert result.candidates[0].constraints == ["Do not add network dependencies."]
 
 
+@pytest.mark.asyncio
+async def test_task_breakdown_accepts_single_fenced_json_response():
+    content = _breakdown_content("Stabilize DEMO_TASK_2099 Claude breakdown")
+    llm = FakeRawContentLLM(f"```json\n{json.dumps(content)}\n```")
+
+    result, _ = await breakdown_task_source(
+        "# DEMO_TASK_2099 Claude breakdown\n\n- [ ] Stabilize Claude JSON output",
+        llm_client=llm,
+        task_breakdown_model="claude-sonnet-4-6",
+    )
+
+    assert isinstance(result, TaskBreakdownResult)
+    assert result.candidates[0].title == "Stabilize DEMO_TASK_2099 Claude breakdown"
+
+
+@pytest.mark.asyncio
+async def test_task_breakdown_request_uses_explicit_large_output_cap():
+    llm = FakeSequentialLLM([_breakdown_content("Check DEMO_TASK_2099 request cap")])
+
+    await breakdown_task_source(
+        "# DEMO_TASK_2099 Claude breakdown\n\n- [ ] Check request cap",
+        llm_client=llm,
+        task_breakdown_model="claude-sonnet-4-6",
+    )
+
+    assert llm.requests[0]["max_tokens"] == TASK_BREAKDOWN_MAX_TOKENS
+    assert llm.requests[0]["max_tokens"] >= 16_384
+
+
+@pytest.mark.asyncio
+async def test_task_breakdown_rejects_incomplete_fenced_json_response():
+    content = json.dumps(_breakdown_content("Reject DEMO_TASK_2099 truncation"))
+    llm = FakeRawContentLLM(f"```json\n{content[:-20]}")
+
+    with pytest.raises(TaskBreakdownValidationError, match="invalid JSON"):
+        await breakdown_task_source(
+            "# DEMO_TASK_2099 Claude breakdown\n\n- [ ] Reject truncated JSON",
+            llm_client=llm,
+            task_breakdown_model="claude-sonnet-4-6",
+        )
+
+
+@pytest.mark.asyncio
+async def test_task_breakdown_rejects_prose_wrapped_fenced_json_response():
+    content = _breakdown_content("Reject DEMO_TASK_2099 wrapper")
+    llm = FakeRawContentLLM(f"Here is the breakdown:\n```json\n{json.dumps(content)}\n```")
+
+    with pytest.raises(TaskBreakdownValidationError, match="invalid JSON"):
+        await breakdown_task_source(
+            "# DEMO_TASK_2099 Claude breakdown\n\n- [ ] Reject prose wrapper",
+            llm_client=llm,
+            task_breakdown_model="claude-sonnet-4-6",
+        )
+
+
 def test_task_breakdown_candidate_kind_defaults_for_legacy_records():
     result = validate_breakdown_result(
         {
@@ -402,6 +472,20 @@ async def test_eval_estimator_invalid_json_raises_validation_error():
 
     with pytest.raises(EstimatorValidationError, match="estimator JSON must be an object"):
         await estimate_task("Task", config, llm_client=llm, estimator_model="gpt-4o-mini")
+
+
+def test_eval_estimator_does_not_swallow_strict_calibration_validation_errors(monkeypatch):
+    def fail_selection(**_kwargs):
+        raise ValueError("strict DEMO_2099 calibration catalog is invalid")
+
+    monkeypatch.setattr(estimation, "build_calibration_selection", fail_selection)
+
+    with pytest.raises(ValueError, match="strict DEMO_2099 calibration catalog is invalid"):
+        estimation._build_calibration_context(
+            "Add DEMO_TASK_2099 estimator coverage",
+            project_root=None,
+            project_profile=None,
+        )
 
 
 def test_eval_estimator_failure_creates_blocked_task(tmp_path, monkeypatch):

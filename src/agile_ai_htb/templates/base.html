@@ -134,9 +134,11 @@
     .btn.primary, button.primary { background: var(--accent-dim); border-color: var(--accent); color: var(--bg-0); font-weight: 600; }
     .btn.ghost { background: transparent; }
     .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
-    .kv { display: grid; grid-template-columns: 160px 1fr; gap: 6px 16px; font-family: var(--mono); font-size: 12px; }
+    .kv { display: grid; grid-template-columns: minmax(200px, 1fr) auto; gap: 6px 24px; font-family: var(--mono); font-size: 12px; align-items: start; }
     .kv .k { color: var(--fg-2); }
-    .kv .v { color: var(--fg-0); }
+    .kv .v { color: var(--fg-0); text-align: right; }
+    .task-details .kv { max-width: 560px; }
+    .task-details .kv .v { white-space: nowrap; }
     .alarm { border: 1px solid var(--line); border-left: 3px solid var(--fg-3); border-radius: 4px; background: var(--bg-2); padding: 12px 14px; margin-bottom: 10px; }
     .alarm.critical, .alarm.high { border-left-color: var(--danger); }
     .alarm.warning, .alarm.medium { border-left-color: var(--warn); }

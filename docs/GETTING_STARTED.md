@@ -11,9 +11,11 @@ This is the first-run guide for operators evaluating AGILE-AI-HTB in their own w
    After PyPI release, use `pipx install agile-ai-htb`. See [Install options](INSTALL.md) for the curl installer and Homebrew status.
 2. Initialize and start:
    ```bash
+   cd /path/to/your/repo
    htb init
    htb serve
    ```
+   `htb init` keeps the installed CLI global but writes repo-local state under `.htb/`. Inside a Git repo, it targets the Git root even if you run it from a subdirectory; outside Git, it uses the current directory. It creates `.htb/config.toml`, `.htb/secrets.env`, `.htb/guardrails.yaml`, and `.htb/harness.db`.
 3. Open `http://localhost:8000/login` and use the portal token from ignored `.htb/secrets.env`.
 4. Open `/settings/control-plane`, choose provider/model, paste the provider API key, save, then test the connection.
 5. Connect a local repository from `/projects`.

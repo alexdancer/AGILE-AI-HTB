@@ -7,6 +7,7 @@ from typing import Any
 from agile_ai_htb.llm import response_to_dict
 
 TASK_BREAKDOWN_CANDIDATE_KINDS = {"implementation", "acceptance_verification"}
+TASK_BREAKDOWN_MAX_TOKENS = 16_384
 
 
 class TaskBreakdownError(Exception):
@@ -106,6 +107,7 @@ async def breakdown_task_source(
             },
         ],
         "temperature": 0,
+        "max_tokens": TASK_BREAKDOWN_MAX_TOKENS,
         "response_format": {"type": "json_object"},
     }
     try:
@@ -138,12 +140,29 @@ def _system_prompt() -> str:
 
 def _parse_response(response: Any) -> TaskBreakdownResult:
     try:
-        data = json.loads(_response_content(response))
+        data = json.loads(_task_breakdown_json_text(_response_content(response)))
     except Exception as exc:
         raise TaskBreakdownValidationError("task breakdown returned invalid JSON") from exc
     if not isinstance(data, dict):
         raise TaskBreakdownValidationError("task breakdown JSON must be an object")
     return validate_breakdown_result(data)
+
+
+def _task_breakdown_json_text(content: str) -> str:
+    text = content.strip()
+    if not text.startswith("```"):
+        return text
+
+    lines = text.splitlines()
+    if len(lines) < 3:
+        raise TaskBreakdownValidationError("task breakdown returned invalid JSON")
+    opening = lines[0].strip()
+    language = opening[3:].strip().lower()
+    if language not in {"", "json"}:
+        raise TaskBreakdownValidationError("task breakdown returned invalid JSON")
+    if lines[-1].strip() != "```":
+        raise TaskBreakdownValidationError("task breakdown returned invalid JSON")
+    return "\n".join(lines[1:-1]).strip()
 
 
 def validate_breakdown_result(data: dict[str, Any]) -> TaskBreakdownResult:

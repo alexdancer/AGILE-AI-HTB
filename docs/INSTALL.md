@@ -8,9 +8,12 @@ Until the package is published to PyPI, install from the GitHub source URL:
 
 ```bash
 pipx install "git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git"
+cd /path/to/your/repo
 htb init
 htb serve
 ```
+
+The installed `htb` command is global. `htb init` writes repo-local state under `.htb/`; inside Git it targets the repository root, and outside Git it uses the current directory.
 
 If `htb` is not found after install, run:
 
@@ -46,6 +49,36 @@ AGILE_AI_HTB_INSTALL_SOURCE="git+https://github.com/alexdancer/AI-Harness-Token-
 ```
 
 The installer does not ask for or store API keys, portal tokens, Worker credentials, or native CLI auth. Configure the Control Plane after login at `/settings/control-plane`; configure native Worker CLIs such as OpenCode, Claude Code, Codex, and Hermes separately.
+
+## Updating AGILE-AI-HTB
+
+Updating replaces the global `htb` CLI package. It does not delete or recreate repo-local `.htb/` state such as `.htb/config.toml`, `.htb/secrets.env`, `.htb/guardrails.yaml`, or `.htb/harness.db`.
+
+Before the PyPI release, rerun the curl installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alexdancer/AI-Harness-Token-Tracker/main/install.sh | sh
+```
+
+Or update the package directly with the installer you used:
+
+```bash
+pipx install --force "git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git"
+```
+
+```bash
+uv tool install --force "git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git"
+```
+
+After the PyPI release, use the package upgrade command for your installer:
+
+```bash
+pipx upgrade agile-ai-htb
+```
+
+```bash
+uv tool upgrade agile-ai-htb
+```
 
 ## Homebrew status
 

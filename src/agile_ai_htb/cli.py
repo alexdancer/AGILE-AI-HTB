@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import subprocess
 from pathlib import Path
 from typing import Sequence
 
@@ -34,26 +35,35 @@ def main(argv: Sequence[str] | None = None) -> int:
     command = args.command or "serve"
 
     if command == "init":
-        config_path = Path(getattr(args, "config_path", None) or DEFAULT_CONFIG_PATH)
+        cwd = Path.cwd()
+        init_root, git_exclude_path = _resolve_init_root(cwd)
+        config_arg = getattr(args, "config_path", None)
+        secrets_arg = getattr(args, "secrets_path", None)
+        config_path = Path(config_arg) if config_arg else init_root / DEFAULT_CONFIG_PATH
         config = write_default_operator_config(config_path)
-        secrets_path = Path(getattr(args, "secrets_path", None) or DEFAULT_SECRETS_PATH)
+        secrets_path = Path(secrets_arg) if secrets_arg else init_root / DEFAULT_SECRETS_PATH
         write_default_secrets_env(config, secrets_path)
-        guardrails_path = write_default_guardrails_file(config)
-        print(f"Wrote {config_path}")
-        print(f"Wrote {secrets_path}")
-        print(f"Wrote {guardrails_path}")
+        guardrails_path = write_default_guardrails_file(config, base_dir=init_root)
+        database_path = _resolve_local_path(config.get("database_path") or ".htb/harness.db", init_root)
+        db.init_db(database_path)
+        _protect_local_state(init_root, git_exclude_path)
+        print(f"Initialized root {init_root}")
+        print(f"Wrote {_display_path(config_path, cwd)}")
+        print(f"Wrote {_display_path(secrets_path, cwd)}")
+        print(f"Wrote {_display_path(guardrails_path, cwd)}")
+        print(f"Wrote {_display_path(database_path, cwd)}")
         print("Start with htb serve, then add the control-plane API key in /settings/control-plane.")
         portal_token_env, control_key_env = secret_env_names(config)
-        print(f"Portal login token: set {portal_token_env} in {secrets_path}")
+        secrets_display = _display_path(secrets_path, cwd)
+        print(f"Portal login token: set {portal_token_env} in {secrets_display}")
         print(
             f"Control-plane API key: configure {control_key_env} in /settings/control-plane; "
-            f"{secrets_path} or shell env remain supported alternatives."
+            f"{secrets_display} or shell env remain supported alternatives."
         )
         return 0
 
     if command == "serve":
-        config = load_operator_config()
-        load_operator_secrets_env(config)
+        config, _, _, _ = _load_default_operator_state()
         database_path = _arg_path(args, "serve_database_path", "global_database_path")
         guardrails_path = _arg_path(args, "serve_guardrails_path", "global_guardrails_path")
         _set_path_env("TOKEN_TRACKER_DATABASE_PATH", database_path)
@@ -126,12 +136,12 @@ def _build_parser() -> argparse.ArgumentParser:
     init = subparsers.add_parser("init", help="Create local non-secret AGILE-AI-HTB operator config.")
     init.add_argument(
         "--config-path",
-        default=str(DEFAULT_CONFIG_PATH),
+        default=None,
         help="Operator config path to write. Defaults to .htb/config.toml.",
     )
     init.add_argument(
         "--secrets-path",
-        default=str(DEFAULT_SECRETS_PATH),
+        default=None,
         help="Local secrets env path to write. Defaults to .htb/secrets.env.",
     )
 
@@ -177,19 +187,19 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _check_operator_setup() -> int:
-    config = load_operator_config()
-    secrets = load_operator_secrets_env(config)
+    config, secrets, config_path, secrets_path = _load_default_operator_state()
     settings = Settings(operator_config=config)
+    cwd = Path.cwd()
     hard_fail = False
 
     if config:
-        print("PASS config loaded .htb/config.toml")
+        print(f"PASS config loaded {_display_path(config_path, cwd)}")
     else:
-        print("WARN config missing .htb/config.toml; using env/defaults")
+        print(f"WARN config missing {_display_path(config_path, cwd)}; using env/defaults")
     if secrets:
-        print("PASS secrets loaded .htb/secrets.env")
+        print(f"PASS secrets loaded {_display_path(secrets_path, cwd)}")
     else:
-        print("WARN secrets missing .htb/secrets.env; using shell env only")
+        print(f"WARN secrets missing {_display_path(secrets_path, cwd)}; using shell env only")
 
     for env_name, label in [
         (settings.portal_token_env, "portal token"),
@@ -259,6 +269,82 @@ def _print_worker_readiness(database_path: Path) -> None:
 
 def _arg_path(args: argparse.Namespace, primary: str, fallback: str) -> str | None:
     return getattr(args, primary, None) or getattr(args, fallback, None)
+
+
+def _load_default_operator_state() -> tuple[dict[str, object], dict[str, str], Path, Path]:
+    init_root, _ = _resolve_init_root(Path.cwd())
+    config_path = init_root / DEFAULT_CONFIG_PATH
+    secrets_path = init_root / DEFAULT_SECRETS_PATH
+    config = load_operator_config(config_path)
+    if config:
+        config = _resolve_config_paths(config, init_root)
+    secrets = load_operator_secrets_env(config, secrets_path)
+    return config, secrets, config_path, secrets_path
+
+
+def _resolve_config_paths(config: dict[str, object], init_root: Path) -> dict[str, object]:
+    resolved = dict(config)
+    for key in ["database_path", "guardrails_path"]:
+        if resolved.get(key):
+            resolved[key] = str(_resolve_local_path(resolved[key], init_root))
+    return resolved
+
+
+def _resolve_init_root(cwd: Path) -> tuple[Path, Path | None]:
+    git_root = _git_path(cwd, "--show-toplevel")
+    if git_root is None:
+        return cwd, None
+    exclude_path = _git_path(git_root, "--git-path", "info/exclude")
+    if exclude_path is not None and not exclude_path.is_absolute():
+        exclude_path = git_root / exclude_path
+    return git_root, exclude_path
+
+
+def _git_path(cwd: Path, *args: str) -> Path | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    return Path(value) if value else None
+
+
+def _resolve_local_path(value: object, base_dir: Path) -> Path:
+    path = Path(str(value))
+    return path if path.is_absolute() else base_dir / path
+
+
+def _protect_local_state(init_root: Path, git_exclude_path: Path | None) -> None:
+    if git_exclude_path is None:
+        gitignore = init_root / ".htb" / ".gitignore"
+        existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+        lines = {line.strip() for line in existing.splitlines()}
+        additions = [line for line in ["*", "!.gitignore"] if line not in lines]
+        if additions:
+            suffix = "" if existing.endswith("\n") or not existing else "\n"
+            addition_text = "\n".join(additions)
+            gitignore.write_text(f"{existing}{suffix}{addition_text}\n", encoding="utf-8")
+        return
+    git_exclude_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = git_exclude_path.read_text(encoding="utf-8") if git_exclude_path.exists() else ""
+    if ".htb/" not in {line.strip() for line in existing.splitlines()}:
+        suffix = "" if existing.endswith("\n") or not existing else "\n"
+        git_exclude_path.write_text(f"{existing}{suffix}.htb/\n", encoding="utf-8")
+
+
+def _display_path(path: Path, cwd: Path) -> str:
+    try:
+        return str(path.relative_to(cwd))
+    except ValueError:
+        return str(path)
 
 
 def _set_path_env(name: str, value: str | None) -> None:

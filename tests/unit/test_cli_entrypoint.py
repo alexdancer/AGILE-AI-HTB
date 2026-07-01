@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -130,6 +131,114 @@ def test_init_writes_non_secret_operator_config(monkeypatch, tmp_path, capsys):
     assert "export TOKEN_TRACKER_PORTAL_TOKEN" not in output
 
 
+def test_init_creates_database_and_outside_git_ignore(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["init"]) == 0
+    db_path = tmp_path / ".htb" / "harness.db"
+    db.create_task(db_path, description="keep this", status="Blocked")
+    gitignore = tmp_path / ".htb" / ".gitignore"
+    gitignore.write_text("# keep local notes\n", encoding="utf-8")
+    assert main(["init"]) == 0
+
+    assert db_path.exists()
+    assert [task["description"] for task in db.list_tasks(db_path)] == ["keep this"]
+    gitignore_lines = gitignore.read_text(encoding="utf-8").splitlines()
+    assert "# keep local notes" in gitignore_lines
+    assert "*" in gitignore_lines
+    assert "!.gitignore" in gitignore_lines
+    output = capsys.readouterr().out
+    assert f"Initialized root {tmp_path}" in output
+    assert "Wrote .htb/harness.db" in output
+
+
+def test_init_from_git_subdirectory_uses_repo_root_and_exclude(monkeypatch, tmp_path, capsys):
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subdir = tmp_path / "nested" / "work"
+    subdir.mkdir(parents=True)
+    monkeypatch.chdir(subdir)
+
+    assert main(["init"]) == 0
+
+    assert (tmp_path / ".htb" / "config.toml").exists()
+    assert (tmp_path / ".htb" / "secrets.env").exists()
+    assert (tmp_path / ".htb" / "guardrails.yaml").exists()
+    assert (tmp_path / ".htb" / "harness.db").exists()
+    assert not (subdir / ".htb").exists()
+    assert ".htb/" in (tmp_path / ".git" / "info" / "exclude").read_text()
+    output = capsys.readouterr().out
+    assert f"Initialized root {tmp_path}" in output
+
+
+def test_init_falls_back_to_cwd_when_git_is_unavailable(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+
+    def raise_missing_git(*args, **kwargs):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr("agile_ai_htb.cli.subprocess.run", raise_missing_git)
+
+    assert main(["init"]) == 0
+
+    assert (tmp_path / ".htb" / "config.toml").exists()
+    assert (tmp_path / ".htb" / "harness.db").exists()
+    assert (tmp_path / ".htb" / ".gitignore").read_text() == "*\n!.gitignore\n"
+
+
+def test_init_explicit_config_and_secrets_paths_are_not_relocated(monkeypatch, tmp_path):
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subdir = tmp_path / "nested"
+    subdir.mkdir()
+    monkeypatch.chdir(subdir)
+
+    assert main(["init", "--config-path", "local-config.toml", "--secrets-path", "local-secrets.env"]) == 0
+
+    assert (subdir / "local-config.toml").exists()
+    assert (subdir / "local-secrets.env").exists()
+    assert not (tmp_path / ".htb" / "config.toml").exists()
+    assert not (tmp_path / ".htb" / "secrets.env").exists()
+    assert (tmp_path / ".htb" / "guardrails.yaml").exists()
+    assert (tmp_path / ".htb" / "harness.db").exists()
+
+
+def test_serve_from_git_subdirectory_reads_repo_root_config(monkeypatch, tmp_path):
+    calls = []
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subdir = tmp_path / "nested" / "work"
+    subdir.mkdir(parents=True)
+    monkeypatch.chdir(subdir)
+    _clear_cli_env(monkeypatch)
+    monkeypatch.setattr("agile_ai_htb.cli.uvicorn.run", lambda app_ref, **kwargs: calls.append((app_ref, kwargs)))
+
+    assert main(["init"]) == 0
+    _clear_cli_env(monkeypatch)
+    assert main(["serve"]) == 0
+
+    assert calls
+    assert __import__("os").environ["TOKEN_TRACKER_DATABASE_PATH"] == str(tmp_path / ".htb" / "harness.db")
+    assert __import__("os").environ["TOKEN_TRACKER_GUARDRAILS_PATH"] == str(tmp_path / ".htb" / "guardrails.yaml")
+    assert __import__("os").environ["TOKEN_TRACKER_PORTAL_TOKEN"].startswith("htb-")
+
+
+def test_check_from_git_subdirectory_reads_repo_root_state(monkeypatch, tmp_path, capsys):
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subdir = tmp_path / "nested" / "work"
+    subdir.mkdir(parents=True)
+    monkeypatch.chdir(subdir)
+    _clear_cli_env(monkeypatch)
+
+    assert main(["init"]) == 0
+    capsys.readouterr()
+    _clear_cli_env(monkeypatch)
+
+    assert main(["check"]) == 1
+
+    output = capsys.readouterr().out
+    assert f"PASS config loaded {tmp_path / '.htb' / 'config.toml'}" in output
+    assert f"PASS secrets loaded {tmp_path / '.htb' / 'secrets.env'}" in output
+    assert "PASS portal token env TOKEN_TRACKER_PORTAL_TOKEN present" in output
+
+
 def test_init_preserves_existing_config_and_prints_configured_secret_env_names(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
     assert main(["init"]) == 0
@@ -206,7 +315,7 @@ def test_serve_reads_operator_config_when_flags_missing(monkeypatch, tmp_path):
     assert exit_code == 0
     assert calls[0][1]["host"] == "127.0.0.1"
     assert calls[0][1]["port"] == 8000
-    assert __import__("os").environ["TOKEN_TRACKER_DATABASE_PATH"] == ".htb/harness.db"
+    assert __import__("os").environ["TOKEN_TRACKER_DATABASE_PATH"] == str(tmp_path / ".htb" / "harness.db")
     assert __import__("os").environ["AGILE_AI_HTB_CONTROL_MODEL"] == "gpt-5.4-mini"
     assert __import__("os").environ["TOKEN_TRACKER_PORTAL_TOKEN"].startswith("htb-")
     assert __import__("os").environ["AGILE_AI_HTB_CONTROL_API_KEY"] == "sk-test-control-key"

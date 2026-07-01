@@ -12,8 +12,9 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from agile_ai_htb import db
+from agile_ai_htb.native_usage import native_sentinel_matched, parse_native_usage_evidence
 from agile_ai_htb.tracking_modes import NATIVE_USAGE, OBSERVED_ONLY, PROXY_GOVERNED
-from agile_ai_htb.worker_model_allowlist import allowed_worker_model_ids
+from agile_ai_htb.worker_model_allowlist import SEEDED_WORKER_ADAPTER_MODELS, allowed_worker_model_ids
 
 SENTINEL_RESPONSE = "AGILE_AI_HTB_ADAPTER_OK"
 SENTINEL_PROMPT = (
@@ -22,8 +23,10 @@ SENTINEL_PROMPT = (
 )
 SECRET_ENV_TERMS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "AUTHORIZATION")
 SECRET_VALUE_PATTERN = re.compile("s" "k_" r"[A-Za-z0-9_\-.]+")
+MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$")
 SUBPROCESS_RUNNER_TIMEOUT_SECONDS = 60
 OPENCODE_AGENT_LAUNCH_TIMEOUT_SECONDS = 600
+CLAUDE_CODE_AGENT_LAUNCH_TIMEOUT_SECONDS = 600
 SECRET_COMMAND_FLAGS = {
     "--api-key",
     "--apikey",
@@ -60,15 +63,6 @@ class ModelDiscoveryResult:
     evidence: dict[str, Any]
 
 
-@dataclass(frozen=True)
-class NativeUsageEvidence:
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
-    cost: float
-    raw_usage: dict[str, Any]
-
-
 class Runner(Protocol):
     def __call__(self, plan: CommandPlan) -> Any: ...
 
@@ -82,8 +76,8 @@ class WorkerAdapterBuilder:
         self.config = adapter.get("config", {})
 
     def supports_model(self, model: str) -> bool:
-        supported = self.adapter.get("supported_models") or []
-        return not supported or model in supported
+        supported = allowed_worker_model_ids(self.adapter)
+        return bool(supported and model in supported)
 
     def build_verification_command(
         self,
@@ -292,7 +286,28 @@ class ClaudeCodeAdapterBuilder(WorkerAdapterBuilder):
         ]
 
     def _default_native_launch_template(self) -> list[str]:
-        return self._default_native_verification_template()
+        return [
+            "claude",
+            "-p",
+            "--model",
+            "{model}",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--permission-mode",
+            "acceptEdits",
+            "--allowedTools",
+            "Bash,Write,Edit,MultiEdit",
+            "--max-budget-usd",
+            "{max_budget_usd}",
+            "{prompt}",
+        ]
+
+    def _timeout_metadata(self, purpose_key: str) -> dict[str, int]:
+        metadata = super()._timeout_metadata(purpose_key)
+        if metadata or purpose_key != "launch_timeout_seconds":
+            return metadata
+        return {"timeout_seconds": CLAUDE_CODE_AGENT_LAUNCH_TIMEOUT_SECONDS}
 
 
 class CodexAdapterBuilder(WorkerAdapterBuilder):
@@ -417,6 +432,11 @@ BUILDERS = {
     "opencode": OpenCodeAdapterBuilder,
 }
 
+CURATED_MODEL_DISCOVERY_SOURCES = {
+    "claude_code": "agile_ai_htb_curated_claude_code_models",
+    "hermes": "agile_ai_htb_curated_hermes_models",
+}
+
 
 def get_adapter_builder(adapter: dict[str, Any]) -> WorkerAdapterBuilder:
     return BUILDERS.get(adapter.get("kind"), WorkerAdapterBuilder)(adapter)
@@ -478,6 +498,10 @@ def discover_worker_models(
     runner: Runner | None = None,
 ) -> ModelDiscoveryResult:
     adapter = db.get_worker_adapter(database_path, adapter_id)
+    curated_source = CURATED_MODEL_DISCOVERY_SOURCES.get(str(adapter.get("kind")))
+    if curated_source:
+        return _discover_curated_worker_models(database_path, adapter, source=curated_source)
+
     plan = _model_discovery_plan(adapter)
     reasons: list[str] = []
     try:
@@ -510,14 +534,54 @@ def discover_worker_models(
     return ModelDiscoveryResult(not reasons, adapter_id, models, reasons, evidence)
 
 
+def _discover_curated_worker_models(
+    database_path: Path | str,
+    adapter: dict[str, Any],
+    *,
+    source: str,
+) -> ModelDiscoveryResult:
+    adapter_id = str(adapter["id"])
+    models = list(SEEDED_WORKER_ADAPTER_MODELS[adapter_id])
+    config = dict(adapter.get("config") or {})
+    approved_models = [model for model in allowed_worker_model_ids(adapter) if model in models]
+    evidence = {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": "",
+        "models": models,
+        "command_plan": None,
+        "tracking_mode": "curated",
+        "source": source,
+    }
+    config = {**config, "model_discovery": evidence}
+    db.update_worker_adapter(database_path, adapter_id, config=config, supported_models=approved_models)
+    return ModelDiscoveryResult(True, adapter_id, models, [], evidence)
+
+
 def discovered_worker_model_ids(adapter: dict[str, Any]) -> list[str]:
+    curated_models = _curated_discovered_model_ids(adapter)
+    if curated_models is not None:
+        return curated_models
+
     discovery = (adapter.get("config") or {}).get("model_discovery") or {}
     models = [str(model) for model in discovery.get("models") or []]
+    models = [model for model in models if _looks_like_model_id(model)]
     if models:
         return models
-    if adapter.get("kind") == "claude_code":
-        return [str(model) for model in adapter.get("supported_models") or []]
     return []
+
+
+def _curated_discovered_model_ids(adapter: dict[str, Any]) -> list[str] | None:
+    source = CURATED_MODEL_DISCOVERY_SOURCES.get(str(adapter.get("kind")))
+    if not source:
+        return None
+    seeded_models = list(SEEDED_WORKER_ADAPTER_MODELS[str(adapter["id"])])
+    discovery = (adapter.get("config") or {}).get("model_discovery") or {}
+    if discovery.get("tracking_mode") != "curated" or discovery.get("source") != source:
+        return seeded_models
+    discovered_models = [str(model) for model in discovery.get("models") or []]
+    discovered_models = [model for model in discovered_models if model in seeded_models]
+    return discovered_models or seeded_models
 
 
 def _adapter_command_name(adapter: dict[str, Any]) -> str | None:
@@ -564,11 +628,20 @@ def _parse_discovered_models(stdout: str) -> list[str]:
     models: list[str] = []
     for candidate in candidates:
         model = str(candidate).strip()
-        if not model or model in seen:
+        if not _looks_like_model_id(model) or model in seen:
             continue
         seen.add(model)
         models.append(model)
     return models
+
+
+def _looks_like_model_id(model: str) -> bool:
+    if not model or not MODEL_ID_PATTERN.fullmatch(model):
+        return False
+    lowered = model.lower()
+    if lowered.startswith("model"):
+        return False
+    return any(char.isdigit() or char in "/-_.:" for char in model)
 
 
 def _models_from_json(value: Any) -> list[str]:
@@ -660,13 +733,13 @@ def verify_worker_adapter(
         )
     stdout = str(_result_field(completed, "stdout") or "")
     returncode = int(_result_field(completed, "returncode", 0) or 0)
-    sentinel_matched = _native_sentinel_matched(stdout) if tracking_mode in {NATIVE_USAGE, OBSERVED_ONLY} else stdout.strip() == SENTINEL_RESPONSE
+    sentinel_matched = native_sentinel_matched(stdout, SENTINEL_RESPONSE) if tracking_mode in {NATIVE_USAGE, OBSERVED_ONLY} else stdout.strip() == SENTINEL_RESPONSE
     if returncode != 0:
         reasons.append("Adapter verification command failed.")
     if not sentinel_matched:
         reasons.append("Adapter did not return exact verification sentinel.")
 
-    native_usage = _parse_native_usage_evidence(stdout, model=model, returncode=returncode) if tracking_mode == NATIVE_USAGE else None
+    native_usage = parse_native_usage_evidence(stdout, model=model, returncode=returncode) if tracking_mode == NATIVE_USAGE else None
     if tracking_mode == NATIVE_USAGE:
         if native_usage is None:
             reasons.append("No trustworthy native usage evidence was emitted for selected model.")
@@ -713,214 +786,6 @@ def verify_worker_adapter(
     adapter = db.mark_worker_adapter_verification(database_path, adapter_id, verified=passed, evidence=evidence)
     db.update_session_status(database_path, session["id"], "completed" if passed else "failed")
     return VerificationResult(passed, adapter_id, session["id"], reasons, adapter["verification_evidence"])
-
-
-def _native_sentinel_matched(stdout: str) -> bool:
-    if stdout.strip() == SENTINEL_RESPONSE:
-        return True
-    return any(SENTINEL_RESPONSE in str(value) for value in _walk_json_values(_parse_json_stream(stdout)))
-
-
-def _parse_native_usage_evidence(stdout: str, *, model: str, returncode: int = 0) -> NativeUsageEvidence | None:
-    if returncode != 0:
-        return None
-    for item in _walk_json_dicts(_parse_json_stream(stdout)):
-        usage = _usage_payload(item)
-        if not usage:
-            continue
-        explicit_model = _usage_model(item, usage)
-        if explicit_model and explicit_model != model:
-            continue
-        model_usage_map = item.get("modelUsage") or item.get("model_usage")
-        if (
-            not explicit_model
-            and (not isinstance(model_usage_map, dict) or _matching_model_usage(model_usage_map, model=model) is None)
-            and not _selected_model_bound_usage(item, usage)
-        ):
-            continue
-        run_binding = _usage_run_binding(item, usage)
-        if run_binding is None:
-            continue
-        prompt_tokens = _prompt_token_count(usage)
-        completion_tokens = _completion_token_count(usage)
-        total_tokens = _int_from_any(usage.get("total_tokens") or usage.get("total"))
-        if total_tokens <= 0:
-            total_tokens = prompt_tokens + completion_tokens
-        cost = _native_usage_cost(item, usage, model=model)
-        if total_tokens <= 0 or cost is None:
-            continue
-        return NativeUsageEvidence(
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            cost=cost,
-            raw_usage={
-                "model": explicit_model or model,
-                "usage": usage,
-                "run_binding": run_binding,
-                "source": item,
-            },
-        )
-    return None
-
-
-def _prompt_token_count(usage: dict[str, Any]) -> int:
-    base_prompt_tokens = _int_from_any(
-        usage.get("prompt_tokens") or usage.get("input_tokens") or usage.get("input") or usage.get("tokens_in")
-    )
-    cache = usage.get("cache")
-    return (
-        base_prompt_tokens
-        + _int_from_any(usage.get("cache_read_input_tokens") or usage.get("cacheReadInputTokens"))
-        + _int_from_any(usage.get("cache_creation_input_tokens") or usage.get("cacheCreationInputTokens"))
-        + (_int_from_any(cache.get("read")) + _int_from_any(cache.get("write")) if isinstance(cache, dict) else 0)
-    )
-
-
-def _completion_token_count(usage: dict[str, Any]) -> int:
-    return _int_from_any(
-        usage.get("completion_tokens") or usage.get("output_tokens") or usage.get("output") or usage.get("tokens_out")
-    )
-
-
-def _native_usage_cost(item: dict[str, Any], usage: dict[str, Any], *, model: str) -> float | None:
-    model_usage = item.get("modelUsage") or item.get("model_usage")
-    if isinstance(model_usage, dict):
-        matching_details = _matching_model_usage(model_usage, model=model)
-        if matching_details is not None and matching_details.get("costUSD") is not None:
-            return _float_from_any(matching_details.get("costUSD"))
-        return None
-    for value in (item.get("total_cost_usd"), usage.get("cost"), usage.get("cost_usd"), usage.get("usd"), item.get("cost")):
-        if value is not None:
-            return _float_from_any(value)
-    return None
-
-
-def _matching_model_usage(model_usage: dict[str, Any], *, model: str) -> dict[str, Any] | None:
-    for usage_model, details in model_usage.items():
-        if not isinstance(details, dict):
-            continue
-        if _model_usage_matches(str(usage_model), selected_model=model):
-            return details
-    return None
-
-
-def _model_usage_matches(usage_model: str, *, selected_model: str) -> bool:
-    normalized_usage = usage_model.lower().replace("_", "-")
-    normalized_selected = selected_model.lower().replace("_", "-")
-    if normalized_usage == normalized_selected:
-        return True
-    alias_terms = {"sonnet", "haiku", "opus"}
-    return normalized_selected in alias_terms and normalized_selected in normalized_usage
-
-
-def _parse_json_stream(text: str) -> list[Any]:
-    stripped = text.strip()
-    if not stripped:
-        return []
-    try:
-        return [json.loads(stripped)]
-    except json.JSONDecodeError:
-        pass
-    values: list[Any] = []
-    for line in stripped.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            values.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return values
-
-
-def _walk_json_values(values: list[Any]) -> list[Any]:
-    walked: list[Any] = []
-    for value in values:
-        walked.append(value)
-        if isinstance(value, dict):
-            walked.extend(_walk_json_values(list(value.values())))
-        elif isinstance(value, list):
-            walked.extend(_walk_json_values(value))
-    return walked
-
-
-def _walk_json_dicts(values: list[Any]) -> list[dict[str, Any]]:
-    return [value for value in _walk_json_values(values) if isinstance(value, dict)]
-
-
-def _usage_payload(item: dict[str, Any]) -> dict[str, Any] | None:
-    for key in ("usage", "tokens", "token_usage", "cost"):
-        candidate = item.get(key)
-        if isinstance(candidate, dict) and any(_looks_like_usage_key(usage_key) for usage_key in candidate):
-            return candidate
-    if any(_looks_like_usage_key(key) for key in item):
-        return item
-    return None
-
-
-def _usage_model(item: dict[str, Any], usage: dict[str, Any]) -> str | None:
-    for container in (usage, item):
-        for key in ("model", "model_id", "modelID"):
-            if container.get(key):
-                return str(container[key])
-    return None
-
-
-def _usage_run_binding(item: dict[str, Any], usage: dict[str, Any]) -> dict[str, str] | None:
-    for container in (item, usage):
-        for key in ("session_id", "sessionID", "run_id", "command_id", "conversation_id", "messageID"):
-            if container.get(key):
-                return {key: str(container[key])}
-    return None
-
-
-def _selected_model_bound_usage(item: dict[str, Any], usage: dict[str, Any]) -> bool:
-    # ponytail: OpenCode step-finish stopped repeating model; the command plan already pins the selected model.
-    return item.get("type") == "step-finish" and item.get("tokens") is usage and _usage_run_binding(item, usage) is not None
-
-
-def _looks_like_usage_key(key: str) -> bool:
-    normalized = key.lower()
-    return normalized in {
-        "prompt_tokens",
-        "completion_tokens",
-        "input_tokens",
-        "output_tokens",
-        "total_tokens",
-        "tokens_in",
-        "tokens_out",
-        "cost_usd",
-        "input",
-        "output",
-        "total",
-        "reasoning",
-    }
-
-
-def _int_from_any(value: Any) -> int:
-    if value is None:
-        return 0
-    if isinstance(value, str):
-        value = value.replace(",", "").strip()
-        if value.endswith("K"):
-            return int(float(value[:-1]) * 1000)
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _float_from_any(value: Any) -> float:
-    if value is None:
-        return 0.0
-    if isinstance(value, str):
-        value = value.replace("$", "").replace(",", "").strip()
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return 0.0
-
 
 def subprocess_runner(plan: CommandPlan) -> subprocess.CompletedProcess[str]:
     timeout_seconds = _timeout_seconds(plan)

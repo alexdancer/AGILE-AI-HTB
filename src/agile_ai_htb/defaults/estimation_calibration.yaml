@@ -1,0 +1,48 @@
+# DEMO-safe sample calibration cases for Worker execution token estimates.
+# Operators can add local, uncommitted cases at .htb/estimation_calibration.yaml.
+# All entries here are synthetic: 2099 dates, DEMO names, 999-style IDs.
+
+cases:
+  - id: DEMO-CAL-2099-999-001
+    task_description: "Add DEMO_PORTAL_2099 board filter controls with rendered-template tests for active and archived synthetic tasks."
+    project_profile:
+      name: DEMO_REPO_2099_TOKEN_TRACKER
+      language: python
+      framework: fastapi-jinja
+      test_command: pytest
+    task_kind: implementation
+    complexity: modest
+    recommended_model: claude-3-5-sonnet-20240620
+    expected_tokens_min: 9000
+    expected_tokens_max: 18000
+    actual_tokens: 12600
+    rationale: "Portal route plus Jinja assertions usually needs route inspection, template edits, and focused API tests."
+
+  - id: DEMO-CAL-2099-999-002
+    task_description: "Fix DEMO_2099 typo in operator docs and add invariant test coverage for synthetic DEMO addresses."
+    project_profile:
+      name: DEMO_REPO_2099_TOKEN_TRACKER
+      language: markdown
+      framework: docs
+      test_command: pytest
+    task_kind: implementation
+    complexity: simple
+    recommended_model: claude-3-haiku-20240307
+    expected_tokens_min: 2500
+    expected_tokens_max: 7000
+    rationale: "Small docs/test task with narrow search and no runtime integration."
+
+  - id: DEMO-CAL-2099-999-003
+    task_description: "Implement DEMO_WORKER_2099 token evidence parsing and preserve Worker execution actual tokens separately from Control Plane spend."
+    project_profile:
+      name: DEMO_REPO_2099_TOKEN_TRACKER
+      language: python
+      framework: fastapi-worker-harness
+      test_command: pytest
+    task_kind: implementation
+    complexity: complex
+    recommended_model: claude-3-opus-20240229
+    expected_tokens_min: 28000
+    expected_tokens_max: 55000
+    actual_tokens: 41800
+    rationale: "Cross-module Worker evidence and budget accounting changes usually touch launch, DB, reporting, and regression tests."

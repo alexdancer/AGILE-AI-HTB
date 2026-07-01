@@ -62,9 +62,10 @@ def start_session(payload: SessionStartRequest, request: Request) -> dict[str, A
 def session_report(session_id: str, request: Request) -> dict[str, Any]:
     artifact = _artifact_or_404(request, session_id)
     token_totals = _token_totals(artifact)
+    token_breakdown = db.session_token_breakdown(_database_path(request), session_id)
     config = _guardrails(request)
     budget = artifact["session"].get("guardrail_overrides", {}).get("budget", {})
-    daily_used_tokens = int(budget.get("daily_used_tokens", 0)) + token_totals["total_tokens"]
+    daily_used_tokens = int(budget.get("daily_used_tokens", 0)) + int(token_breakdown["total_tokens"])
     current_zone = get_budget_zone(daily_used_tokens, _daily_cap_tokens(budget, config), config)
     return {
         "session": artifact["session"],

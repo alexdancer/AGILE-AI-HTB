@@ -171,6 +171,41 @@ def test_successful_worker_run_records_actual_worker_execution_tokens(tmp_path):
     assert completed["actual_tokens"] == 77
 
 
+def test_native_worker_actuals_and_budget_exclude_cache_read_but_count_cache_write(tmp_path):
+    db_path = tmp_path / "harness.db"
+    task = _verified_budget_task(db_path, tmp_path, estimate=100, budget={"daily_used_tokens": 0, "daily_cap_tokens": 500})
+
+    def runner(plan):
+        db.record_token_turn(
+            db_path,
+            session_id=plan.metadata["session_id"],
+            usage_kind="task_execution",
+            model="opencode/gpt-5.1",
+            prompt_tokens=120,
+            completion_tokens=40,
+            cost=0,
+            raw_usage={
+                "input_tokens": 50,
+                "cache_read_input_tokens": 70,
+                "cache_creation_input_tokens": 30,
+                "output_tokens": 40,
+                "total_tokens": 190,
+            },
+        )
+        return {"returncode": 0, "stdout": "done", "stderr": ""}
+
+    launch_task(db_path, task["id"], adapter_id="opencode", model=None, proxy_url=None, runner=runner)
+    _wait_for_worker_run(db_path, task["id"], "completed")
+    completed = db.get_task(db_path, task["id"])
+
+    assert completed["status"] == "Review"
+    assert completed["actual_tokens"] == 120
+    assert db.budgeted_token_usage(db_path) == 120
+    breakdown = db.token_usage_breakdown(db_path)
+    assert breakdown["total_tokens"] == 120
+    assert breakdown["by_category"]["worker_execution"] == 120
+
+
 def test_launch_rejects_task_from_different_project_board(tmp_path):
     db_path = tmp_path / "harness.db"
     db.init_db(db_path)

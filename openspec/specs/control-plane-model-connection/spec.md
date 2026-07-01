@@ -37,7 +37,7 @@ The system SHALL preserve existing provider key environment aliases where practi
 - **THEN** the system does not copy that key into unrelated provider-specific env vars such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `COHERE_API_KEY`, or `GROQ_API_KEY`
 
 ### Requirement: Control-plane connection test
-The system SHALL allow the operator to verify the configured control-plane model without launching a Worker Harness.
+The system SHALL allow the operator to verify the configured control-plane model without launching a Worker Harness, and SHALL present browser-initiated test results inside the Control Plane settings UI rather than navigating to a raw JSON result page.
 
 #### Scenario: Control-plane test succeeds
 - **WHEN** the operator runs a control-plane model connection test
@@ -46,6 +46,22 @@ The system SHALL allow the operator to verify the configured control-plane model
 #### Scenario: Control-plane test fails
 - **WHEN** the configured control-plane model cannot be called
 - **THEN** the system records a sanitized failure reason and keeps Worker Harness launch readiness independent from the failed control-plane test
+
+#### Scenario: Browser test returns to settings UI
+- **WHEN** an authenticated operator submits the Control Plane connection test from the Portal settings page
+- **THEN** the system SHALL record the sanitized test result
+- **AND** the response SHALL return the operator to `/settings/control-plane` instead of rendering a JSON response page
+- **AND** the settings page SHALL show a concise success or failure result for the latest test
+
+#### Scenario: Settings UI preserves auditable raw evidence
+- **WHEN** the Control Plane settings page displays a recorded connection test
+- **THEN** the page SHALL show the primary result as readable status fields such as status, provider, model, token usage, or sanitized error
+- **AND** full sanitized raw details SHALL remain available behind a native disclosure or equivalent secondary detail view
+- **AND** raw control-plane API key values SHALL NOT be displayed
+
+#### Scenario: API test remains JSON
+- **WHEN** an authenticated API client posts a Control Plane connection test request that prefers JSON
+- **THEN** the system SHALL return the machine-readable JSON result with the recorded sanitized status
 
 ### Requirement: Live control-plane connection editing
 The system SHALL allow an authenticated operator to edit the control-plane provider, model, base URL, and API key environment variable name from the portal without restarting the application.
@@ -66,7 +82,7 @@ The system SHALL allow an authenticated operator to edit the control-plane provi
 - **AND** new control-plane requests SHALL use the saved settings after the save succeeds
 
 ### Requirement: Control-plane preset selection
-The system SHALL provide a small set of portal presets and a real model dropdown for common control-plane connection shapes while preserving an explicit custom model path for OpenAI-compatible endpoints or future model IDs.
+The system SHALL provide a small set of portal presets and a real model dropdown for common control-plane connection shapes while preserving an explicit custom model path for OpenAI-compatible endpoints, future model IDs, existing non-curated saved IDs, and provider-incompatible saved IDs.
 
 #### Scenario: OpenAI preset selected
 - **WHEN** the operator selects the OpenAI preset
@@ -86,10 +102,25 @@ The system SHALL provide a small set of portal presets and a real model dropdown
 #### Scenario: Operator chooses a curated control-plane model
 - **WHEN** the operator opens the Control Plane model settings form for a curated provider/model choice
 - **THEN** the normal model chooser SHALL render as a native dropdown control rather than a textbox or `datalist`
-- **AND** the dropdown SHALL include the supported curated Control Plane model choices
+- **AND** the dropdown SHALL include the supported curated Control Plane model choices for the selected provider
+
+#### Scenario: OpenAI provider filters model choices
+- **WHEN** the operator selects provider `openai`
+- **THEN** the model dropdown SHALL show OpenAI curated model choices
+- **AND** it SHALL NOT show Anthropic `claude-*` curated choices as selectable options
+
+#### Scenario: Anthropic provider filters model choices
+- **WHEN** the operator selects provider `anthropic`
+- **THEN** the model dropdown SHALL show Anthropic `claude-*` curated model choices
+- **AND** it SHALL NOT show OpenAI curated choices as selectable options
+
+#### Scenario: OpenAI-compatible provider uses custom model path
+- **WHEN** the operator selects provider `openai-compatible`
+- **THEN** the model dropdown SHALL select or expose the Custom model path
+- **AND** first-party OpenAI and Anthropic curated model choices SHALL NOT be selectable for that provider
 
 #### Scenario: Existing custom model preserved
-- **WHEN** the saved Control Plane model is not one of the curated dropdown choices
+- **WHEN** the saved Control Plane model is not one of the curated dropdown choices for the saved provider
 - **THEN** the form SHALL preserve the existing model value through an explicit custom model path
 - **AND** saving without choosing a different model SHALL NOT silently replace the custom value with a curated default
 
@@ -156,4 +187,28 @@ The system SHALL allow an authenticated operator to provide the control-plane AP
 - **WHEN** an authenticated operator saves a new control-plane API key value
 - **THEN** the system SHALL mark prior connection test evidence as needing a new test
 - **AND** the system SHALL NOT require the provider connection test to pass before saving the local settings and secret
+
+### Requirement: Provider-compatible Task Breakdown structured output
+The system SHALL normalize provider-specific structured-output response wrappers for Task Breakdown Agent calls while preserving strict validation of the resulting Proposed Task Breakdown object.
+
+#### Scenario: Claude returns fenced JSON for task breakdown
+- **WHEN** the configured Task Breakdown Model is a direct Anthropic/Claude control-plane model
+- **AND** the provider response content is a single fenced JSON block containing a complete Proposed Task Breakdown object
+- **THEN** the system parses the fenced JSON content
+- **AND** validates it with the existing Task Breakdown schema before creating a Proposed Task Breakdown review
+
+#### Scenario: Claude task breakdown requires enough output tokens
+- **WHEN** the Task Breakdown Agent calls a direct Anthropic/Claude control-plane model
+- **THEN** the request includes an explicit completion-token cap of at least 16,384 tokens for the required Proposed Task Breakdown JSON object
+- **AND** the cap is scoped to Task Breakdown Agent calls rather than changing unrelated control-plane requests
+
+#### Scenario: Invalid or truncated provider output remains failed breakdown
+- **WHEN** a Task Breakdown Model response is malformed, incomplete, truncated, or does not decode to an object that satisfies the Task Breakdown schema
+- **THEN** the system records a breakdown-failed/manual recovery state
+- **AND** it does not silently create deterministic Markdown-split tasks
+- **AND** it does not create an oversized whole-source Estimated Task without operator action
+
+#### Scenario: Worker model configuration remains separate
+- **WHEN** stabilizing direct Anthropic/Claude Task Breakdown Agent parsing
+- **THEN** the system does not change Worker Adapter model discovery, Worker launch commands, or Worker execution model selection
 

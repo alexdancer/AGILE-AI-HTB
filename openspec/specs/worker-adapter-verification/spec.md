@@ -4,15 +4,21 @@
 Define Worker Adapter presets and token-tracking verification rules so local agent adapters become launchable only after real budget-authoritative usage is proven without exposing control-plane provider credentials to Worker Harnesses.
 ## Requirements
 ### Requirement: First-class Worker Adapter presets
-The system SHALL expose OpenCode, Claude Code, Codex, and Hermes as first-class Worker Adapter presets while allowing only adapters with verified budget-authoritative tracking modes to launch normal governed tasks.
+The system SHALL expose OpenCode, Claude Code, Codex, and Hermes as first-class Worker Adapter presets while allowing only adapters with verified budget-authoritative tracking modes to launch normal governed tasks. Adapter launch compatibility SHALL be based on operator-approved allowed Worker models, whether the model inventory came from native discovery or a curated adapter inventory.
 
 #### Scenario: Unverified adapter visible but blocked
 - **WHEN** a Worker Adapter preset exists but has not passed token-tracking verification
 - **THEN** the Portal shows the adapter status and keeps normal governed Launch disabled for that adapter
 
 #### Scenario: Adapter verified in native usage mode
-- **WHEN** a Worker Adapter has proven native usage import for at least one discovered model
-- **THEN** the Portal shows the adapter as native-usage verified and eligible for governed local launch with compatible discovered models
+- **WHEN** a Worker Adapter has proven native usage import for at least one operator-approved allowed model
+- **THEN** the Portal shows the adapter as native-usage verified and eligible for governed local launch with compatible allowed models
+
+#### Scenario: Claude Code verifies with curated allowed model
+- **WHEN** Claude Code model discovery is curated rather than native
+- **AND** the operator selects an allowed curated Claude Code model for verification
+- **AND** Claude Code emits trustworthy native usage evidence for that model
+- **THEN** the Portal shows Claude Code as native-usage verified and eligible for governed local launch with compatible allowed Claude Code models
 
 ### Requirement: OpenCode first verified adapter
 The system SHALL support OpenCode as the first Worker Adapter target for local token-tracking verification through either proxy-governed mode or native usage mode.
@@ -115,11 +121,12 @@ The system SHALL treat normal Worker launch readiness as the combination of a la
 ### Requirement: Claude Code native usage verification
 The system SHALL verify Claude Code in `native_usage` mode when a non-interactive Claude Code sentinel run emits machine-readable, run-bound token usage and cost evidence for the selected Worker model.
 
-#### Scenario: Claude Code native verification records cache-inclusive usage
+#### Scenario: Claude Code native verification records cache component evidence
 - **WHEN** Claude Code verification runs with `claude -p --model {model} --output-format json|stream-json --verbose` and returns the required sentinel output
 - **AND** the result evidence includes `session_id`, `usage`, `modelUsage`, and `total_cost_usd`
 - **THEN** the system records adapter verification usage as `adapter_verification`
-- **AND** the recorded prompt-side tokens include `input_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens`
+- **AND** the recorded raw evidence includes `input_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens`
+- **AND** normalized budget accounting excludes cache-read/reused-context tokens while preserving them as audit evidence
 - **AND** the recorded completion tokens include `output_tokens`
 - **AND** verification evidence records `tracking_mode=native_usage` and `tracking_authoritative=true`
 

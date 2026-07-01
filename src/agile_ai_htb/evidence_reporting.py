@@ -4,6 +4,8 @@ import json
 import re
 from typing import Any
 
+from agile_ai_htb.native_usage import token_usage_components
+
 TOKEN_EVIDENCE_KEYS = {"prompt_tokens", "completion_tokens", "total_tokens"}
 TOKEN_EVIDENCE_CONTAINERS = {"token_log"}
 SECRET_TEXT_PATTERN = re.compile(
@@ -45,6 +47,66 @@ def token_totals_from_log(token_log: list[dict[str, Any]]) -> dict[str, int]:
         "completion_tokens": sum(int(turn.get("completion_tokens", 0)) for turn in token_log),
         "total_tokens": sum(int(turn.get("total_tokens", 0)) for turn in token_log),
     }
+
+
+def token_component_summary_from_log(
+    token_log: list[dict[str, Any]], *, spend_category: str | None = None
+) -> dict[str, Any]:
+    labels = {
+        "normalized_actual": "normalized actual/task budget",
+        "provider_raw_total": "provider raw total/evidence",
+        "fresh_input": "fresh input/new prompt text",
+        "cache_read": "cache read/reused context",
+        "cache_write": "cache write/create",
+        "output": "output",
+        "reasoning": "reasoning",
+        "unclassified": "unclassified/provider-total-only",
+    }
+    totals = dict.fromkeys(labels, 0)
+    cost = 0.0
+    saw_cost = False
+    matched = 0
+    for turn in token_log:
+        raw_usage = turn.get("raw_usage") or {}
+        if spend_category is not None and _turn_spend_category(turn) != spend_category:
+            continue
+        matched += 1
+        components = token_usage_components(
+            raw_usage,
+            prompt_tokens=turn.get("prompt_tokens"),
+            completion_tokens=turn.get("completion_tokens"),
+            total_tokens=turn.get("total_tokens"),
+            cost=turn.get("cost"),
+        )
+        for key in totals:
+            if components.get(key) is not None:
+                totals[key] += int(components[key])
+        if components.get("cost") not in (None, 0):
+            saw_cost = True
+            cost += float(components["cost"])
+    items = [{"key": key, "label": labels[key], "value": value} for key, value in totals.items() if value]
+    return {"available": bool(items or saw_cost), "items": items, "cost": cost if saw_cost else None, "turn_count": matched}
+
+
+def _turn_spend_category(turn: dict[str, Any]) -> str:
+    raw_usage = turn.get("raw_usage") or {}
+    category = raw_usage.get("spend_category")
+    if category == "agent_review":
+        return "reporting_summary"
+    if category:
+        return str(category)
+    usage_kind = str(turn.get("usage_kind") or "")
+    if usage_kind == "task_breakdown":
+        return "task_breakdown"
+    if usage_kind == "estimation":
+        return "control_plane"
+    if usage_kind in {"worker", "task_execution"}:
+        return "worker_execution"
+    if usage_kind == "adapter_verification":
+        return "adapter_verification"
+    if usage_kind in {"reporting", "summary"}:
+        return "reporting_summary"
+    return "other"
 
 
 def daily_cap_tokens(budget: dict[str, Any], config: Any) -> int | None:

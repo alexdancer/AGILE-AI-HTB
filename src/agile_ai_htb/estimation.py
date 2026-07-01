@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from agile_ai_htb.estimation_calibration import build_calibration_selection
 from agile_ai_htb.guardrails import GuardrailConfig
 from agile_ai_htb.llm import response_to_dict
 from agile_ai_htb.repo_context import build_repo_context_brief
@@ -58,8 +59,14 @@ async def estimate_task(
     remaining_daily_tokens: int | None = None,
     daily_cap_tokens: int | None = None,
     project_root: str | None = None,
+    project_profile: dict[str, Any] | None = None,
 ) -> tuple[EstimateResult, Any]:
     project_context = _build_project_context(project_root)
+    calibration_context = _build_calibration_context(
+        description,
+        project_root=project_root,
+        project_profile=project_profile,
+    )
     user_payload: dict[str, Any] = {
         "task_description": description,
         "remaining_daily_tokens": remaining_daily_tokens,
@@ -67,10 +74,12 @@ async def estimate_task(
     }
     if project_context:
         user_payload["project_context"] = project_context
+    if calibration_context:
+        user_payload["calibration_context"] = calibration_context
     request = {
         "model": estimator_model,
         "messages": [
-            {"role": "system", "content": _system_prompt(config, project_context)},
+            {"role": "system", "content": _system_prompt(config, project_context, calibration_context)},
             {
                 "role": "user",
                 "content": json.dumps(user_payload, sort_keys=True),
@@ -102,7 +111,24 @@ def _build_project_context(project_root: str | None) -> str:
     return text[:8_000]
 
 
-def _system_prompt(config: GuardrailConfig, project_context: str = "") -> str:
+def _build_calibration_context(
+    description: str,
+    *,
+    project_root: str | None,
+    project_profile: dict[str, Any] | None,
+) -> str:
+    try:
+        selection = build_calibration_selection(
+            task_description=description,
+            project_root=project_root,
+            project_profile=project_profile,
+        )
+    except OSError:
+        return ""
+    return selection.summary
+
+
+def _system_prompt(config: GuardrailConfig, project_context: str = "", calibration_context: str = "") -> str:
     routing = {
         name: {
             "description": route.description,
@@ -127,17 +153,40 @@ def _system_prompt(config: GuardrailConfig, project_context: str = "") -> str:
             "\n\nProject context (use to ground your estimate in real project surface):\n"
             f"{project_context}"
         )
+    if calibration_context:
+        prompt += (
+            "\n\nEstimation calibration context (examples only; do not directly multiply, clamp, "
+            "or override the final token estimate):\n"
+            f"{calibration_context}"
+        )
     return prompt
 
 
 def _parse_response(response: Any, config: GuardrailConfig) -> EstimateResult:
     try:
-        data = json.loads(_response_content(response))
+        data = json.loads(_estimator_json_text(_response_content(response)))
     except Exception as exc:
         raise EstimatorValidationError("estimator returned invalid JSON") from exc
     if not isinstance(data, dict):
         raise EstimatorValidationError("estimator JSON must be an object")
     return _validate_result(data, config)
+
+
+def _estimator_json_text(content: str) -> str:
+    text = content.strip()
+    if not text.startswith("```"):
+        return text
+
+    lines = text.splitlines()
+    if len(lines) < 3:
+        raise EstimatorValidationError("estimator returned invalid JSON")
+    opening = lines[0].strip()
+    language = opening[3:].strip().lower()
+    if language not in {"", "json"}:
+        raise EstimatorValidationError("estimator returned invalid JSON")
+    if lines[-1].strip() != "```":
+        raise EstimatorValidationError("estimator returned invalid JSON")
+    return "\n".join(lines[1:-1]).strip()
 
 
 def _response_content(response: Any) -> str:

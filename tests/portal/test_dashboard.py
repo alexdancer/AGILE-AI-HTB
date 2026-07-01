@@ -241,8 +241,13 @@ def test_dashboard_daily_budget_counts_agent_review_reporting_tokens(tmp_path, m
     assert "Daily governed budget" in html
     assert "950 / 1,000" in html
     assert "zone: red" in html
-    assert "Agent Review/reporting 900" in html
-    assert "Planning/estimation 50" in html
+    assert html.count('<article class="kpi">') >= 7
+    assert "Agent Review/reporting" in html
+    assert "Planning/estimation" in html
+    assert "review and report orchestration" in html
+    assert "task breakdown and estimator spend" in html
+    assert "Agent Review/reporting 900" not in html
+    assert "Planning/estimation 50" not in html
 
 
 def test_dashboard_shows_accuracy_with_enough_completed_tasks(tmp_path, monkeypatch):

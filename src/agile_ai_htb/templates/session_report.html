@@ -63,21 +63,40 @@
         <div class="kv">
           <div class="k">prompt_tokens</div><div class="v">{{ "{:,}".format(token_totals.prompt_tokens) }}</div>
           <div class="k">completion_tokens</div><div class="v">{{ "{:,}".format(token_totals.completion_tokens) }}</div>
-          <div class="k">total_tokens</div><div class="v">{{ "{:,}".format(token_totals.total_tokens) }}</div>
+          <div class="k">provider/raw total_tokens</div><div class="v">{{ "{:,}".format(token_totals.total_tokens) }}</div>
+          <div class="k">normalized_budget_tokens</div><div class="v">{{ "{:,}".format(token_breakdown.total_tokens) }}</div>
           <div class="k">control_plane</div><div class="v">{{ "{:,}".format(token_breakdown.by_category.control_plane) }}</div>
           <div class="k">worker_execution</div><div class="v">{{ "{:,}".format(token_breakdown.by_category.worker_execution) }}</div>
           <div class="k">adapter_verification</div><div class="v">{{ "{:,}".format(token_breakdown.by_category.adapter_verification) }}</div>
           <div class="k">reporting_summary</div><div class="v">{{ "{:,}".format(token_breakdown.by_category.reporting_summary) }}</div>
         </div>
+        <details class="task-details" style="margin-top:12px">
+          <summary>Worker token components</summary>
+          {% if worker_token_components.available %}
+          <div class="kv">
+            {% for item in worker_token_components["items"] %}
+            <div class="k">{{ item.label }}</div><div class="v">{{ "{:,}".format(item.value) }}</div>
+            {% endfor %}
+            {% if worker_token_components.cost is not none %}<div class="k">reported cost</div><div class="v">${{ "%.4f"|format(worker_token_components.cost) }}</div>{% endif %}
+          </div>
+          {% else %}
+          <p class="muted mono">Component breakdown unavailable for this Worker session; showing provider totals only.</p>
+          {% endif %}
+        </details>
         <details style="margin-top:16px">
           <summary class="section-label">Token log</summary>
           <table>
-            <thead><tr><th>kind</th><th>model</th><th>tokens</th></tr></thead>
+            <thead><tr><th>kind</th><th>model</th><th>tokens</th><th>raw usage</th></tr></thead>
             <tbody>
               {% for turn in artifact.token_log %}
-              <tr><td class="mono">{{ turn.usage_kind }}</td><td class="mono">{{ turn.model }}</td><td class="mono">{{ "{:,}".format(turn.total_tokens) }}</td></tr>
+              <tr>
+                <td class="mono">{{ turn.usage_kind }}</td>
+                <td class="mono">{{ turn.model }}</td>
+                <td class="mono">{{ "{:,}".format(turn.total_tokens) }}</td>
+                <td>{% if turn.raw_usage %}<details class="task-details"><summary>Raw usage JSON</summary><pre class="mono raw-evidence">{{ turn.raw_usage|tojson(indent=2) }}</pre></details>{% else %}<span class="muted">Not recorded</span>{% endif %}</td>
+              </tr>
               {% else %}
-              <tr><td colspan="3" class="muted">No token rows.</td></tr>
+              <tr><td colspan="4" class="muted">No token rows.</td></tr>
               {% endfor %}
             </tbody>
           </table>

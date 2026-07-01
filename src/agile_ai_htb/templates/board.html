@@ -44,12 +44,8 @@
     <span class="mono muted">Eligible Estimated: {{ automation_summary.eligible_count }}</span>
     <span class="mono muted">Running: {{ automation_summary.counts.Running }}</span>
     <span class="mono muted">Review: {{ automation_summary.counts.Review }}</span>
-    <span class="mono muted">Policy: project-scoped · one-at-a-time</span>
     {% if automation_summary.queue.status != 'idle' %}
     <span class="mono muted">Queue: {{ automation_summary.queue.status }}{% if automation_summary.queue.latest_stop_reason %} · {{ automation_summary.queue.latest_stop_reason }}{% endif %}</span>
-    {% endif %}
-    {% if automation_summary.latest_event %}
-    <span class="mono muted">Latest: {{ automation_summary.latest_event.title }}</span>
     {% endif %}
     <form method="post" action="/projects/{{ active_project.id }}/run-next" style="margin-left:auto">
       <button type="submit">Run next task</button>
@@ -68,17 +64,17 @@
 </section>
 {% endif %}
 
-<form method="post" action="{% if active_project %}/projects/{{ active_project.id }}/tasks/estimate-form{% else %}/tasks/estimate-form{% endif %}" enctype="multipart/form-data" style="margin-bottom:24px;display:flex;gap:10px;align-items:flex-end">
-  <div style="flex:1">
-    <label for="intake-description">Describe a coding task or paste Markdown</label>
-    <textarea id="intake-description" name="description" placeholder="e.g. Add a save command to the CLI\n\n- [ ] Update route\n- [ ] Add tests" rows="4" style="width:100%"></textarea>
-    <label for="markdown-file" class="mono" style="font-size:11px;margin-top:6px">Optional .md task file</label>
-    <input type="file" id="markdown-file" name="markdown_file" accept=".md,text/markdown,text/plain">
-    <p class="mono muted" style="font-size:11px;margin-top:4px">
-      {% if active_project %}Estimating with project context: {{ active_project.name }}{% else %}No project context — estimate will be less accurate{% endif %}
-    </p>
+<form method="post" action="{% if active_project %}/projects/{{ active_project.id }}/tasks/estimate-form{% else %}/tasks/estimate-form{% endif %}" enctype="multipart/form-data" style="margin-bottom:24px">
+  <label for="intake-description">Describe a coding task or paste Markdown</label>
+  <div style="display:flex;gap:10px;align-items:flex-end">
+    <textarea id="intake-description" name="description" placeholder="e.g. Add a save command to the CLI\n\n- [ ] Update route\n- [ ] Add tests" rows="4" style="flex:1"></textarea>
+    <button type="submit" class="primary" style="flex-shrink:0">Estimate task</button>
   </div>
-  <button type="submit" class="primary">Estimate task</button>
+  <label for="markdown-file" class="mono" style="font-size:11px;margin-top:6px">Optional .md task file</label>
+  <input type="file" id="markdown-file" name="markdown_file" accept=".md,text/markdown,text/plain">
+  <p class="mono muted" style="font-size:11px;margin-top:4px">
+    {% if active_project %}Estimating with project context: {{ active_project.name }}{% else %}No project context — estimate will be less accurate{% endif %}
+  </p>
 </form>
 
 <div style="margin-bottom:16px;display:flex;gap:10px;align-items:center">
@@ -145,12 +141,13 @@
         <button type="submit">Refresh status</button>
       </form>
       {% endif %}
-      {% if active_project and column == 'Done' %}
+      {% if active_project and column in ['Done', 'Blocked'] %}
       <form method="post" action="/projects/{{ active_project.id }}/tasks/{{ task.id }}/archive" style="margin-top:8px">
         <button type="submit">Archive</button>
       </form>
       {% endif %}
       {% if has_launch_details %}<p class="muted mono compact-text lines-2">Launch diagnostics recorded · expand Details</p>{% endif %}
+      {% if task.metadata.worker_token_components and task.metadata.worker_token_components.available %}<p class="muted mono compact-text lines-2">Actual token components recorded · expand Details</p>{% endif %}
       {% if agent_review %}
       <p class="muted mono compact-text lines-2">Agent Review {{ agent_review.status }}{% if agent_review.recommendation %} · {{ agent_review.recommendation }}{% endif %}{% if agent_review.token_totals and agent_review.token_totals.total_tokens is defined %} · {{ "{:,}".format(agent_review.token_totals.total_tokens) }} tokens{% endif %}{% if agent_review.model %} · {{ agent_review.model }}{% endif %}{% if agent_review.review_session_id %} · <a href="/sessions/{{ agent_review.review_session_id }}">review session {{ agent_review.review_session_id }}</a>{% endif %}</p>
       {% endif %}
@@ -194,6 +191,17 @@
         <p class="muted mono">Task: {{ task.id }}</p>
         {% if launch_model and task.recommended_model and launch_model != task.recommended_model %}<p class="muted mono">Estimate recommendation: {{ task.recommended_model }}</p>{% endif %}
         {% if task.session_id %}<p><a href="/sessions/{{ task.session_id }}">Session report</a></p>{% endif %}
+        {% if task.metadata.worker_token_components and task.metadata.worker_token_components.available %}
+        <details class="task-details">
+          <summary>Actual token components</summary>
+          <div class="kv">
+            {% for item in task.metadata.worker_token_components["items"] %}
+            <div class="k">{{ item.label }}</div><div class="v">{{ "{:,}".format(item.value) }}</div>
+            {% endfor %}
+            {% if task.metadata.worker_token_components.cost is not none %}<div class="k">reported cost</div><div class="v">${{ "%.4f"|format(task.metadata.worker_token_components.cost) }}</div>{% endif %}
+          </div>
+        </details>
+        {% endif %}
         <p class="section-label mt-12">Task body</p>
         <pre class="mono raw-evidence">{{ task.description }}</pre>
 

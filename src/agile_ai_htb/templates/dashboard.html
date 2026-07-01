@@ -24,17 +24,12 @@
 {% set planning_tokens = categories.get('task_breakdown', 0) + categories.get('control_plane', 0) %}
 {% set setup_tokens = categories.get('adapter_verification', 0) %}
 {% set other_tokens = categories.get('other', 0) %}
-<section class="grid cols-4" style="margin-bottom:20px">
+<section class="grid cols-3" style="margin-bottom:20px">
   <article class="kpi">
     <div class="label">Daily governed budget</div>
     <div class="value mono">{{ "{:,}".format(budget_token_total) }}{% if daily_cap %} / {{ "{:,}".format(daily_cap) }}{% endif %}</div>
-    <div class="sub">zone: {{ current_zone }} · total governed model spend</div>
+    <div class="sub">zone: {{ current_zone }} · normalized governed model spend</div>
     {% if daily_cap %}<div class="bar"><span style="width:{{ [100, ((budget_token_total / daily_cap) * 100)|round(1)]|min }}%"></span></div>{% endif %}
-  </article>
-  <article class="kpi">
-    <div class="label">Active sessions</div>
-    <div class="value mono">{{ active_session_count }}</div>
-    <div class="sub">{{ session_count }} total today</div>
   </article>
   <article class="kpi">
     <div class="label">Open alarms</div>
@@ -44,18 +39,55 @@
   <article class="kpi">
     <div class="label">Worker execution tokens</div>
     <div class="value mono">{{ "{:,}".format(worker_token_total) }}</div>
-    <div class="sub">Worker-only task actuals and coding harness evidence</div>
+    <div class="sub">Worker-only normalized task actuals and coding harness evidence</div>
   </article>
 </section>
 
 <section class="panel">
   <div class="panel-header"><h3>Budget spend breakdown</h3></div>
   <div class="panel-body grid cols-4">
-    <div class="card"><div class="label">Worker execution</div><div class="value mono">{{ "{:,}".format(worker_token_total) }}</div></div>
-    <div class="card"><div class="label">Agent Review/reporting</div><div class="value mono">{{ "{:,}".format(review_reporting_tokens) }}</div><p class="muted mono">Agent Review/reporting {{ "{:,}".format(review_reporting_tokens) }}</p></div>
-    <div class="card"><div class="label">Planning/estimation</div><div class="value mono">{{ "{:,}".format(planning_tokens) }}</div><p class="muted mono">Planning/estimation {{ "{:,}".format(planning_tokens) }}</p></div>
-    <div class="card"><div class="label">Setup/verification</div><div class="value mono">{{ "{:,}".format(setup_tokens) }}</div></div>
-    {% if other_tokens %}<div class="card"><div class="label">Other tracked spend</div><div class="value mono">{{ "{:,}".format(other_tokens) }}</div></div>{% endif %}
+    <article class="kpi">
+      <div class="label">Worker execution</div>
+      <div class="value mono">{{ "{:,}".format(worker_token_total) }}</div>
+      <div class="sub">Worker-only normalized actuals · completed {{ "{:,}".format(worker_token_summary.status_split.completed) }} · failed/retry {{ "{:,}".format(worker_token_summary.status_split.failed_retry) }}{% if worker_token_summary.status_split.unknown %} · unknown {{ "{:,}".format(worker_token_summary.status_split.unknown) }}{% endif %}</div>
+    </article>
+    <article class="kpi">
+      <div class="label">Agent Review/reporting</div>
+      <div class="value mono">{{ "{:,}".format(review_reporting_tokens) }}</div>
+      <div class="sub">review and report orchestration</div>
+    </article>
+    <article class="kpi">
+      <div class="label">Planning/estimation</div>
+      <div class="value mono">{{ "{:,}".format(planning_tokens) }}</div>
+      <div class="sub">task breakdown and estimator spend</div>
+    </article>
+    <article class="kpi">
+      <div class="label">Setup/verification</div>
+      <div class="value mono">{{ "{:,}".format(setup_tokens) }}</div>
+      <div class="sub">adapter verification spend</div>
+    </article>
+    {% if other_tokens %}
+    <article class="kpi">
+      <div class="label">Other tracked spend</div>
+      <div class="value mono">{{ "{:,}".format(other_tokens) }}</div>
+      <div class="sub">uncategorized governed spend</div>
+    </article>
+    {% endif %}
+  </div>
+  <div class="panel-body" style="padding-top:0">
+    <details class="task-details">
+      <summary>Worker token component breakdown</summary>
+      {% if worker_token_summary.components.available %}
+      <div class="kv">
+        {% for item in worker_token_summary.components["items"] %}
+        <div class="k">{{ item.label }}</div><div class="v">{{ "{:,}".format(item.value) }}</div>
+        {% endfor %}
+        {% if worker_token_summary.components.cost is not none %}<div class="k">reported cost</div><div class="v">${{ "%.4f"|format(worker_token_summary.components.cost) }}</div>{% endif %}
+      </div>
+      {% else %}
+      <p class="muted mono">Component breakdown unavailable for these token rows; showing provider totals only.</p>
+      {% endif %}
+    </details>
   </div>
 </section>
 
@@ -138,3 +170,4 @@
 </section>
 {% endif %}
 {% endblock %}
+

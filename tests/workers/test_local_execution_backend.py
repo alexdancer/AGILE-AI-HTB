@@ -310,6 +310,27 @@ def _claude_native_usage_stdout() -> str:
     )
 
 
+def _claude_permission_denied_stdout() -> str:
+    payload = json.loads(_claude_native_usage_stdout())
+    payload["permission_denials"] = [
+        {"tool_name": "Bash", "tool_input": {"command": "rtk pwd"}},
+        {"tool_name": "Write", "tool_input": {"file_path": "/tmp/DEMO_2099_file.md"}},
+    ]
+    payload["result"] = "I need file write permissions."
+    return json.dumps(payload) + "\nwrote /Users/alex/.claude/projects/DEMO_2099/memory"
+
+
+def _claude_permission_denied_without_usage_stdout() -> str:
+    return json.dumps(
+        {
+            "type": "result",
+            "subtype": "success",
+            "permission_denials": [{"tool_name": "Write", "tool_input": {"file_path": "/tmp/DEMO_2099_file.md"}}],
+            "result": "I need file write permissions.",
+        }
+    )
+
+
 def _estimated_task(db_path: Path) -> dict:
     project = db.list_connected_projects(db_path)[0]
     return db.create_task(
@@ -417,6 +438,93 @@ def test_claude_code_native_worker_run_records_cache_inclusive_usage(tmp_path):
     assert turn["total_tokens"] == 21578
     assert turn["cost"] == 0.0065403
     assert turn["raw_usage"]["source"]["modelUsage"]["claude-sonnet-4-6"]["costUSD"] == 0.0065403
+
+
+def test_failed_native_worker_run_records_emitted_usage_as_failed_retry_spend(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    harness_target = tmp_path / "harness-target"
+    harness_target.mkdir()
+    _connect_project(db_path, harness_target)
+    db.update_worker_adapter(db_path, "claude_code", workdir=str(harness_target), supported_models=["sonnet"])
+    db.mark_worker_adapter_verification(db_path, "claude_code", verified=True, evidence={"tracking_mode": "native_usage"})
+    task = _estimated_task(db_path)
+
+    launch_task(
+        db_path,
+        task["id"],
+        adapter_id="claude_code",
+        model="sonnet",
+        proxy_url="http://127.0.0.1:8000/v1",
+        runner=lambda plan: {"returncode": 1, "stdout": _claude_native_usage_stdout(), "stderr": "worker crashed after usage"},
+    )
+    run = _wait_for_worker_run(db_path, task["id"], "failed")
+    refreshed = db.get_task(db_path, task["id"])
+    artifact = db.build_session_artifact(db_path, refreshed["session_id"])
+
+    assert refreshed["status"] == "Estimated"
+    assert refreshed["metadata"]["launch_failure_type"] == "worker_adapter_failure"
+    assert run["error_type"] == "worker_adapter_failure"
+    assert artifact["token_log"][0]["total_tokens"] == 21578
+    assert db.budgeted_token_usage(db_path) == 7
+    assert db.worker_execution_token_summary(db_path)["status_split"]["failed_retry"] == 7
+
+
+def test_claude_code_permission_denials_are_reported_before_workdir_mismatch(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    harness_target = tmp_path / "harness-target"
+    harness_target.mkdir()
+    _connect_project(db_path, harness_target)
+    db.update_worker_adapter(db_path, "claude_code", workdir=str(harness_target), supported_models=["sonnet"])
+    db.mark_worker_adapter_verification(db_path, "claude_code", verified=True, evidence={"tracking_mode": "native_usage"})
+    task = _estimated_task(db_path)
+
+    launch_task(
+        db_path,
+        task["id"],
+        adapter_id="claude_code",
+        model="sonnet",
+        proxy_url="http://127.0.0.1:8000/v1",
+        runner=lambda plan: {"returncode": 0, "stdout": _claude_permission_denied_stdout(), "stderr": ""},
+    )
+    run = _wait_for_worker_run(db_path, task["id"], "failed")
+    refreshed = db.get_task(db_path, task["id"])
+
+    assert refreshed["status"] == "Estimated"
+    assert refreshed["metadata"]["launch_failure_type"] == "worker_permission_denied"
+    assert refreshed["metadata"]["permission_denials"] == ["Bash", "Write"]
+    assert refreshed["metadata"]["launch_error"] == "Worker was denied required tool permissions: Bash, Write."
+    assert "workdir_evidence" not in refreshed["metadata"]
+    assert run["error_type"] == "worker_permission_denied"
+    artifact = db.build_session_artifact(db_path, refreshed["session_id"])
+    assert artifact["token_log"][0]["total_tokens"] == 21578
+
+
+def test_claude_code_permission_denials_are_reported_without_usage_evidence(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    harness_target = tmp_path / "harness-target"
+    harness_target.mkdir()
+    _connect_project(db_path, harness_target)
+    db.update_worker_adapter(db_path, "claude_code", workdir=str(harness_target), supported_models=["sonnet"])
+    db.mark_worker_adapter_verification(db_path, "claude_code", verified=True, evidence={"tracking_mode": "native_usage"})
+    task = _estimated_task(db_path)
+
+    launch_task(
+        db_path,
+        task["id"],
+        adapter_id="claude_code",
+        model="sonnet",
+        proxy_url="http://127.0.0.1:8000/v1",
+        runner=lambda plan: {"returncode": 0, "stdout": _claude_permission_denied_without_usage_stdout(), "stderr": ""},
+    )
+    run = _wait_for_worker_run(db_path, task["id"], "failed")
+    refreshed = db.get_task(db_path, task["id"])
+
+    assert refreshed["metadata"]["launch_failure_type"] == "worker_permission_denied"
+    assert refreshed["metadata"]["permission_denials"] == ["Write"]
+    assert run["error_type"] == "worker_permission_denied"
 
 
 def test_claude_code_native_worker_run_without_usage_returns_to_estimated(tmp_path):

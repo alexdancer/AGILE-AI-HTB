@@ -44,6 +44,7 @@ from agile_ai_htb.evidence_reporting import (
     daily_cap_tokens as _daily_cap_tokens,
     safe_evidence as _safe_worker_evidence,
     session_evidence_summary as _session_evidence_summary,
+    token_component_summary_from_log as _token_component_summary_from_log,
     token_totals as _token_totals,
 )
 from agile_ai_htb.guardrails import get_budget_zone
@@ -187,6 +188,7 @@ def dashboard(request: Request):
     config = request.app.state.guardrails
     day_start = _current_day_start_iso(request.app.state.settings.timezone)
     token_breakdown = db.token_usage_breakdown(database_path, since=day_start)
+    worker_token_summary = db.worker_execution_token_summary(database_path, since=day_start)
     budget_token_total = db.budgeted_token_usage(database_path, since=day_start)
     budget_settings = _effective_budget_settings(database_path, config)
     daily_cap = budget_settings.get("daily_cap_tokens")
@@ -220,11 +222,10 @@ def dashboard(request: Request):
             "token_total": budget_token_total,
             "budget_token_total": budget_token_total,
             "worker_token_total": token_breakdown["by_category"]["worker_execution"],
+            "worker_token_summary": worker_token_summary,
             "token_breakdown": token_breakdown,
             "daily_cap": daily_cap,
             "current_zone": get_budget_zone(budget_token_total, daily_cap, config),
-            "session_count": len(sessions),
-            "active_session_count": len(active_sessions),
             "alarm_count": len(alarms),
             "open_alarm_count": len(open_alarms),
             "critical_alarm_count": len(critical_alarms),
@@ -309,6 +310,7 @@ def projects(request: Request):
         {
             "active_page": "projects",
             "projects": _project_view_models(request),
+            "archived_projects": _archived_project_view_models(request),
             "local_runner_enabled": request.app.state.settings.local_runner_enabled,
         },
     )
@@ -331,6 +333,7 @@ def project_workspace(project_id: str, request: Request):
             "active_project": project,
             "project": project,
             "summary": summary,
+            "error": request.query_params.get("error", ""),
         },
     )
 
@@ -431,7 +434,34 @@ def project_board(project_id: str, request: Request):
         project = db.get_connected_project(database_path, project_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="connected project not found") from exc
+    if db.project_is_archived(project):
+        return RedirectResponse(
+            f"/projects/{project_id}?error={quote('Restore this archived project before opening its active board')}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     return _render_board(request, active_project=_project_view_model(request, project))
+
+
+@router.post("/projects/{project_id}/archive", dependencies=[Depends(require_portal_auth)])
+def archive_project(project_id: str, request: Request):
+    database_path = request.app.state.settings.database_path
+    _ensure_project(database_path, project_id)
+    block_reason = _project_archive_block_reason(database_path, project_id)
+    if block_reason:
+        return RedirectResponse(
+            f"/settings/project?error={quote(block_reason)}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    db.archive_connected_project(database_path, project_id)
+    return RedirectResponse("/projects", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/projects/{project_id}/restore", dependencies=[Depends(require_portal_auth)])
+def restore_project(project_id: str, request: Request):
+    database_path = request.app.state.settings.database_path
+    _ensure_project(database_path, project_id)
+    db.restore_connected_project(database_path, project_id)
+    return RedirectResponse(f"/projects/{project_id}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.get("/projects/{project_id}/task-history", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
@@ -488,7 +518,7 @@ def project_unarchive_task(project_id: str, task_id: str, request: Request):
 @router.post("/projects/{project_id}/run-next", dependencies=[Depends(require_portal_auth)])
 def project_run_next(project_id: str, request: Request):
     database_path = request.app.state.settings.database_path
-    _ensure_project(database_path, project_id)
+    _ensure_active_project(database_path, project_id)
     task = _next_eligible_task(database_path, project_id)
     if task is None:
         record_automation_event(
@@ -518,7 +548,7 @@ def project_run_next(project_id: str, request: Request):
 @router.post("/projects/{project_id}/queue/start", dependencies=[Depends(require_portal_auth)])
 async def project_queue_start(project_id: str, request: Request):
     database_path = request.app.state.settings.database_path
-    _ensure_project(database_path, project_id)
+    _ensure_active_project(database_path, project_id)
     form = await request.form()
     start_run_automation(
         database_path,
@@ -533,7 +563,7 @@ async def project_queue_start(project_id: str, request: Request):
 @router.post("/projects/{project_id}/queue/stop", dependencies=[Depends(require_portal_auth)])
 def project_queue_stop(project_id: str, request: Request):
     database_path = request.app.state.settings.database_path
-    _ensure_project(database_path, project_id)
+    _ensure_active_project(database_path, project_id)
     stop_run_automation(database_path, project_id=project_id, reason="operator_stop")
     return RedirectResponse(f"/projects/{project_id}/board", status_code=303)
 
@@ -542,9 +572,11 @@ def project_queue_stop(project_id: str, request: Request):
 async def project_board_status(project_id: str, request: Request):
     database_path = request.app.state.settings.database_path
     try:
-        db.get_connected_project(database_path, project_id)
+        project = db.get_connected_project(database_path, project_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="connected project not found") from exc
+    if db.project_is_archived(project):
+        raise HTTPException(status_code=409, detail="restore archived project before refreshing active board")
     before = _project_board_counts(database_path, project_id)
     refreshed_ids = _refresh_project_board_tasks(database_path, project_id)
     await _advance_project_queue(request, project_id)
@@ -592,6 +624,22 @@ def _ensure_project(database_path: Path | str, project_id: str) -> dict[str, Any
         return db.get_connected_project(database_path, project_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="connected project not found") from exc
+
+
+def _ensure_active_project(database_path: Path | str, project_id: str) -> dict[str, Any]:
+    project = _ensure_project(database_path, project_id)
+    if db.project_is_archived(project):
+        raise HTTPException(status_code=409, detail="restore archived project before launching active work")
+    return project
+
+
+def _project_archive_block_reason(database_path: Path | str, project_id: str) -> str:
+    if _project_has_running_work(database_path, project_id):
+        return "Project has Running work. Stop or finish active Worker runs before archiving."
+    queue_state = get_run_automation_state(database_path, project_id)
+    if queue_state.get("status") == "running":
+        return "Project run queue is active. Stop the queue before archiving."
+    return ""
 
 
 def _ensure_project_task(database_path: Path | str, project_id: str, task_id: str) -> dict[str, Any]:
@@ -798,6 +846,13 @@ def worker_settings(request: Request):
     )
 
 
+def _worker_settings_url(adapter_id: str, *, error: str | None = None) -> str:
+    url = f"/settings/workers?adapter_id={quote(adapter_id)}"
+    if error:
+        url = f"{url}&error={quote(error)}"
+    return url
+
+
 @router.post("/settings/workers/{adapter_id}/configure", dependencies=[Depends(require_portal_auth)])
 async def configure_worker_adapter(adapter_id: str, request: Request):
     """Accept adapter settings form fields, update adapter, redirect to workers page."""
@@ -811,7 +866,7 @@ async def configure_worker_adapter(adapter_id: str, request: Request):
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="worker adapter not found") from exc
-    return RedirectResponse("/settings/workers", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(_worker_settings_url(adapter_id), status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/settings/workers/{adapter_id}/allowed-models", dependencies=[Depends(require_portal_auth)])
@@ -831,7 +886,7 @@ async def configure_worker_allowed_models(adapter_id: str, request: Request):
 
     config = {**(adapter.get("config") or {}), "allowed_models_configured": True}
     db.update_worker_adapter(database_path, adapter_id, config=config, supported_models=allowed_models)
-    return RedirectResponse(f"/settings/workers?adapter_id={adapter_id}", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(_worker_settings_url(adapter_id), status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/settings/workers/{adapter_id}/refresh-diagnostics", dependencies=[Depends(require_portal_auth)])
@@ -847,7 +902,7 @@ def refresh_worker_diagnostics(adapter_id: str, request: Request):
     config["_diagnostics"] = diag
     config["_diagnostics_at"] = datetime.now(UTC).timestamp()
     db.update_worker_adapter(database_path, adapter_id, config=config)
-    return RedirectResponse("/settings/workers", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(_worker_settings_url(adapter_id), status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.get("/settings/control-plane", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
@@ -941,6 +996,8 @@ async def save_control_plane_settings(request: Request):
 @router.post("/settings/control-plane/test", dependencies=[Depends(require_portal_auth)])
 async def test_control_plane_connection(request: Request):
     settings = request.app.state.settings
+    accept = request.headers.get("accept", "")
+    wants_html = "text/html" in accept and "application/json" not in accept
     payload = {
         "model": settings.control_plane_model,
         "messages": [{"role": "user", "content": "Return exactly AGILE_AI_HTB_CONTROL_PLANE_OK."}],
@@ -960,6 +1017,8 @@ async def test_control_plane_connection(request: Request):
                 "response": _safe_worker_evidence(response_to_dict(response)),
             },
         )
+        if wants_html:
+            return RedirectResponse("/settings/control-plane", status_code=status.HTTP_303_SEE_OTHER)
         return JSONResponse(status_code=200, content={"passed": True, "status": status_record})
     except Exception as exc:
         status_record = db.upsert_execution_backend_status(
@@ -975,6 +1034,8 @@ async def test_control_plane_connection(request: Request):
                 "error": _safe_worker_evidence(str(exc)),
             },
         )
+        if wants_html:
+            return RedirectResponse("/settings/control-plane", status_code=status.HTTP_303_SEE_OTHER)
         return JSONResponse(status_code=503, content={"passed": False, "status": status_record})
 
 
@@ -986,6 +1047,10 @@ def project_settings(request: Request):
     for project in db.list_connected_projects(database_path):
         capability = backend.project_capability(project) if backend else project.get("capability", {})
         projects.append({**project, "capability": capability})
+    archived_projects = []
+    for project in db.list_archived_connected_projects(database_path):
+        capability = backend.project_capability(project) if backend else project.get("capability", {})
+        archived_projects.append({**project, "capability": capability})
     backend_status = backend.status() if backend else None
     return templates.TemplateResponse(
         request,
@@ -995,7 +1060,8 @@ def project_settings(request: Request):
             "local_runner_enabled": request.app.state.settings.local_runner_enabled,
             "backend_status": backend_status,
             "projects": projects,
-            "error": None,
+            "archived_projects": archived_projects,
+            "error": request.query_params.get("error", ""),
         },
     )
 
@@ -1066,9 +1132,7 @@ async def verify_worker_adapter_route(adapter_id: str, request: Request):
         raise HTTPException(status_code=404, detail="worker adapter not found") from exc
     except ValueError as exc:
         if wants_html:
-            from urllib.parse import quote
-
-            return RedirectResponse(f"/settings/workers?error={quote(str(exc))}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(_worker_settings_url(adapter_id, error=str(exc)), status_code=status.HTTP_303_SEE_OTHER)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:
         result = verify_worker_adapter(
@@ -1088,7 +1152,7 @@ async def verify_worker_adapter_route(adapter_id: str, request: Request):
             detail=f"worker adapter configuration invalid: missing template variable {exc}",
         ) from exc
     if wants_html:
-        return RedirectResponse("/settings/workers", status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(_worker_settings_url(adapter_id), status_code=status.HTTP_303_SEE_OTHER)
     return JSONResponse(
         status_code=200 if result.passed else 409,
         content={
@@ -1113,7 +1177,7 @@ async def discover_worker_models_route(adapter_id: str, request: Request):
         raise HTTPException(status_code=404, detail="worker adapter not found") from exc
     accept = request.headers.get("accept", "")
     if "text/html" in accept and "application/json" not in accept:
-        return RedirectResponse("/settings/workers", status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(_worker_settings_url(adapter_id), status_code=status.HTTP_303_SEE_OTHER)
     return JSONResponse(
         status_code=200 if result.passed else 409,
         content={
@@ -1168,6 +1232,7 @@ def session_report_view(session_id: str, request: Request):
 
     token_totals = _token_totals(artifact)
     token_breakdown = db.session_token_breakdown(database_path, session_id)
+    worker_token_components = _token_component_summary_from_log(artifact["token_log"], spend_category="worker_execution")
     requires_review = bool(artifact["alarms"]) or any(
         not checkpoint["passed"] for checkpoint in artifact["checkpoint_results"]
     )
@@ -1180,6 +1245,7 @@ def session_report_view(session_id: str, request: Request):
             "session": artifact["session"],
             "token_totals": token_totals,
             "token_breakdown": token_breakdown,
+            "worker_token_components": worker_token_components,
             "requires_review": requires_review,
             "evidence_summary": _session_evidence_summary(artifact),
             "related_agent_review": _related_agent_review(database_path, session_id),
@@ -1423,6 +1489,13 @@ def _project_view_models(request: Request) -> list[dict[str, Any]]:
     return [_project_view_model(request, project) for project in db.list_connected_projects(request.app.state.settings.database_path)]
 
 
+def _archived_project_view_models(request: Request) -> list[dict[str, Any]]:
+    return [
+        _project_view_model(request, project)
+        for project in db.list_archived_connected_projects(request.app.state.settings.database_path)
+    ]
+
+
 def _project_view_model(request: Request, project: dict[str, Any]) -> dict[str, Any]:
     backend = _local_backend(request)
     capability = backend.project_capability(project) if backend else project.get("capability", {})
@@ -1432,6 +1505,7 @@ def _project_view_model(request: Request, project: dict[str, Any]) -> dict[str, 
 def _project_settings_with_error(request: Request, error: str):
     database_path = request.app.state.settings.database_path
     projects = db.list_connected_projects(database_path)
+    archived_projects = db.list_archived_connected_projects(database_path)
     backend = _local_backend(request)
     return templates.TemplateResponse(
         request,
@@ -1441,6 +1515,7 @@ def _project_settings_with_error(request: Request, error: str):
             "local_runner_enabled": request.app.state.settings.local_runner_enabled,
             "backend_status": backend.status() if backend else None,
             "projects": projects,
+            "archived_projects": archived_projects,
             "error": error,
         },
         status_code=422,

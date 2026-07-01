@@ -46,7 +46,7 @@
         <button type="submit">Discover models</button>
       </form>
       {% if active_adapter.discovered_models %}
-      <p class="muted">Discovered models</p>
+      <p class="muted">{{ active_adapter.model_discovery_label }}</p>
       <p class="mono">{{ active_adapter.discovered_models|join(', ') }}</p>
       <form method="post" action="/settings/workers/{{ active_adapter.id }}/allowed-models" style="margin-top:10px">
         <p class="muted">Allowed for estimates and board launch</p>
@@ -143,7 +143,7 @@
               <div class="k">tracking modes</div><div class="v">{{ adapter.tracking_modes|join(', ') }}</div>
               <div class="k">runtime guardrails</div><div class="v">{{ adapter.tracking.runtime_request_guardrails }}</div>
               <div class="k">accounting</div><div class="v">{{ adapter.tracking.accounting }}</div>
-              <div class="k">model discovery</div><div class="v">{% if adapter.model_discovery %}Native model discovery: {{ adapter.model_discovery }}{% else %}not run{% endif %}</div>
+              <div class="k">model discovery</div><div class="v">{% if adapter.model_discovery %}{{ adapter.model_discovery_label }}: {{ adapter.model_discovery }}{% else %}not run{% endif %}</div>
               <div class="k">verification evidence</div><div class="v"><pre>{{ adapter.verification_evidence }}</pre></div>
             </div>
           </details>

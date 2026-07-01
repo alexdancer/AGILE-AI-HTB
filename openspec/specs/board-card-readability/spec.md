@@ -3,9 +3,7 @@
 ## Purpose
 
 Define how AGILE Board task cards remain compact and scannable while preserving full task, diagnostic, Worker timeline, log, review, and model provenance evidence for operator audit.
-
 ## Requirements
-
 ### Requirement: Board cards are compact by default
 Board task cards SHALL show a compact default view suitable for scanning, including task title, status action, and key model/tokens metadata without rendering the full raw task or diagnostic payload by default.
 
@@ -35,23 +33,24 @@ Board task cards SHALL surface the actually launched Worker model as primary evi
 - **THEN** the card SHALL display the recommended model as the model value.
 
 ### Requirement: Board cards show actual Worker execution tokens
-Board task cards SHALL surface actual Worker execution token totals when authoritative usage has been recorded for the task.
+Board task cards SHALL surface normalized actual Worker execution token totals when authoritative usage has been recorded for the task. Normalized actuals SHALL exclude cache-read/reused-context tokens and include cache-write/cache-creation, fresh input, output, reasoning, and counted unclassified tokens when available.
 
 #### Scenario: Review card shows actual tokens
 - **WHEN** a task is in Review after a successful Worker Run
 - **AND** `task.actual_tokens` is not null
-- **THEN** the board card SHALL display the actual token total in the compact metadata line
-- **AND** the value SHALL be formatted distinctly from the estimate.
+- **THEN** the board card SHALL display the normalized actual token total in the compact metadata line
+- **AND** the value SHALL be formatted distinctly from the estimate
+- **AND** cache-read/reused-context tokens SHALL NOT be merged into the displayed actual token total
 
 #### Scenario: Done card preserves actual tokens
 - **WHEN** an operator marks a Review task Done
 - **AND** the task has `actual_tokens` recorded
-- **THEN** the Done board card SHALL continue to display the same actual token total.
+- **THEN** the Done board card SHALL continue to display the same normalized actual token total
 
 #### Scenario: Missing actual tokens are not confused with zero
 - **WHEN** a task has no recorded actual token total
 - **THEN** the board SHALL NOT display a fabricated zero-token total
-- **AND** any unavailable state shown for actual tokens SHALL be distinguishable from `0` actual tokens.
+- **AND** any unavailable state shown for actual tokens SHALL be distinguishable from `0` actual tokens
 
 ### Requirement: Launch details are never blank
 Board task cards SHALL NOT render a `Launch` details disclosure with no visible launch/run evidence.
@@ -77,3 +76,26 @@ The AGILE Board SHALL render task cards with a wider default column/card footpri
 - **WHEN** the board renders Estimated, Running, Review, Done, and Blocked tasks
 - **THEN** the existing board columns remain available
 - **AND** the existing launch, refresh, review, done, block, details, and filtering controls remain available
+
+### Requirement: Board cards explain Worker actual token components
+Board task cards SHALL provide a compact explanation of normalized actual Worker execution token composition and separate cache-read/provider-raw evidence when authoritative component evidence exists for the task's Worker Run.
+
+#### Scenario: Review card has cache-heavy actual tokens
+- **WHEN** a task is in Review after a successful Worker Run
+- **AND** `task.actual_tokens` is populated from Worker execution evidence
+- **AND** raw usage evidence contains recognizable fresh input, cache read, cache write/create, output, reasoning, raw total, or cost components
+- **THEN** the board card SHALL keep the normalized actual Worker token total visible in the compact metadata
+- **AND** the card SHALL provide a concise explanation of fresh input, cache write/create, output, reasoning, cache read/reused context, provider raw total, and cost when available
+- **AND** cache-read/reused-context tokens SHALL be labeled separately from normalized actuals
+- **AND** the card SHALL NOT merge Agent Review, estimation, task breakdown, or other control-plane spend into the task actual token value
+
+#### Scenario: Done card preserves token component explanation
+- **WHEN** an operator marks a reviewed task Done
+- **AND** actual Worker token component evidence exists for that task
+- **THEN** the Done card SHALL continue to show the normalized actual Worker token total
+- **AND** the Done card SHALL keep the component explanation available without requiring raw JSON inspection
+
+#### Scenario: Actual token components are unavailable
+- **WHEN** a task has `actual_tokens` but no recognizable token component evidence
+- **THEN** the board card SHALL show the actual Worker token total with an unavailable or provider-total-only component label when needed
+- **AND** the card SHALL NOT fabricate fresh input, cache, output, reasoning, or cost component values

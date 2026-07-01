@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from agile_ai_htb.adapter_readiness import evaluate_adapter_readiness
+from agile_ai_htb.native_usage import token_usage_components
 
 SCHEMA = """
 create table if not exists sessions (
@@ -155,6 +156,8 @@ create table if not exists connected_projects (
     profile_json text not null default '{}',
     capability_json text not null default '{}',
     backend_id text not null default 'local_runner',
+    archived_at text,
+    archived_by text,
     created_at text not null,
     updated_at text not null
 );
@@ -180,7 +183,13 @@ WORKER_ADAPTER_PRESETS = [
         "kind": "claude_code",
         "name": "Claude Code",
         "config": {"verification_template": ["claude", "-p", "{prompt}"], "launch_template": ["claude"]},
-        "supported_models": ["claude-3-5-sonnet-latest", "claude-3-5-sonnet-20240620", "claude-3-haiku-20240307"],
+        "supported_models": [
+            "claude-opus-4-8",
+            "claude-opus-4-7",
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5",
+        ],
     },
     {
         "id": "codex",
@@ -278,11 +287,21 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
                 profile_json text not null default '{}',
                 capability_json text not null default '{}',
                 backend_id text not null default 'local_runner',
+                archived_at text,
+                archived_by text,
                 created_at text not null,
                 updated_at text not null
             )
             """
         )
+    else:
+        connected_project_columns = {
+            row["name"] for row in conn.execute("pragma table_info(connected_projects)").fetchall()
+        }
+        if "archived_at" not in connected_project_columns:
+            conn.execute("alter table connected_projects add column archived_at text")
+        if "archived_by" not in connected_project_columns:
+            conn.execute("alter table connected_projects add column archived_by text")
     if "execution_backend_status" not in existing_tables:
         conn.execute(
             """
@@ -777,8 +796,8 @@ def task_is_archived(task: dict[str, Any]) -> bool:
 
 def archive_task(path: Path | str, task_id: str) -> dict[str, Any]:
     task = get_task(path, task_id)
-    if task.get("status") != "Done":
-        raise ValueError("Only Done tasks can be archived.")
+    if task.get("status") not in {"Done", "Blocked"}:
+        raise ValueError("Only Done or Blocked tasks can be archived.")
     metadata = {**task.get("metadata", {})}
     if metadata.get("archived_at"):
         return task
@@ -1309,13 +1328,15 @@ def upsert_connected_project(
         conn.execute(
             """
             insert into connected_projects (
-                id, name, root_path, profile_json, capability_json, backend_id, created_at, updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                id, name, root_path, profile_json, capability_json, backend_id, archived_at, archived_by, created_at, updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             on conflict(root_path) do update set
                 name = excluded.name,
                 profile_json = excluded.profile_json,
                 capability_json = excluded.capability_json,
                 backend_id = excluded.backend_id,
+                archived_at = null,
+                archived_by = null,
                 updated_at = excluded.updated_at
             """,
             (
@@ -1325,6 +1346,8 @@ def upsert_connected_project(
                 _to_json(profile),
                 _to_json(capability),
                 backend_id,
+                None,
+                None,
                 now,
                 now,
             ),
@@ -1332,10 +1355,59 @@ def upsert_connected_project(
     return get_connected_project_by_path(path, root_path)
 
 
-def list_connected_projects(path: Path | str) -> list[dict[str, Any]]:
+def list_connected_projects(path: Path | str, *, include_archived: bool = False) -> list[dict[str, Any]]:
     with connect(path) as conn:
-        rows = conn.execute("select * from connected_projects order by updated_at desc, id").fetchall()
+        where = "" if include_archived else "where archived_at is null"
+        rows = conn.execute(f"select * from connected_projects {where} order by updated_at desc, id").fetchall()
     return [_connected_project_from_row(row) for row in rows]
+
+
+def list_archived_connected_projects(path: Path | str) -> list[dict[str, Any]]:
+    with connect(path) as conn:
+        rows = conn.execute(
+            "select * from connected_projects where archived_at is not null order by archived_at desc, updated_at desc, id"
+        ).fetchall()
+    return [_connected_project_from_row(row) for row in rows]
+
+
+def project_is_archived(project: dict[str, Any]) -> bool:
+    return bool(project.get("archived_at"))
+
+
+def archive_connected_project(path: Path | str, project_id: str, *, archived_by: str = "operator") -> dict[str, Any]:
+    now = _now_iso()
+    with connect(path) as conn:
+        cursor = conn.execute(
+            """
+            update connected_projects
+            set archived_at = coalesce(archived_at, ?),
+                archived_by = coalesce(archived_by, ?),
+                updated_at = ?
+            where id = ?
+            """,
+            (now, archived_by, now, project_id),
+        )
+        if cursor.rowcount == 0:
+            raise KeyError(f"connected project not found: {project_id}")
+    return get_connected_project(path, project_id)
+
+
+def restore_connected_project(path: Path | str, project_id: str) -> dict[str, Any]:
+    now = _now_iso()
+    with connect(path) as conn:
+        cursor = conn.execute(
+            """
+            update connected_projects
+            set archived_at = null,
+                archived_by = null,
+                updated_at = ?
+            where id = ?
+            """,
+            (now, project_id),
+        )
+        if cursor.rowcount == 0:
+            raise KeyError(f"connected project not found: {project_id}")
+    return get_connected_project(path, project_id)
 
 
 def get_connected_project(path: Path | str, project_id: str) -> dict[str, Any]:
@@ -1605,7 +1677,7 @@ def total_token_usage(path: Path | str, *, since: str | None = None) -> int:
 
 def budgeted_token_usage(path: Path | str, *, since: str | None = None) -> int:
     """Total governed model-spend tokens from the token ledger."""
-    return total_token_usage(path, since=since)
+    return int(token_usage_breakdown(path, since=since)["total_tokens"])
 
 
 def estimation_accuracy(path: Path | str) -> dict[str, Any]:
@@ -1649,6 +1721,16 @@ def estimation_accuracy(path: Path | str) -> dict[str, Any]:
 def token_usage_breakdown(path: Path | str, *, since: str | None = None) -> dict[str, Any]:
     turns = _token_turns_for_breakdown(path, since=since)
     return _summarize_token_turns(turns)
+
+
+def worker_execution_token_summary(path: Path | str, *, since: str | None = None) -> dict[str, Any]:
+    turns = _worker_execution_turns(_token_turns_with_session_ids(path, since=since))
+    status_split = {"completed": 0, "failed_retry": 0, "unknown": 0}
+    session_statuses = _worker_session_statuses(path)
+    for turn in turns:
+        tokens = _normalized_token_total_from_turn(turn)
+        status_split[session_statuses.get(str(turn.get("session_id") or ""), "unknown")] += tokens
+    return {"components": _summarize_token_components(turns), "status_split": status_split}
 
 
 def session_token_usage(path: Path | str, session_id: str) -> int:
@@ -1718,6 +1800,22 @@ def _token_turns_for_breakdown(
     return [_token_turn_from_row(row) for row in rows]
 
 
+def _token_turns_with_session_ids(path: Path | str, *, since: str | None = None) -> list[dict[str, Any]]:
+    query = "select * from token_turns"
+    params: list[str] = []
+    if since is not None:
+        query += " where created_at >= ?"
+        params.append(since)
+    with connect(path) as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    turns = []
+    for row in rows:
+        turn = _token_turn_from_row(row)
+        turn["session_id"] = row["session_id"]
+        turns.append(turn)
+    return turns
+
+
 def _summarize_token_turns(turns: list[dict[str, Any]]) -> dict[str, Any]:
     by_category = {
         "control_plane": 0,
@@ -1730,7 +1828,7 @@ def _summarize_token_turns(turns: list[dict[str, Any]]) -> dict[str, Any]:
     by_source: dict[str, int] = {}
     total = 0
     for turn in turns:
-        tokens = int(turn.get("total_tokens") or 0)
+        tokens = _normalized_token_total_from_turn(turn)
         raw_usage = turn.get("raw_usage") or {}
         category = str(raw_usage.get("spend_category") or _spend_category_for_usage_kind(str(turn.get("usage_kind") or "")))
         source = str(raw_usage.get("usage_source") or _usage_source_for_usage_kind(str(turn.get("usage_kind") or ""), category))
@@ -1744,6 +1842,84 @@ def _summarize_token_turns(turns: list[dict[str, Any]]) -> dict[str, Any]:
         by_source[source] = by_source.get(source, 0) + tokens
         total += tokens
     return {"total_tokens": total, "by_category": by_category, "by_source": by_source}
+
+
+def _worker_execution_turns(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [turn for turn in turns if _turn_spend_category(turn) == "worker_execution"]
+
+
+def _turn_spend_category(turn: dict[str, Any]) -> str:
+    raw_usage = turn.get("raw_usage") or {}
+    category = str(raw_usage.get("spend_category") or _spend_category_for_usage_kind(str(turn.get("usage_kind") or "")))
+    return "reporting_summary" if category == "agent_review" else category
+
+
+def _normalized_token_total_from_turn(turn: dict[str, Any]) -> int:
+    components = token_usage_components(
+        turn.get("raw_usage") or {},
+        prompt_tokens=turn.get("prompt_tokens"),
+        completion_tokens=turn.get("completion_tokens"),
+        total_tokens=turn.get("total_tokens"),
+        cost=turn.get("cost"),
+    )
+    if components.get("normalized_actual") is not None:
+        return int(components["normalized_actual"])
+    return int(turn.get("total_tokens") or 0)
+
+
+def _summarize_token_components(turns: list[dict[str, Any]]) -> dict[str, Any]:
+    labels = {
+        "normalized_actual": "normalized actual/task budget",
+        "provider_raw_total": "provider raw total/evidence",
+        "fresh_input": "fresh input/new prompt text",
+        "cache_read": "cache read/reused context",
+        "cache_write": "cache write/create",
+        "output": "output",
+        "reasoning": "reasoning",
+        "unclassified": "unclassified/provider-total-only",
+    }
+    totals = dict.fromkeys(labels, 0)
+    cost = 0.0
+    saw_cost = False
+    for turn in turns:
+        components = token_usage_components(
+            turn.get("raw_usage") or {},
+            prompt_tokens=turn.get("prompt_tokens"),
+            completion_tokens=turn.get("completion_tokens"),
+            total_tokens=turn.get("total_tokens"),
+            cost=turn.get("cost"),
+        )
+        for key in totals:
+            if components.get(key) is not None:
+                totals[key] += int(components[key])
+        if components.get("cost") not in (None, 0):
+            saw_cost = True
+            cost += float(components["cost"])
+    items = [{"key": key, "label": labels[key], "value": value} for key, value in totals.items() if value]
+    return {"available": bool(items or saw_cost), "items": items, "cost": cost if saw_cost else None}
+
+
+def _worker_session_statuses(path: Path | str) -> dict[str, str]:
+    with connect(path) as conn:
+        rows = conn.execute(
+            """
+            select worker_runs.session_id, worker_runs.status as run_status, tasks.status as task_status
+            from worker_runs
+            left join tasks on tasks.id = worker_runs.task_id
+            """
+        ).fetchall()
+    statuses: dict[str, str] = {}
+    for row in rows:
+        session_id = str(row["session_id"])
+        run_status = str(row["run_status"] or "")
+        task_status = str(row["task_status"] or "")
+        if run_status == "completed" or task_status in {"Review", "Done"}:
+            statuses[session_id] = "completed"
+        elif run_status in {"failed", "interrupted"} and statuses.get(session_id) != "completed":
+            statuses[session_id] = "failed_retry"
+        else:
+            statuses.setdefault(session_id, "unknown")
+    return statuses
 
 
 def _session_from_row(row: sqlite3.Row) -> dict[str, Any]:
@@ -1955,6 +2131,8 @@ def _connected_project_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "profile": _from_json(row["profile_json"]),
         "capability": _from_json(row["capability_json"]),
         "backend_id": row["backend_id"],
+        "archived_at": row["archived_at"],
+        "archived_by": row["archived_by"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }

@@ -7,10 +7,6 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 DEMO_DIR = ROOT / "demo"
-LONG_OPENCODE_COMPARISON_FILES = [
-    ROOT / "demo_tasks" / "DEMO_2099_LONG_OPENCODE_COMPARISON_TASK.md",
-    ROOT / "docs" / "DEMO_2099_OPENCODE_COMPARISON_RUNBOOK.md",
-]
 IGNORED_PARTS = {".venv", ".pytest_cache", "__pycache__"}
 
 BANNED_SECRET_PATTERNS = [
@@ -70,70 +66,3 @@ def _demo_source_files() -> list[Path]:
         if path.is_file()
         and not any(part in IGNORED_PARTS or part.endswith(".egg-info") for part in path.parts)
     ]
-
-
-class LongOpenCodeComparisonFakeDataInvariantTests:
-    __test__ = True
-
-    def test_long_opencode_comparison_artifacts_exist(self) -> None:
-        missing = [path.relative_to(ROOT).as_posix() for path in LONG_OPENCODE_COMPARISON_FILES if not path.is_file()]
-        assert missing == []
-
-    def test_long_opencode_comparison_uses_obvious_demo_markers(self) -> None:
-        for path in LONG_OPENCODE_COMPARISON_FILES:
-            text = path.read_text()
-            assert "DEMO" in text
-            assert "2099" in text
-            assert ".invalid" in text
-            assert "999" in text
-            assert "real customer data" in text.lower()
-
-    def test_long_opencode_comparison_has_no_real_looking_years_or_emails(self) -> None:
-        text = "\n".join(path.read_text() for path in LONG_OPENCODE_COMPARISON_FILES)
-        real_years = re.findall(r"\b20(?:2[0-8])\b", text)
-        non_demo_emails = [
-            email
-            for email in re.findall(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", text)
-            if not email.endswith(".invalid")
-        ]
-        assert real_years == []
-        assert non_demo_emails == []
-
-    @pytest.mark.parametrize("pattern", BANNED_SECRET_PATTERNS)
-    def test_long_opencode_comparison_has_no_real_looking_secrets(self, pattern: re.Pattern[str]) -> None:
-        offenders: list[str] = []
-        allowed_demo_assignments = {
-            'TOKEN_TRACKER_PORTAL_TOKEN="demo-token"',
-            'TOKEN_TRACKER_PORTAL_TOKEN="demo-token"',
-        }
-        for path in LONG_OPENCODE_COMPARISON_FILES:
-            for line in path.read_text().splitlines():
-                if "TOKEN_TRACKER_PORTAL_TOKEN" in line and "demo-token" in line:
-                    continue
-                if line.strip() in allowed_demo_assignments:
-                    continue
-                if pattern.search(line):
-                    offenders.append(f"{path.relative_to(ROOT).as_posix()}: {line.strip()}")
-        assert offenders == []
-
-    def test_long_opencode_comparison_forbids_real_external_service_calls(self) -> None:
-        text = "\n".join(path.read_text() for path in LONG_OPENCODE_COMPARISON_FILES).lower()
-        forbidden_instruction_snippets = [
-            "curl https://",
-            "curl -x post https://",
-            "requests.post(\"https://",
-            "requests.get(\"https://",
-            "publish a real gist",
-            "create a real github issue",
-            "send a real email",
-        ]
-        offenders = [snippet for snippet in forbidden_instruction_snippets if snippet in text]
-        assert offenders == []
-
-    def test_long_opencode_comparison_requires_harness_target_workdir_evidence(self) -> None:
-        runbook = (ROOT / "docs" / "DEMO_2099_OPENCODE_COMPARISON_RUNBOOK.md").read_text().lower()
-
-        assert "opencode run --dir" in runbook
-        assert ".demo/opencode-comparison/harness-target" in runbook
-        assert "retryable workdir mismatch" in runbook
-        assert "do not count repo-level `incident-ledger/` output as successful harness evidence" in runbook

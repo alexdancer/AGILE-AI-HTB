@@ -5,6 +5,7 @@ from typing import Any
 
 from agile_ai_htb import db
 from agile_ai_htb.board_automation import get_run_automation_state, list_eligible_estimated_tasks
+from agile_ai_htb.evidence_reporting import token_component_summary_from_log
 from agile_ai_htb.project_context import project_bound_tasks
 from agile_ai_htb.task_launch import refresh_task_from_session
 from agile_ai_htb.tracking_modes import OBSERVED_ONLY
@@ -79,6 +80,14 @@ def task_view_model(database_path: Path | str, task: dict[str, Any]) -> dict[str
             database_path,
             worker_run_id=str(metadata["active_worker_run_id"]),
         )[-6:]
+    if task.get("session_id") and task.get("actual_tokens"):
+        try:
+            metadata["worker_token_components"] = token_component_summary_from_log(
+                db.build_session_artifact(database_path, str(task["session_id"]))["token_log"],
+                spend_category="worker_execution",
+            )
+        except KeyError:
+            pass
     task["metadata"] = metadata
     return task
 
@@ -114,7 +123,7 @@ def project_board_counts(database_path: Path | str, project_id: str) -> dict[str
 
 
 def project_has_running_work(database_path: Path | str, project_id: str) -> bool:
-    project_tasks = active_board_tasks(project_bound_tasks(db.list_tasks(database_path), project_id))
+    project_tasks = project_bound_tasks(db.list_tasks(database_path), project_id)
     if any(task.get("status") == "Running" for task in project_tasks):
         return True
     task_ids = {task["id"] for task in project_tasks}
@@ -189,6 +198,30 @@ def project_workspace_summary(database_path: Path | str, project: dict[str, Any]
     adapters = worker_adapter_view_models(database_path)
     launch_ready = any(adapter.get("launchable") for adapter in adapters)
     capability = project.get("capability") or {}
+    all_project_tasks = project_bound_tasks(db.list_tasks(database_path), project_id)
+    archived_count = sum(1 for task in all_project_tasks if db.task_is_archived(task))
+    if db.project_is_archived(project):
+        return {
+            "counts": counts,
+            "total_tasks": sum(counts.values()),
+            "launch_ready": False,
+            "capability_state": "archived",
+            "test_command": (project.get("profile") or {}).get("test_command"),
+            "next_actions": [
+                {
+                    "label": "Task history",
+                    "href": f"/projects/{project_id}/task-history",
+                    "tone": "blue",
+                    "detail": f"{len(all_project_tasks)} total tasks · {archived_count} archived",
+                },
+                {
+                    "label": "Project settings",
+                    "href": "/settings/project",
+                    "tone": "yellow",
+                    "detail": "Restore this project before launching new Worker work",
+                },
+            ],
+        }
     next_actions = [
         {
             "label": "Open task board",
@@ -209,8 +242,6 @@ def project_workspace_summary(database_path: Path | str, project: dict[str, Any]
         next_actions.append({"label": "Review needed", "href": f"/projects/{project_id}/board", "tone": "yellow", "detail": f"{counts['Review']} completed slices need human review disposition."})
     if counts["Blocked"]:
         next_actions.append({"label": "Blocked work", "href": f"/projects/{project_id}/board", "tone": "yellow", "detail": f"{counts['Blocked']} slices need guardrail, setup, or manual-estimate attention."})
-    all_project_tasks = project_bound_tasks(db.list_tasks(database_path), project_id)
-    archived_count = sum(1 for task in all_project_tasks if db.task_is_archived(task))
     next_actions.append({"label": "Task history", "href": f"/projects/{project_id}/task-history", "tone": "blue", "detail": f"{len(all_project_tasks)} total tasks · {archived_count} archived"})
     next_actions.append({"label": "Session evidence", "href": "/sessions", "tone": "blue", "detail": "Review tokens, guardrails, alarms, checkpoints, and Worker timeline evidence"})
     return {

@@ -14,7 +14,6 @@
       <div class="k">Review</div><div class="v">{{ breakdown.id }}</div>
       <div class="k">Decision</div><div class="v">{{ breakdown.decision }}</div>
       <div class="k">Model</div><div class="v">{{ breakdown.model }}</div>
-      <div class="k">Confidence</div><div class="v">{{ breakdown.confidence }}</div>
       {% if breakdown.session_id %}<div class="k">Token session</div><div class="v"><a href="/sessions/{{ breakdown.session_id }}">{{ breakdown.session_id }}</a></div>{% endif %}
     </div>
     {% if breakdown.rationale %}<p class="muted">{{ breakdown.rationale }}</p>{% endif %}

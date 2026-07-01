@@ -59,7 +59,7 @@ async def test_llm_client_translates_anthropic_messages(monkeypatch):
                 {"role": "system", "content": "be concise"},
                 {"role": "user", "content": "hi"},
             ],
-            "max_tokens": 12,
+            "max_tokens": 16_384,
             "temperature": 0,
         }
     )
@@ -69,7 +69,7 @@ async def test_llm_client_translates_anthropic_messages(monkeypatch):
     assert captured["payload"] == {
         "model": "claude-sonnet-4-20250514",
         "messages": [{"role": "user", "content": "hi"}],
-        "max_tokens": 12,
+        "max_tokens": 16_384,
         "system": "be concise",
         "temperature": 0,
     }

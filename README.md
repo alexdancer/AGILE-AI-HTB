@@ -9,6 +9,7 @@ Use it when you want a coding agent workflow that is easier to inspect:
 - estimate work before launch
 - break larger plans into smaller governed slices
 - run coding agents from a project board
+- keep long-running agent work from turning into one polluted mega-thread: each slice gets its own scoped Worker run, while the Harness preserves the plan, budget, evidence, and review state
 - record Worker Run evidence, stdout/stderr, token usage, and review state
 - keep budget overrides and final acceptance in human hands
 
@@ -34,6 +35,7 @@ Recommended source install before PyPI release:
 
 ```bash
 pipx install "git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git"
+cd /path/to/your/repo
 htb init
 htb serve
 ```
@@ -63,12 +65,17 @@ uv run htb serve
 
 More install detail: [docs/INSTALL.md](docs/INSTALL.md).
 
+To update an existing install before PyPI release, rerun the curl installer or
+`pipx install --force "git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git"`.
+This updates the global `htb` CLI and preserves repo-local `.htb/` state. See
+[docs/INSTALL.md](docs/INSTALL.md#updating-agile-ai-htb).
+
 ## First run
 
 1. Start the Portal:
-   ```bash
-   htb serve
-   ```
+```bash
+ htb serve
+```
 2. Open `http://localhost:8000/login`.
 3. Use the portal token from ignored `.htb/secrets.env`.
 4. Open `/settings/control-plane`.
@@ -83,6 +90,8 @@ For redacted support status:
 ```bash
 htb check
 ```
+
+
 
 ## How the workflow works
 
@@ -104,19 +113,23 @@ Estimated -> Running -> Review -> Done
 
 AGILE-AI-HTB has four main pieces:
 
-| Piece | Role |
-|---|---|
-| **Portal / Control Plane** | Browser UI and API for setup, estimates, project boards, launch, reports, budgets, and review. |
-| **Local Runner** | Runs near your local repository so Worker CLIs can see local files, git state, and their own credentials. In local mode it runs inside the same app process. |
-| **Worker Adapter** | Integration for a coding CLI such as OpenCode, Claude Code, Codex, or Hermes. Adapter verification proves the CLI can run and produce trustworthy usage evidence for the selected model. |
-| **Token ledger and reports** | SQLite-backed records for estimates, Worker Runs, token evidence, alarms, checkpoints, and session artifacts. |
+
+| Piece                        | Role                                                                                                                                                                                     |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Portal / Control Plane**   | Browser UI and API for setup, estimates, project boards, launch, reports, budgets, and review.                                                                                           |
+| **Local Runner**             | Runs near your local repository so Worker CLIs can see local files, git state, and their own credentials. In local mode it runs inside the same app process.                             |
+| **Worker Adapter**           | Integration for a coding CLI such as OpenCode, Claude Code, Codex, or Hermes. Adapter verification proves the CLI can run and produce trustworthy usage evidence for the selected model. |
+| **Token ledger and reports** | SQLite-backed records for estimates, Worker Runs, token evidence, alarms, checkpoints, and session artifacts.                                                                            |
+
 
 There are two model layers:
 
-| Layer | Used for | Auth/config |
-|---|---|---|
+
+| Layer                   | Used for                                                      | Auth/config                                                     |
+| ----------------------- | ------------------------------------------------------------- | --------------------------------------------------------------- |
 | **Control Plane model** | estimates, planning, task breakdown, recommendations, reports | configured in `/settings/control-plane` or local config/secrets |
-| **Worker model** | the actual coding task | configured by the native Worker CLI |
+| **Worker model**        | the actual coding task                                        | configured by the native Worker CLI                             |
+
 
 Pasting a control-plane API key does not configure OpenCode, Claude Code, Codex, Hermes, or another Worker CLI.
 
@@ -124,24 +137,29 @@ Pasting a control-plane API key does not configure OpenCode, Claude Code, Codex,
 
 `htb init` creates local-only state under `.htb/`:
 
-| File | Purpose |
-|---|---|
-| `.htb/config.toml` | non-secret local config |
-| `.htb/secrets.env` | ignored portal token and control-plane API key storage |
-| `.htb/guardrails.yaml` | ignored default guardrail config |
-| `.htb/harness.db` | default SQLite database path, created when the app initializes |
+Run it from the repository you want AGILE-AI-HTB to govern. If you run it from a Git subdirectory, it initializes the Git repository root; outside Git, it initializes the current directory.
+
+| File                   | Purpose                                                        |
+| ---------------------- | -------------------------------------------------------------- |
+| `.htb/config.toml`     | non-secret local config                                        |
+| `.htb/secrets.env`     | ignored portal token and control-plane API key storage         |
+| `.htb/guardrails.yaml` | ignored default guardrail config                               |
+| `.htb/harness.db`      | default SQLite database, created or migrated by `htb init`     |
+
 
 For normal local use, prefer the Portal settings screens. Environment variables are mainly for CI, headless runs, or compatibility.
 
 Common environment variables:
 
-| Variable | Purpose |
-|---|---|
-| `TOKEN_TRACKER_PORTAL_TOKEN` | Portal login token |
+
+| Variable                        | Purpose                                                                       |
+| ------------------------------- | ----------------------------------------------------------------------------- |
+| `TOKEN_TRACKER_PORTAL_TOKEN`    | Portal login token                                                            |
 | `AGILE_AI_HTB_CONTROL_PROVIDER` | Control-plane provider, such as `openai`, `anthropic`, or `openai-compatible` |
-| `AGILE_AI_HTB_CONTROL_MODEL` | Control-plane model |
-| `AGILE_AI_HTB_CONTROL_BASE_URL` | Base URL for OpenAI-compatible providers |
-| `AGILE_AI_HTB_CONTROL_API_KEY` | Control-plane provider API key |
+| `AGILE_AI_HTB_CONTROL_MODEL`    | Control-plane model                                                           |
+| `AGILE_AI_HTB_CONTROL_BASE_URL` | Base URL for OpenAI-compatible providers                                      |
+| `AGILE_AI_HTB_CONTROL_API_KEY`  | Control-plane provider API key                                                |
+
 
 The Portal writes submitted API keys only to ignored local secret storage and does not display raw key values again.
 
@@ -149,7 +167,7 @@ The Portal writes submitted API keys only to ignored local secret storage and do
 
 - The main supported path is local all-in-one mode.
 - Worker launch readiness depends on local repo access, git state, installed Worker CLIs, and native CLI auth/config.
-- Hosted workspaces, a fuller CLI, MCP access, PyPI release, and Homebrew install are future work.
+- Hosted workspaces, a fuller CLI, MCP access, and Homebrew install are future work.
 
 ## More docs
 

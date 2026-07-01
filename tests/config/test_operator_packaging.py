@@ -65,6 +65,7 @@ def test_readme_documents_portal_first_operator_flow():
     assert "AGILE-AI-HTB" in readme
     assert "pipx install" in readme
     assert "htb init" in readme
+    assert "created or migrated by `htb init`" in readme
     assert "uv run htb init" not in operator_install
     assert "http://localhost:8000/login" in readme
     assert "htb check" in readme
@@ -82,12 +83,19 @@ def test_readme_documents_portal_first_operator_flow():
 
 
 def test_install_docs_separate_operator_installs_from_contributor_uv_run():
+    readme = (ROOT / "README.md").read_text()
     install_doc = (ROOT / "docs" / "INSTALL.md").read_text()
     getting_started = (ROOT / "docs" / "GETTING_STARTED.md").read_text()
 
     assert 'pipx install "git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git"' in install_doc
     assert "pipx install agile-ai-htb" in install_doc
     assert "curl -fsSL https://raw.githubusercontent.com/alexdancer/AI-Harness-Token-Tracker/main/install.sh | sh" in install_doc
+    assert "## Updating AGILE-AI-HTB" in install_doc
+    assert 'pipx install --force "git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git"' in install_doc
+    assert 'uv tool install --force "git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git"' in install_doc
+    assert "pipx upgrade agile-ai-htb" in install_doc
+    assert "uv tool upgrade agile-ai-htb" in install_doc
+    assert "preserves repo-local `.htb/` state" in readme
     assert "Homebrew is planned" in install_doc
     assert "not published yet" in install_doc
     assert "uv run htb ...` is a contributor convenience" in install_doc
@@ -102,7 +110,6 @@ def test_operator_docs_do_not_advertise_proxy_governed_mode():
         ROOT / "docs" / "GETTING_STARTED.md",
         ROOT / "docs" / "WORKER_ADAPTER_SETUP.md",
         ROOT / "docs" / "SETUP_SUPPORT_CHECKLIST.md",
-        ROOT / "docs" / "DEMO_2099_OPENCODE_COMPARISON_RUNBOOK.md",
         ROOT / "docs" / "MCP_AGENT_HARNESS_TODO.md",
     ]
 
