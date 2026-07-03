@@ -4,6 +4,7 @@ import json
 import re
 from typing import Any
 
+from agile_ai_htb.native_cli_diagnostics import redact_native_cli_text
 from agile_ai_htb.native_usage import token_usage_components
 
 TOKEN_EVIDENCE_KEYS = {"prompt_tokens", "completion_tokens", "total_tokens"}
@@ -30,7 +31,7 @@ def safe_evidence(value: Any, key_hint: str = "") -> Any:
     if isinstance(value, list):
         return [safe_evidence(item, key_hint) for item in value]
     if isinstance(value, str):
-        redacted = SECRET_TEXT_PATTERN.sub("***REDACTED***", value)
+        redacted = redact_native_cli_text(SECRET_TEXT_PATTERN.sub("***REDACTED***", value))
         if redacted != value or value.startswith("sk_") or "secret" in value.lower():
             return "***REDACTED***" if redacted == value else redacted[:1000]
         return value[:1000]

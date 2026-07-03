@@ -19,19 +19,49 @@ def _auth_headers():
 
 
 def _client(tmp_path):
-    settings = Settings(database_path=tmp_path / "harness.db", guardrails_path=ROOT / "guardrails.yaml")
+    settings = Settings(
+        database_path=tmp_path / "harness.db",
+        guardrails_path=ROOT / "guardrails.yaml",
+        portal_auth_required=True,
+    )
     return TestClient(create_app(settings))
 
 
 class FakeRunner:
-    def __init__(self, stdout=SENTINEL_RESPONSE, returncode=0):
+    def __init__(self, stdout=SENTINEL_RESPONSE, returncode=0, stderr=""):
         self.stdout = stdout
         self.returncode = returncode
+        self.stderr = stderr
         self.calls = []
 
     def __call__(self, plan):
         self.calls.append(plan)
-        return {"returncode": self.returncode, "stdout": self.stdout, "stderr": ""}
+        return {"returncode": self.returncode, "stdout": self.stdout, "stderr": self.stderr}
+
+
+def _codex_native_stdout(
+    *, sentinel: bool = True, usage: dict | None = None, model: str | None = None, thread_model: str | None = None
+) -> str:
+    thread_event = {"type": "thread.started", "thread_id": "thread_2099_demo_codex"}
+    if thread_model:
+        thread_event["model"] = thread_model
+    events = [json.dumps(thread_event)]
+    if sentinel:
+        events.append(json.dumps({"type": "item.completed", "item": {"text": SENTINEL_RESPONSE}}))
+    payload = {
+        "type": "turn.completed",
+        "usage": usage
+        or {
+            "input_tokens": 25,
+            "cached_input_tokens": 10,
+            "output_tokens": 7,
+            "reasoning_output_tokens": 3,
+        },
+    }
+    if model:
+        payload["model"] = model
+    events.append(json.dumps(payload))
+    return "\n".join(events)
 
 
 def test_verify_worker_adapter_uses_fake_runner_sentinel_and_requires_token_row(tmp_path):
@@ -96,13 +126,13 @@ def test_verify_worker_adapter_fails_when_token_row_missing_even_if_sentinel_mat
         "codex",
         workdir=str(tmp_path),
         config={"verification_template": ["codex", "--prompt", "{prompt}"]},
-        supported_models=["gpt-5.1-codex"],
+        supported_models=["gpt-5.4"],
     )
 
     result = verify_worker_adapter(
         db_path,
         "codex",
-        model="gpt-5.1-codex",
+        model="gpt-5.4",
         proxy_url="http://127.0.0.1:8000/v1",
         runner=FakeRunner(),
     )
@@ -221,7 +251,7 @@ def test_verify_worker_adapter_fails_fast_without_runner_when_model_unsupported(
         "codex",
         workdir=str(tmp_path),
         config={"verification_template": ["codex", "--prompt", "{prompt}"]},
-        supported_models=["gpt-5.1-codex"],
+        supported_models=["gpt-5.4"],
     )
     runner = FakeRunner()
 
@@ -251,7 +281,7 @@ def test_verify_worker_adapter_marks_failed_evidence_when_cli_is_missing(tmp_pat
         "codex",
         workdir=str(tmp_path),
         config={"verification_template": ["missing-codex", "--api-key", "abc123", "--prompt", "{prompt}"]},
-        supported_models=["gpt-5.1-codex"],
+        supported_models=["gpt-5.4"],
     )
 
     def fake_run(*args, **kwargs):
@@ -262,7 +292,7 @@ def test_verify_worker_adapter_marks_failed_evidence_when_cli_is_missing(tmp_pat
     result = verify_worker_adapter(
         db_path,
         "codex",
-        model="gpt-5.1-codex",
+        model="gpt-5.4",
         proxy_url="http://127.0.0.1:8000/v1",
     )
 
@@ -276,6 +306,35 @@ def test_verify_worker_adapter_marks_failed_evidence_when_cli_is_missing(tmp_pat
     assert adapter["verification_evidence"]["returncode"] != 0
     assert "Failed to launch command" in adapter["verification_evidence"]["stderr"]
     assert "abc123" not in serialized
+
+
+def test_verify_worker_adapter_attaches_claude_code_login_diagnostic(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(
+        db_path,
+        "claude_code",
+        workdir=str(tmp_path),
+        config={"allowed_models_configured": True},
+        supported_models=["claude-opus-4-8"],
+    )
+    stdout = json.dumps({"type": "error", "message": "Not logged in · Please run /login", "is_error": True})
+
+    result = verify_worker_adapter(
+        db_path,
+        "claude_code",
+        model="claude-opus-4-8",
+        proxy_url="http://127.0.0.1:8000/v1",
+        tracking_mode="native_usage",
+        runner=FakeRunner(stdout=stdout, returncode=1),
+    )
+
+    evidence = db.get_worker_adapter(db_path, "claude_code")["verification_evidence"]
+    assert result.passed is False
+    assert evidence["tracking_authoritative"] is False
+    assert evidence["diagnostic"]["summary"] == "Not logged in · Please run /login"
+    assert evidence["diagnostic"]["next_action"] == "Run `/login` in Claude Code, then verify the adapter again."
+    assert evidence["diagnostic"]["setup_href"] == "/settings/workers"
 
 
 def test_verify_worker_adapter_returns_sanitized_evidence(tmp_path):
@@ -294,13 +353,15 @@ def test_verify_worker_adapter_returns_sanitized_evidence(tmp_path):
         "opencode",
         model="opencode/gpt-5.1",
         proxy_url="http://127.0.0.1:8000/v1",
-        runner=FakeRunner(stdout="secret-output"),
+        runner=FakeRunner(stdout="api_key=abc123 secret-output", stderr="Bearer abc.def"),
     )
 
     stored = db.get_worker_adapter(db_path, "opencode")["verification_evidence"]
     assert result.evidence == stored
     serialized = str(result.evidence)
     assert "secret" not in serialized
+    assert "api_key=abc123" not in serialized
+    assert "Bearer abc.def" not in serialized
     assert "sk_sess_" not in serialized
     assert "***REDACTED***" in serialized
 
@@ -380,6 +441,74 @@ def test_parse_claude_code_native_usage_requires_cost_evidence():
     )
 
     evidence = parse_native_usage_evidence(stdout, model="sonnet", returncode=0)
+
+    assert evidence is None
+
+
+def test_parse_codex_turn_completed_usage_accepts_costless_run_bound_tokens():
+    evidence = parse_native_usage_evidence(_codex_native_stdout(), model="5.4", returncode=0)
+
+    assert evidence is not None
+    assert evidence.prompt_tokens == 25
+    assert evidence.completion_tokens == 7
+    assert evidence.total_tokens == 35
+    assert evidence.cost == 0.0
+    assert evidence.raw_usage["run_binding"] == {"thread_id": "thread_2099_demo_codex"}
+    assert evidence.raw_usage["cost_unavailable"] is True
+
+
+def test_parse_codex_turn_completed_usage_accepts_gpt_prefixed_chatgpt_models():
+    evidence = parse_native_usage_evidence(_codex_native_stdout(), model="gpt-5.4", returncode=0)
+
+    assert evidence is not None
+    assert evidence.raw_usage["model"] == "gpt-5.4"
+
+
+def test_parse_codex_turn_completed_usage_accepts_gpt_5_5_model():
+    evidence = parse_native_usage_evidence(_codex_native_stdout(), model="gpt-5.5", returncode=0)
+
+    assert evidence is not None
+    assert evidence.raw_usage["model"] == "gpt-5.5"
+
+
+def test_parse_codex_turn_completed_usage_rejects_bare_5_5_model():
+    evidence = parse_native_usage_evidence(_codex_native_stdout(), model="5.5", returncode=0)
+
+    assert evidence is None
+
+
+def test_parse_codex_turn_completed_usage_rejects_unbound_tokens():
+    stdout = json.dumps(
+        {
+            "type": "turn.completed",
+            "usage": {"input_tokens": 25, "cached_input_tokens": 10, "output_tokens": 7},
+        }
+    )
+
+    evidence = parse_native_usage_evidence(stdout, model="5.4", returncode=0)
+
+    assert evidence is None
+
+
+def test_parse_codex_turn_completed_usage_rejects_mismatched_model():
+    evidence = parse_native_usage_evidence(_codex_native_stdout(model="5.5"), model="5.4", returncode=0)
+
+    assert evidence is None
+
+
+def test_parse_codex_turn_completed_usage_rejects_mismatched_thread_model():
+    evidence = parse_native_usage_evidence(_codex_native_stdout(thread_model="5.5"), model="5.4", returncode=0)
+
+    assert evidence is None
+
+
+def test_parse_codex_turn_completed_usage_rejects_failed_costless_run():
+    evidence = parse_native_usage_evidence(
+        _codex_native_stdout(),
+        model="5.4",
+        returncode=1,
+        allow_failed_returncode=True,
+    )
 
     assert evidence is None
 
@@ -536,6 +665,129 @@ def test_verify_worker_adapter_native_usage_records_authoritative_token_row(tmp_
         "json",
         "Verification only. Do not read files, write files, run tools, or inspect the repository. Reply exactly AGILE_AI_HTB_ADAPTER_OK",
     ]
+
+
+def test_verify_codex_native_usage_records_authoritative_costless_token_row(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(
+        db_path,
+        "codex",
+        workdir=str(tmp_path),
+        config={"command": "codex"},
+        supported_models=["gpt-5.4"],
+    )
+    runner = FakeRunner(stdout=_codex_native_stdout())
+
+    result = verify_worker_adapter(
+        db_path,
+        "codex",
+        model="gpt-5.4",
+        proxy_url="http://127.0.0.1:8000/v1",
+        tracking_mode="native_usage",
+        runner=runner,
+    )
+
+    adapter = db.get_worker_adapter(db_path, "codex")
+    artifact = db.build_session_artifact(db_path, result.session_id)
+    turn = artifact["token_log"][0]
+    assert result.passed is True
+    assert adapter["verification_status"] == "verified"
+    assert adapter["verification_evidence"]["tracking_mode"] == "native_usage"
+    assert adapter["verification_evidence"]["tracking_authoritative"] is True
+    assert adapter["verification_evidence"]["native_usage"]["cost_unavailable"] is True
+    assert turn["usage_kind"] == "adapter_verification"
+    assert turn["model"] == "gpt-5.4"
+    assert turn["prompt_tokens"] == 25
+    assert turn["completion_tokens"] == 7
+    assert turn["total_tokens"] == 35
+    assert turn["cost"] == 0
+    assert turn["raw_usage"]["usage"]["cached_input_tokens"] == 10
+    assert turn["raw_usage"]["usage_source"] == "native_usage"
+    assert runner.calls[0].command == [
+        "codex",
+        "exec",
+        "--json",
+        "--skip-git-repo-check",
+        "-m",
+        "gpt-5.4",
+        "Verification only. Do not read files, write files, run tools, or inspect the repository. Reply exactly AGILE_AI_HTB_ADAPTER_OK",
+    ]
+    assert runner.calls[0].metadata["project_root"] == str(tmp_path)
+
+
+def test_verify_native_usage_surfaces_cli_error_result(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(db_path, "claude_code", workdir=str(tmp_path), supported_models=["claude-sonnet-4-6"])
+    stdout = "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "error": "authentication_failed",
+                    "message": {"content": [{"type": "text", "text": "Not logged in · Please run /login"}]},
+                }
+            ),
+            json.dumps({"type": "result", "is_error": True, "result": "Not logged in · Please run /login"}),
+        ]
+    )
+
+    result = verify_worker_adapter(
+        db_path,
+        "claude_code",
+        model="claude-sonnet-4-6",
+        proxy_url="http://127.0.0.1:8000/v1",
+        tracking_mode="native_usage",
+        runner=FakeRunner(stdout=stdout, returncode=1),
+    )
+
+    assert result.passed is False
+    assert "Adapter CLI reported: Not logged in · Please run /login" in result.reasons
+
+
+def test_verify_native_usage_surfaces_stderr_cli_error_after_stdout_event(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(db_path, "claude_code", workdir=str(tmp_path), supported_models=["claude-sonnet-4-6"])
+
+    result = verify_worker_adapter(
+        db_path,
+        "claude_code",
+        model="claude-sonnet-4-6",
+        proxy_url="http://127.0.0.1:8000/v1",
+        tracking_mode="native_usage",
+        runner=FakeRunner(
+            stdout=json.dumps({"type": "system", "message": "starting"}),
+            stderr="Not logged in · Please run /login",
+            returncode=1,
+        ),
+    )
+
+    assert result.passed is False
+    assert "Adapter CLI reported: Not logged in · Please run /login" in result.reasons
+
+
+def test_verify_codex_native_usage_fails_without_usage_evidence(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(db_path, "codex", workdir=str(tmp_path), config={"command": "codex"}, supported_models=["gpt-5.4"])
+    result = verify_worker_adapter(
+        db_path,
+        "codex",
+        model="gpt-5.4",
+        proxy_url="http://127.0.0.1:8000/v1",
+        tracking_mode="native_usage",
+        runner=FakeRunner(stdout=json.dumps({"type": "item.completed", "item": {"text": SENTINEL_RESPONSE}})),
+    )
+
+    adapter = db.get_worker_adapter(db_path, "codex")
+    assert result.passed is False
+    assert "No trustworthy native usage evidence was emitted for selected model." in result.reasons
+    assert adapter["verification_status"] == "failed"
+    assert adapter["verification_evidence"]["tracking_mode"] == "observed_only"
+    assert adapter["verification_evidence"]["tracking_authoritative"] is False
+    assert not db.has_adapter_verification_token(db_path, session_id=result.session_id, model="gpt-5.4")
 
 
 def test_verify_worker_adapter_native_usage_accepts_opencode_step_finish_tokens(tmp_path):
@@ -716,11 +968,11 @@ def test_worker_adapter_verify_route_requires_auth_uses_injected_runner_and_toke
             tmp_path / "harness.db",
             session_id=session_id,
             usage_kind="adapter_verification",
-            model="gpt-5.1-codex",
+            model="gpt-5.4",
             prompt_tokens=5,
             completion_tokens=1,
             cost=0,
-            raw_usage={"total_tokens": 6, "api_key": "sk_ses_fake_leak"},
+            raw_usage={"total_tokens": 6, "api_key": "«redacted:sk_…»"},
         )
 
     with _client(tmp_path) as client:
@@ -741,17 +993,17 @@ def test_worker_adapter_verify_route_requires_auth_uses_injected_runner_and_toke
                     "{session_api_key}",
                 ]
             },
-            supported_models=["gpt-5.1-codex"],
+            supported_models=["gpt-5.4"],
         )
 
         unauthorized = client.post(
             "/settings/workers/codex/verify",
-            json={"model": "gpt-5.1-codex", "proxy_url": "http://127.0.0.1:8000/v1"},
+            json={"model": "gpt-5.4", "proxy_url": "http://127.0.0.1:8000/v1"},
         )
         response = client.post(
             "/settings/workers/codex/verify",
             headers=_auth_headers(),
-            json={"model": "gpt-5.1-codex", "proxy_url": "http://127.0.0.1:8000/v1"},
+            json={"model": "gpt-5.4", "proxy_url": "http://127.0.0.1:8000/v1"},
         )
 
     body = response.json()
@@ -842,6 +1094,25 @@ def test_workers_page_does_not_trust_proxy_mode_config_without_proxy_template(tm
     assert "CLI Worker" in response.text
     assert "API / Proxy: Governed through Harness Proxy" not in response.text
     assert "native_usage, observed_only" in response.text
+
+
+def test_workers_page_offers_codex_native_usage_mode(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        db.update_worker_adapter(
+            tmp_path / "harness.db",
+            "codex",
+            workdir=str(tmp_path),
+            config={"command": "codex"},
+            supported_models=["gpt-5.4"],
+        )
+
+        response = client.get("/settings/workers?adapter_id=codex", headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert "CLI Worker" in response.text
+    assert "native_usage, observed_only" in response.text
+    assert 'value="native_usage"' in response.text
 
 
 def test_worker_verify_route_rejects_proxy_mode_for_cli_only_adapter(tmp_path, monkeypatch):

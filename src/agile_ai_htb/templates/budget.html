@@ -28,6 +28,30 @@
 </section>
 
 <section class="panel">
+  <div class="panel-header"><h3>Today’s budget counter</h3></div>
+  <div class="panel-body grid cols-3">
+    <article class="kpi">
+      <div class="label">Used in current daily window</div>
+      <div class="value mono">{{ "{:,}".format(budget.current_window_used_tokens or 0) }}</div>
+      <div class="sub">since {{ budget.budget_since }}</div>
+    </article>
+    <article class="kpi">
+      <div class="label">Remaining daily budget</div>
+      <div class="value mono">{% if budget.current_window_remaining_tokens is not none %}{{ "{:,}".format(budget.current_window_remaining_tokens) }}{% else %}—{% endif %}</div>
+      <div class="sub">based on the saved daily cap</div>
+    </article>
+    <article class="card">
+      <h3>Reset daily guardrail usage</h3>
+      <p class="muted">Start a new daily budget window from now. Token ledger evidence, session reports, and task actuals are preserved.</p>
+      {% if budget.daily_usage_reset_at %}<p class="mono muted">last reset: {{ budget.daily_usage_reset_at }}</p>{% endif %}
+      <form method="post" action="/settings/budget/reset">
+        <button class="btn" type="submit">Reset today’s budget counter</button>
+      </form>
+    </article>
+  </div>
+</section>
+
+<section class="panel">
   <div class="panel-header"><h3>Spend authority</h3></div>
   <div class="panel-body grid cols-2">
     <div class="card">

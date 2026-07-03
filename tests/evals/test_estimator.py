@@ -23,6 +23,7 @@ from agile_ai_htb.guardrails import load_guardrails
 from agile_ai_htb.settings import Settings
 from agile_ai_htb.task_breakdown import (
     TASK_BREAKDOWN_MAX_TOKENS,
+    TASK_BREAKDOWN_TIMEOUT_SECONDS,
     TaskBreakdownResult,
     TaskBreakdownValidationError,
     breakdown_task_source,
@@ -127,10 +128,19 @@ def _breakdown_content(*titles):
             {
                 "kind": "implementation",
                 "title": title,
+                "objective": f"Deliver {title} as one independently verifiable slice.",
                 "prompt": f"Implement {title}",
                 "acceptance_criteria": f"{title} has tests.",
                 "constraints": [],
-                "human_in_loop": True,
+                "proof": f"Run targeted tests proving {title}.",
+                "why_this_task_exists": f"{title} maps to a distinct behavior from the source contract.",
+                "why_not_smaller": "Smaller subtasks would split implementation from proof.",
+                "why_not_larger": "Larger tasks would mix sibling source requirements.",
+                "dependencies": [],
+                "likely_entry_points": ["tests/evals/test_estimator.py"],
+                "execution_mode": "AFK",
+                "hitl_reason": "",
+                "human_in_loop": False,
             }
             for title in titles
         ],
@@ -263,9 +273,18 @@ async def test_eval_task_breakdown_accepts_common_model_json_variants():
                     {
                         "kind": "implementation",
                         "title": "Run DEMO_2099 comparison",
+                        "objective": "Run DEMO_2099 comparison as one reviewed vertical slice.",
                         "prompt": "Run the comparison demo from the uploaded Markdown.",
                         "acceptance_criteria": ["Portal shows reviewed candidate.", "pytest passes."],
                         "constraints": "Do not add network dependencies.",
+                        "proof": "Run pytest and inspect the Portal candidate.",
+                        "why_this_task_exists": "The Markdown describes one executable comparison behavior.",
+                        "why_not_smaller": "Splitting run and inspection would separate the proof from the task.",
+                        "why_not_larger": "There is no sibling implementation slice to merge.",
+                        "dependencies": [],
+                        "likely_entry_points": ["tests/evals/test_estimator.py"],
+                        "execution_mode": "HITL",
+                        "hitl_reason": "Operator reviews the Portal candidate after execution.",
                         "human_in_loop": True,
                     }
                 ],
@@ -323,6 +342,200 @@ async def test_task_breakdown_request_uses_explicit_large_output_cap():
 
     assert llm.requests[0]["max_tokens"] == TASK_BREAKDOWN_MAX_TOKENS
     assert llm.requests[0]["max_tokens"] >= 16_384
+    assert llm.requests[0]["timeout_seconds"] == TASK_BREAKDOWN_TIMEOUT_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_task_breakdown_system_prompt_includes_task_slicing_policy_schema():
+    llm = FakeSequentialLLM([_breakdown_content("Slice DEMO_TASK_2099 policy")])
+
+    await breakdown_task_source(
+        "# DEMO_TASK_2099 policy\n\n- [ ] Slice with proof\n- [ ] Do not split setup prose.",
+        llm_client=llm,
+        task_breakdown_model="claude-sonnet-4-6",
+    )
+
+    system_prompt = llm.requests[0]["messages"][0]["content"]
+    assert "Task Slicing Policy:" in system_prompt
+    assert "Create the fewest AGILE Board Tasks" in system_prompt
+    assert "Markdown bullets are evidence, not automatic Tasks" in system_prompt
+    assert "why_not_smaller" in system_prompt
+    assert "why_not_larger" in system_prompt
+    assert "execution_mode: AFK or HITL" in system_prompt
+    assert "source_text contract-authoritative" in system_prompt
+
+
+def test_task_breakdown_rejects_execution_mode_human_loop_mismatch():
+    with pytest.raises(TaskBreakdownValidationError, match="human_in_loop must match execution_mode"):
+        validate_breakdown_result(
+            {
+                "decision": "single_task",
+                "candidates": [
+                    {
+                        "kind": "implementation",
+                        "title": "DEMO_TASK_2099 inconsistent candidate",
+                        "objective": "Demonstrate inconsistent execution metadata.",
+                        "prompt": "Implement the inconsistent DEMO candidate.",
+                        "acceptance_criteria": "Tests pass.",
+                        "constraints": [],
+                        "proof": "Run pytest.",
+                        "why_this_task_exists": "It exercises validation.",
+                        "why_not_smaller": "No smaller meaningful slice exists.",
+                        "why_not_larger": "No larger task is needed.",
+                        "dependencies": [],
+                        "likely_entry_points": [],
+                        "execution_mode": "AFK",
+                        "hitl_reason": "",
+                        "human_in_loop": True,
+                    }
+                ],
+                "rejected_items": [],
+                "global_contract_summary": "Validation summary.",
+                "global_constraints": [],
+                "verification": [],
+                "non_goals": [],
+                "recommended_sequence": ["DEMO_TASK_2099 inconsistent candidate"],
+                "confidence": 0.8,
+                "rationale": "Invalid execution metadata must fail.",
+                "source": "llm",
+            }
+        )
+
+
+def test_task_breakdown_rejects_invalid_execution_mode():
+    with pytest.raises(TaskBreakdownValidationError, match="execution_mode must be AFK or HITL"):
+        validate_breakdown_result(
+            {
+                "decision": "single_task",
+                "candidates": [
+                    {
+                        "kind": "implementation",
+                        "title": "DEMO_TASK_2099 invalid execution mode",
+                        "objective": "Demonstrate invalid execution mode metadata.",
+                        "prompt": "Implement the invalid DEMO candidate.",
+                        "acceptance_criteria": "Tests pass.",
+                        "constraints": [],
+                        "proof": "Run pytest.",
+                        "why_this_task_exists": "It exercises validation.",
+                        "why_not_smaller": "No smaller meaningful slice exists.",
+                        "why_not_larger": "No larger task is needed.",
+                        "dependencies": [],
+                        "likely_entry_points": [],
+                        "execution_mode": "AUTOPILOT",
+                        "hitl_reason": "",
+                        "human_in_loop": False,
+                    }
+                ],
+                "rejected_items": [],
+                "global_contract_summary": "Validation summary.",
+                "global_constraints": [],
+                "verification": [],
+                "non_goals": [],
+                "recommended_sequence": ["DEMO_TASK_2099 invalid execution mode"],
+                "confidence": 0.8,
+                "rationale": "Invalid execution metadata must fail.",
+                "source": "llm",
+            }
+        )
+
+
+def test_task_breakdown_rejects_missing_policy_evidence_for_fresh_candidates():
+    with pytest.raises(TaskBreakdownValidationError, match="candidate objective is required"):
+        validate_breakdown_result(
+            {
+                "decision": "single_task",
+                "candidates": [
+                    {
+                        "kind": "implementation",
+                        "title": "DEMO_TASK_2099 missing policy evidence",
+                        "prompt": "Implement the incomplete DEMO candidate.",
+                        "acceptance_criteria": "Tests pass.",
+                        "constraints": [],
+                        "execution_mode": "AFK",
+                        "hitl_reason": "",
+                        "human_in_loop": False,
+                    }
+                ],
+                "rejected_items": [],
+                "global_contract_summary": "Validation summary.",
+                "global_constraints": [],
+                "verification": [],
+                "non_goals": [],
+                "recommended_sequence": ["DEMO_TASK_2099 missing policy evidence"],
+                "confidence": 0.8,
+                "rationale": "Fresh candidates must carry policy evidence.",
+                "source": "llm",
+            }
+        )
+
+
+def test_task_breakdown_rejects_empty_supplied_policy_evidence():
+    with pytest.raises(TaskBreakdownValidationError, match="why_not_smaller must be non-empty"):
+        validate_breakdown_result(
+            {
+                "decision": "single_task",
+                "candidates": [
+                    {
+                        "kind": "implementation",
+                        "title": "DEMO_TASK_2099 empty rationale",
+                        "objective": "Demonstrate empty policy evidence rejection.",
+                        "prompt": "Implement the invalid DEMO candidate.",
+                        "acceptance_criteria": "Tests pass.",
+                        "constraints": [],
+                        "proof": "Run pytest.",
+                        "why_this_task_exists": "It exercises validation.",
+                        "why_not_smaller": "",
+                        "why_not_larger": "No larger task is needed.",
+                        "dependencies": [],
+                        "likely_entry_points": [],
+                        "execution_mode": "AFK",
+                        "hitl_reason": "",
+                        "human_in_loop": False,
+                    }
+                ],
+                "rejected_items": [],
+                "global_contract_summary": "Validation summary.",
+                "global_constraints": [],
+                "verification": [],
+                "non_goals": [],
+                "recommended_sequence": ["DEMO_TASK_2099 empty rationale"],
+                "confidence": 0.8,
+                "rationale": "Empty policy evidence must fail.",
+                "source": "llm",
+            }
+        )
+
+
+def test_task_breakdown_rejects_afk_candidate_with_hitl_reason():
+    content = _breakdown_content("DEMO_TASK_2099 stale HITL reason")
+    content["candidates"][0]["hitl_reason"] = "Operator must approve this first."
+
+    with pytest.raises(TaskBreakdownValidationError, match="hitl_reason must be empty for AFK"):
+        validate_breakdown_result(content)
+
+
+@pytest.mark.asyncio
+async def test_task_breakdown_preserves_policy_rejections_for_non_task_markdown_bullets():
+    content = _breakdown_content("Implement DEMO_VERTICAL_2099 slice")
+    content["rejected_items"] = [
+        {"text": "Do not add network dependencies.", "reason": "constraint, not a task"},
+        {"text": "Run pytest.", "reason": "verification note, not a task"},
+        {"text": "Create database layer first.", "reason": "horizontal layer bullet, not an independently verifiable task"},
+        {"text": "Prepare for future multi-tenant support.", "reason": "speculative future-proofing, not current task scope"},
+    ]
+    llm = FakeSequentialLLM([content])
+
+    result, _ = await breakdown_task_source(
+        "# DEMO_TASK_2099 slicing\n\n- [ ] Do not add network dependencies.\n- [ ] Run pytest.\n- [ ] Create database layer first.\n- [ ] Prepare for future multi-tenant support.",
+        llm_client=llm,
+        task_breakdown_model="claude-sonnet-4-6",
+    )
+
+    reasons = {item.reason for item in result.rejected_items}
+    assert "constraint, not a task" in reasons
+    assert "verification note, not a task" in reasons
+    assert "horizontal layer bullet, not an independently verifiable task" in reasons
+    assert "speculative future-proofing, not current task scope" in reasons
 
 
 @pytest.mark.asyncio
@@ -373,10 +586,18 @@ def test_task_breakdown_candidate_kind_defaults_for_legacy_records():
             "confidence": 0.8,
             "rationale": "Legacy records did not store kind.",
             "source": "llm",
-        }
+        },
+        allow_legacy_candidate_defaults=True,
     )
 
     assert result.candidates[0].kind == "implementation"
+    assert result.candidates[0].objective == "Implement the legacy DEMO candidate."
+    assert result.candidates[0].proof == "Tests pass."
+    assert result.candidates[0].why_not_smaller == (
+        "Smaller substeps would not be independently useful and verifiable."
+    )
+    assert result.candidates[0].execution_mode == "HITL"
+    assert result.candidates[0].hitl_reason == "Requires operator review or judgment before completion."
 
 
 def test_task_breakdown_rejects_invalid_candidate_kind():

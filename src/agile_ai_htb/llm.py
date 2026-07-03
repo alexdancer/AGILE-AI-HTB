@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import re
+import socket
 import urllib.error
 import urllib.request
 from collections.abc import AsyncIterator, Callable
@@ -15,6 +17,8 @@ from agile_ai_htb.settings import Settings
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
 ANTHROPIC_VERSION = "2023-06-01"
+DEFAULT_PROVIDER_TIMEOUT_SECONDS = 120
+INTERNAL_REQUEST_KEYS = {"timeout_seconds"}
 SECRET_VALUE_PATTERN = re.compile(r"sk-[A-Za-z0-9_\-.]+|sk_[A-Za-z0-9_\-.]+")
 
 
@@ -35,7 +39,7 @@ class LLMClient:
         self,
         settings: Settings | None = None,
         *,
-        http_post_json: Callable[[str, dict[str, str], dict[str, Any]], dict[str, Any]] | None = None,
+        http_post_json: Callable[..., dict[str, Any]] | None = None,
         http_stream_sse: Callable[[str, dict[str, str], dict[str, Any]], AsyncIterator[dict[str, Any]]] | None = None,
     ) -> None:
         self.settings = settings or Settings()
@@ -59,7 +63,14 @@ class LLMClient:
         url = f"{config.base_url.rstrip('/')}/chat/completions"
         if payload.get("stream") is True:
             return self._http_stream_sse(url, headers, payload)
-        return await asyncio.to_thread(self._http_post_json, url, headers, payload)
+        return await asyncio.to_thread(
+            _call_post_json,
+            self._http_post_json,
+            url,
+            headers,
+            payload,
+            _request_timeout_seconds(request),
+        )
 
     async def _anthropic_completion(self, config: ProviderConfig, request: dict[str, Any]) -> Any:
         if request.get("stream") is True:
@@ -71,7 +82,14 @@ class LLMClient:
             "Content-Type": "application/json",
         }
         url = f"{config.base_url.rstrip('/')}/messages"
-        response = await asyncio.to_thread(self._http_post_json, url, headers, payload)
+        response = await asyncio.to_thread(
+            _call_post_json,
+            self._http_post_json,
+            url,
+            headers,
+            payload,
+            _request_timeout_seconds(request),
+        )
         return _anthropic_to_openai_response(response, request.get("model", config.model))
 
 
@@ -130,15 +148,23 @@ def _provider_base_url(settings: Settings, provider: str) -> str:
     return DEFAULT_OPENAI_BASE_URL
 
 
-def _post_json(url: str, headers: dict[str, str], payload: dict[str, Any]) -> dict[str, Any]:
+def _post_json(
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    *,
+    timeout_seconds: int = DEFAULT_PROVIDER_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310 - configured provider URL
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310 - configured provider URL
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")[:500]
         raise LLMClientError(f"provider request failed with HTTP {exc.code}: {_sanitize_error(detail)}") from exc
+    except (TimeoutError, socket.timeout) as exc:
+        raise LLMClientError(f"provider request timed out after {timeout_seconds}s") from exc
     except urllib.error.URLError as exc:
         raise LLMClientError(f"provider request failed: {_sanitize_error(str(exc.reason))}") from exc
     except json.JSONDecodeError as exc:
@@ -199,8 +225,6 @@ def _openai_to_anthropic_request(request: dict[str, Any], model: str) -> dict[st
     }
     if system_parts:
         payload["system"] = "\n\n".join(part for part in system_parts if part)
-    if "temperature" in request:
-        payload["temperature"] = request["temperature"]
     return payload
 
 
@@ -245,7 +269,8 @@ def _strip_provider_prefix(model: str) -> str:
 
 def _openai_compatible_payload(request: dict[str, Any], model: str) -> dict[str, Any]:
     resolved_model = _strip_provider_prefix(model)
-    payload = {**request, "model": resolved_model}
+    payload = {key: value for key, value in request.items() if key not in INTERNAL_REQUEST_KEYS}
+    payload["model"] = resolved_model
     if _requires_max_completion_tokens(resolved_model):
         max_tokens = payload.pop("max_tokens", None)
         if max_tokens is not None and "max_completion_tokens" not in payload:
@@ -257,6 +282,32 @@ def _openai_compatible_payload(request: dict[str, Any], model: str) -> dict[str,
 
 def _requires_max_completion_tokens(model: str) -> bool:
     return _strip_provider_prefix(model).startswith("gpt-5")
+
+
+def _request_timeout_seconds(request: dict[str, Any]) -> int:
+    value = request.get("timeout_seconds", DEFAULT_PROVIDER_TIMEOUT_SECONDS)
+    if isinstance(value, bool):
+        return DEFAULT_PROVIDER_TIMEOUT_SECONDS
+    try:
+        timeout_seconds = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_PROVIDER_TIMEOUT_SECONDS
+    return timeout_seconds if timeout_seconds > 0 else DEFAULT_PROVIDER_TIMEOUT_SECONDS
+
+
+def _call_post_json(
+    http_post_json: Callable[..., dict[str, Any]],
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    signature = inspect.signature(http_post_json)
+    if "timeout_seconds" in signature.parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()
+    ):
+        return http_post_json(url, headers, payload, timeout_seconds=timeout_seconds)
+    return http_post_json(url, headers, payload)
 
 
 def _calculate_known_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:

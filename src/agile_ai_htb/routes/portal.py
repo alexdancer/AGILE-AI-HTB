@@ -7,8 +7,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlparse
-from zoneinfo import ZoneInfo
-
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -72,6 +70,7 @@ from agile_ai_htb.worker_adapters import (
     discovered_worker_model_ids,
     verify_worker_adapter,
 )
+
 
 
 router = APIRouter()
@@ -141,17 +140,24 @@ class ControlPlaneSettingsRequest(BaseModel):
 
 
 @router.get("/")
-def root() -> RedirectResponse:
+def root(request: Request) -> RedirectResponse:
+    if not request.app.state.settings.portal_auth_required:
+        return RedirectResponse(_default_portal_landing(request.app.state.settings.database_path))
     return RedirectResponse("/login")
 
 
 @router.get("/login", response_class=HTMLResponse)
 def login_form(request: Request):
+    if not request.app.state.settings.portal_auth_required:
+        return RedirectResponse(_default_portal_landing(request.app.state.settings.database_path))
     return templates.TemplateResponse(request, "login.html", {"active_page": "login"})
 
 
 @router.post("/login")
 def login(request: Request, token: str = Form(...)):
+    if not request.app.state.settings.portal_auth_required:
+        return RedirectResponse(_default_portal_landing(request.app.state.settings.database_path), status_code=status.HTTP_303_SEE_OTHER)
+
     expected_token = os.getenv(request.app.state.settings.portal_token_env, "")
     if not expected_token or not token:
         raise HTTPException(status_code=401, detail="invalid portal token")
@@ -172,7 +178,10 @@ def login(request: Request, token: str = Form(...)):
 
 @router.post("/logout")
 def logout(request: Request):
-    response = RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+    redirect_to = "/login"
+    if not request.app.state.settings.portal_auth_required:
+        redirect_to = _default_portal_landing(request.app.state.settings.database_path)
+    response = RedirectResponse(redirect_to, status_code=status.HTTP_303_SEE_OTHER)
     response.delete_cookie(
         PORTAL_COOKIE_NAME,
         httponly=True,
@@ -186,11 +195,11 @@ def logout(request: Request):
 def dashboard(request: Request):
     database_path = request.app.state.settings.database_path
     config = request.app.state.guardrails
-    day_start = _current_day_start_iso(request.app.state.settings.timezone)
-    token_breakdown = db.token_usage_breakdown(database_path, since=day_start)
-    worker_token_summary = db.worker_execution_token_summary(database_path, since=day_start)
-    budget_token_total = db.budgeted_token_usage(database_path, since=day_start)
-    budget_settings = _effective_budget_settings(database_path, config)
+    budget_since = db.effective_daily_budget_window_start(database_path, timezone=request.app.state.settings.timezone)
+    token_breakdown = db.token_usage_breakdown(database_path, since=budget_since)
+    worker_token_summary = db.worker_execution_token_summary(database_path, since=budget_since)
+    budget_token_total = db.budgeted_token_usage(database_path, since=budget_since)
+    budget_settings = _effective_budget_settings(database_path, config, timezone=request.app.state.settings.timezone)
     daily_cap = budget_settings.get("daily_cap_tokens")
     alarms = db.list_alarms(database_path)
     sessions = db.list_sessions(database_path)
@@ -224,6 +233,7 @@ def dashboard(request: Request):
             "worker_token_total": token_breakdown["by_category"]["worker_execution"],
             "worker_token_summary": worker_token_summary,
             "token_breakdown": token_breakdown,
+            "budget_since": budget_since,
             "daily_cap": daily_cap,
             "current_zone": get_budget_zone(budget_token_total, daily_cap, config),
             "alarm_count": len(alarms),
@@ -231,7 +241,7 @@ def dashboard(request: Request):
             "critical_alarm_count": len(critical_alarms),
             "active_sessions": list(reversed(active_sessions[-5:])),
             "recent_sessions": list(reversed(sessions[-5:])),
-            "recent_alarms": list(reversed(alarms[-5:])),
+            "recent_alarms": list(reversed(open_alarms[-5:])),
             "estimation_accuracy": accuracy,
         },
     )
@@ -343,7 +353,7 @@ def setup_overview(request: Request):
     database_path = request.app.state.settings.database_path
     config = request.app.state.guardrails
     settings = request.app.state.settings
-    budget_settings = _effective_budget_settings(database_path, config)
+    budget_settings = _effective_budget_settings(database_path, config, timezone=settings.timezone)
     adapters = _worker_adapter_view_models(database_path)
     active_adapter = _active_adapter_for_request(adapters, request.query_params.get("adapter_id"))
     projects = db.list_connected_projects(database_path)
@@ -397,7 +407,7 @@ def setup_overview(request: Request):
 def budget_settings(request: Request):
     database_path = request.app.state.settings.database_path
     config = request.app.state.guardrails
-    budget = _effective_budget_settings(database_path, config)
+    budget = _effective_budget_settings(database_path, config, timezone=request.app.state.settings.timezone)
     return templates.TemplateResponse(
         request,
         "budget.html",
@@ -416,6 +426,16 @@ async def save_budget_settings(request: Request):
     )
     if wants_html:
         return RedirectResponse("/setup", status_code=status.HTTP_303_SEE_OTHER)
+    return saved
+
+
+@router.post("/settings/budget/reset", dependencies=[Depends(require_portal_auth)])
+async def reset_budget_counter(request: Request):
+    database_path = request.app.state.settings.database_path
+    saved = db.reset_daily_budget_counter(database_path)
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept and "application/json" not in accept:
+        return RedirectResponse("/settings/budget", status_code=status.HTTP_303_SEE_OTHER)
     return saved
 
 
@@ -679,7 +699,7 @@ def _launch_project_automation_task(
         model=None,
         proxy_url=DEFAULT_PROXY_URL,
         project_id=project_id,
-        budget_since=_current_day_start_iso(request.app.state.settings.timezone),
+        budget_since=db.effective_daily_budget_window_start(database_path, timezone=request.app.state.settings.timezone),
         runner=runner,
     )
     worker_run_id = result.worker_run["id"] if result.worker_run else None
@@ -842,6 +862,7 @@ def worker_settings(request: Request):
             "active_adapter": active_adapter,
             "default_proxy_url": DEFAULT_PROXY_URL,
             "next_action": next_action,
+            "error": request.query_params.get("error", ""),
         },
     )
 
@@ -1110,7 +1131,7 @@ async def launch_read_only_proof_route(project_id: str, request: Request):
             adapter_id="opencode",
             model=task.get("recommended_model"),
             proxy_url=DEFAULT_PROXY_URL,
-            budget_since=_current_day_start_iso(request.app.state.settings.timezone),
+            budget_since=db.effective_daily_budget_window_start(database_path, timezone=request.app.state.settings.timezone),
             runner=getattr(request.app.state, "local_runner_proof_runner", None)
             or getattr(request.app.state, "task_launch_runner", None),
         )
@@ -1522,7 +1543,7 @@ def _project_settings_with_error(request: Request, error: str):
     )
 
 
-def _effective_budget_settings(database_path: Path | str, config: Any) -> dict[str, Any]:
+def _effective_budget_settings(database_path: Path | str, config: Any, *, timezone: str = "local") -> dict[str, Any]:
     stored = db.get_token_budget_settings(database_path)
     daily_cap = stored.get("daily_cap_tokens")
     session_cap = stored.get("session_cap_tokens")
@@ -1530,17 +1551,21 @@ def _effective_budget_settings(database_path: Path | str, config: Any) -> dict[s
         daily_cap = config.daily_cap.tokens
     if session_cap is None and config.session_cap.enabled:
         session_cap = config.session_cap.tokens
+    budget_since = db.effective_daily_budget_window_start(database_path, timezone=timezone)
+    token_breakdown = db.token_usage_breakdown(database_path, since=budget_since)
+    used_tokens = int(token_breakdown["total_tokens"])
+    remaining_tokens = max(int(daily_cap) - used_tokens, 0) if daily_cap is not None else None
     return {
         "daily_cap_tokens": daily_cap,
         "session_cap_tokens": session_cap,
         "confirmed": bool(stored.get("confirmed")),
+        "daily_usage_reset_at": stored.get("daily_usage_reset_at"),
+        "budget_since": budget_since,
+        "current_window_used_tokens": used_tokens,
+        "current_window_remaining_tokens": remaining_tokens,
+        "current_window_breakdown": token_breakdown,
     }
 
 
 def _current_day_start_iso(timezone: str) -> str:
-    if timezone == "local":
-        now = datetime.now().astimezone()
-    else:
-        now = datetime.now(ZoneInfo(timezone))
-    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    return start.astimezone(UTC).isoformat()
+    return db.current_day_start_iso(timezone)

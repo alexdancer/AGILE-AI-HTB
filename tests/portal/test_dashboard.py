@@ -55,7 +55,6 @@ def test_dashboard_renders_budget_alarm_and_navigation_sections(tmp_path, monkey
     assert started["session_id"] in html
     assert "Build portal" in html
     assert "AGILE-AI-HTB" in html
-    assert "live harness" in html
     assert "https://unpkg.com/htmx.org" not in html
     assert "https://cdn.jsdelivr.net/npm/chart.js" not in html
     assert "PROVIDER_API_KEY" not in html
@@ -71,13 +70,13 @@ def test_dashboard_next_actions_count_launch_and_review_tasks(tmp_path, monkeypa
                 "description": "Ready launch task",
                 "status": "Estimated",
                 "estimate_tokens": 1000,
-                "recommended_model": "gpt-5.1-codex",
+                "recommended_model": "5.4",
             },
         )
         session = client.post(
             "/session/start",
             headers={"Authorization": "Bearer test-portal-token"},
-            json={"task_description": "Completed Worker task", "model": "gpt-5.1-codex"},
+            json={"task_description": "Completed Worker task", "model": "5.4"},
         ).json()
         db.update_session_status(database_path, session["session_id"], "completed")
         client.post(
@@ -86,7 +85,7 @@ def test_dashboard_next_actions_count_launch_and_review_tasks(tmp_path, monkeypa
                 "description": "Needs review",
                 "status": "Review",
                 "estimate_tokens": 1000,
-                "recommended_model": "gpt-5.1-codex",
+                "recommended_model": "5.4",
                 "session_id": session["session_id"],
             },
         )
@@ -153,6 +152,56 @@ def test_dashboard_next_actions_prioritize_critical_alarms(tmp_path, monkeypatch
     assert "Review 1 open alarm" not in html
     assert 'href="/alarms"' in html
 
+
+def test_dashboard_recent_alarms_hides_dismissed_alarms(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        session = client.post(
+            "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
+            json={"task_description": "Budget alarm", "model": "claude-haiku"},
+        ).json()
+        for alarm_id in ["dismissed-dashboard-alarm", "open-dashboard-alarm"]:
+            db.record_alarm(
+                database_path,
+                session_id=session["session_id"],
+                alarm={
+                    "id": alarm_id,
+                    "type": "BUDGET_OVERRUN",
+                    "severity": "HIGH",
+                    "context": {},
+                    "recommended_action": f"Review {alarm_id}.",
+                },
+            )
+
+        dismissed = client.post(
+            "/alarms/dismissed-dashboard-alarm/resolve",
+            headers={**_portal_headers(), "accept": "text/html"},
+            data={"action": "continue"},
+            follow_redirects=False,
+        )
+        response = client.get("/dashboard", headers=_portal_headers())
+        dismissed_last = client.post(
+            "/alarms/open-dashboard-alarm/resolve",
+            headers={**_portal_headers(), "accept": "text/html"},
+            data={"action": "continue"},
+            follow_redirects=False,
+        )
+        empty_response = client.get("/dashboard", headers=_portal_headers())
+
+    assert dismissed.status_code == 303
+    assert response.status_code == 200
+    assert "open-dashboard-alarm" in response.text
+    assert "Review open-dashboard-alarm." in response.text
+    assert "dismissed-dashboard-alarm" not in response.text
+    assert "Review dismissed-dashboard-alarm." not in response.text
+    assert dismissed_last.status_code == 303
+    assert empty_response.status_code == 200
+    assert "No open alarms." in empty_response.text
+    assert "open-dashboard-alarm" not in empty_response.text
+    assert "dismissed-dashboard-alarm" not in empty_response.text
+
 def test_dashboard_budget_ignores_previous_day_usage(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     with _client(tmp_path) as client:
@@ -193,6 +242,51 @@ def test_dashboard_budget_ignores_previous_day_usage(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert "999,000" not in response.text
     assert "15" in response.text
+
+
+def test_dashboard_daily_budget_uses_reset_window(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        old = client.post(
+            "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
+            json={"task_description": "Pre-reset dashboard spend", "model": "claude-haiku"},
+        ).json()
+        db.record_token_turn(
+            database_path,
+            session_id=old["session_id"],
+            model="claude-haiku",
+            prompt_tokens=999000,
+            completion_tokens=0,
+            cost=0,
+            raw_usage={"total_tokens": 999000},
+        )
+        with db.connect(database_path) as conn:
+            conn.execute("update token_turns set created_at = ?", (db.current_day_start_iso("local"),))
+        reset = db.reset_daily_budget_counter(database_path)
+
+        current = client.post(
+            "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
+            json={"task_description": "Post-reset dashboard spend", "model": "claude-haiku"},
+        ).json()
+        db.record_token_turn(
+            database_path,
+            session_id=current["session_id"],
+            model="claude-haiku",
+            prompt_tokens=10,
+            completion_tokens=5,
+            cost=0,
+            raw_usage={"total_tokens": 15},
+        )
+
+        response = client.get("/dashboard", headers=_portal_headers())
+
+    assert response.status_code == 200
+    assert "999,000" not in response.text
+    assert "15" in response.text
+    assert reset["daily_usage_reset_at"] in response.text
 
 
 def test_dashboard_daily_budget_counts_agent_review_reporting_tokens(tmp_path, monkeypatch):

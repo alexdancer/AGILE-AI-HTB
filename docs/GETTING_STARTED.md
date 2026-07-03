@@ -16,7 +16,7 @@ This is the first-run guide for operators evaluating AGILE-AI-HTB in their own w
    htb serve
    ```
    `htb init` keeps the installed CLI global but writes repo-local state under `.htb/`. Inside a Git repo, it targets the Git root even if you run it from a subdirectory; outside Git, it uses the current directory. It creates `.htb/config.toml`, `.htb/secrets.env`, `.htb/guardrails.yaml`, and `.htb/harness.db`.
-3. Open `http://localhost:8000/login` and use the portal token from ignored `.htb/secrets.env`.
+3. Open `http://localhost:8000/`. The default loopback server does not require a portal login token.
 4. Open `/settings/control-plane`, choose provider/model, paste the provider API key, save, then test the connection.
 5. Connect a local repository from `/projects`.
 6. Open `/settings/workers`, choose a Worker Adapter, discover/allow Worker models, then verify tracking.
@@ -41,7 +41,7 @@ AGILE-AI-HTB has two model layers:
 | Layer | What it powers | Auth source |
 |---|---|---|
 | Control Plane / orchestrator model | Estimates, planning, task breakdown, model recommendations, summaries, reports | `/settings/control-plane`, ignored `.htb/secrets.env`, or env vars |
-| Worker / coding harness models | The actual coding task launched through OpenCode, Claude Code, Codex, Hermes, or another adapter | The native CLI's own auth/config |
+| Worker / coding harness models | The actual coding task launched through OpenCode, Claude Code, Codex, or another adapter | The native CLI's own auth/config |
 
 Pasting a control-plane API key does not configure native Worker CLIs.
 
@@ -60,16 +60,16 @@ AGILE-AI-HTB cannot govern arbitrary external-agent token spend. The supported l
 ## Local secret storage
 
 - `.htb/config.toml` stores non-secret config only.
-- `.htb/secrets.env` is ignored local storage for the portal token and control-plane API key.
+- `.htb/secrets.env` is ignored local storage for the shared-access portal token and control-plane API key.
 - The portal can write a submitted control-plane API key to `.htb/secrets.env` but never shows that raw value again.
 - Blank API-key submissions preserve the existing key.
 - Do not paste `.htb/secrets.env`, API keys, portal tokens, bearer tokens, or raw credentials into support issues.
 
 ## Docker and Local Runner limits
 
-Docker runs the containerized Control Plane/Portal and persists SQLite state at `/data/harness.db`. The Docker no-secret path proves image build/start, `/health`, `/login`, and persistence.
+Docker runs the containerized Control Plane/Portal and persists SQLite state at `/data/harness.db`. Docker publishes the Portal beyond loopback, so token login remains enabled there; the no-secret path proves image build/start, `/health`, `/login`, and persistence with the synthetic default Docker token.
 
-Docker does not automatically receive host-installed OpenCode, Claude Code, Codex, Hermes, local repo paths, or host credentials. Real Worker launch readiness still depends on Worker Adapter setup and tracking-mode verification.
+Docker does not automatically receive host-installed OpenCode, Claude Code, Codex, local repo paths, or host credentials. Real Worker launch readiness still depends on Worker Adapter setup and tracking-mode verification.
 
 ## Visual proof checklist
 
@@ -80,4 +80,4 @@ Use synthetic/public-safe data only. Do not capture real secrets, real customer 
 | First-run setup | `docs/assets/screenshots/setup-control-plane.png` | `/settings/control-plane` provider/model/API-key form and needs-test/tested state |
 | Project board readiness | `docs/assets/screenshots/project-board-launch-ready.png` | Connected project board, Worker readiness, tiny task ready to launch |
 | Session report/token evidence | `docs/assets/screenshots/session-token-evidence.png` | Token ledger/session report with Worker Run evidence |
-| Optional short recording | `docs/assets/screenshots/first-run-proof.gif` | Login → control-plane test → Worker setup → tiny launch → session report |
+| Optional short recording | `docs/assets/screenshots/first-run-proof.gif` | Local portal open → control-plane test → Worker setup → tiny launch → session report |

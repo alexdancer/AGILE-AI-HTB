@@ -21,12 +21,17 @@ async def test_llm_client_forwards_openai_compatible_request(monkeypatch):
     )
 
     response = await LLMClient(settings, http_post_json=fake_post_json).acompletion(
-        {"model": "openai/gpt-4.1-mini", "messages": [{"role": "user", "content": "hi"}]}
+        {
+            "model": "openai/gpt-4.1-mini",
+            "messages": [{"role": "user", "content": "hi"}],
+            "temperature": 0,
+        }
     )
 
     assert captured["url"] == "https://provider.example/v1/chat/completions"
     assert captured["headers"]["Authorization"] == "Bearer test-key"
     assert captured["payload"]["model"] == "gpt-4.1-mini"
+    assert captured["payload"]["temperature"] == 0
     assert response["usage"]["total_tokens"] == 5
 
 
@@ -71,10 +76,85 @@ async def test_llm_client_translates_anthropic_messages(monkeypatch):
         "messages": [{"role": "user", "content": "hi"}],
         "max_tokens": 16_384,
         "system": "be concise",
-        "temperature": 0,
     }
     assert response["choices"][0]["message"]["content"] == "done"
     assert response["usage"] == {"prompt_tokens": 7, "completion_tokens": 11, "total_tokens": 18}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model",
+    [
+        "claude-sonnet-4-20250514",
+        "claude-opus-4-8",
+        "claude-fable-5",
+        "claude-sonnet-5",
+        "anthropic/claude-opus-5",
+    ],
+)
+async def test_llm_client_drops_anthropic_temperature_for_all_direct_anthropic_models(
+    monkeypatch, model
+):
+    captured = {}
+
+    def fake_post_json(url, headers, payload):
+        captured.update({"payload": payload})
+        return {
+            "id": "msg_fake",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "done"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 7, "output_tokens": 11},
+        }
+
+    monkeypatch.setenv("CONTROL_TEST_KEY", "sk-ant-test")
+    settings = Settings(
+        control_plane_provider="anthropic",
+        control_plane_model=model,
+        control_plane_api_key_env="CONTROL_TEST_KEY",
+    )
+
+    await LLMClient(settings, http_post_json=fake_post_json).acompletion(
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": "hi"}],
+            "temperature": 0,
+            "max_tokens": 16_384,
+        }
+    )
+
+    assert captured["payload"]["model"] == model.split("/", 1)[-1]
+    assert captured["payload"]["max_tokens"] == 16_384
+    assert "temperature" not in captured["payload"]
+
+
+@pytest.mark.asyncio
+async def test_llm_client_uses_internal_timeout_without_forwarding_it(monkeypatch):
+    captured = {}
+
+    def fake_post_json(url, headers, payload, *, timeout_seconds):
+        captured.update({"payload": payload, "timeout_seconds": timeout_seconds})
+        return {"id": "chatcmpl_fake", "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}}
+
+    monkeypatch.setenv("CONTROL_TEST_KEY", "test-key")
+    settings = Settings(
+        control_plane_provider="openai-compatible",
+        control_plane_model="openai/gpt-4.1-mini",
+        control_plane_api_key_env="CONTROL_TEST_KEY",
+        control_plane_base_url="https://provider.example/v1",
+    )
+
+    await LLMClient(settings, http_post_json=fake_post_json).acompletion(
+        {
+            "model": "openai/gpt-4.1-mini",
+            "messages": [{"role": "user", "content": "hi"}],
+            "timeout_seconds": 77,
+        }
+    )
+
+    assert captured["timeout_seconds"] == 77
+    assert "timeout_seconds" not in captured["payload"]
 
 
 @pytest.mark.asyncio

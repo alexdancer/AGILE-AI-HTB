@@ -198,8 +198,6 @@ def project_workspace_summary(database_path: Path | str, project: dict[str, Any]
     adapters = worker_adapter_view_models(database_path)
     launch_ready = any(adapter.get("launchable") for adapter in adapters)
     capability = project.get("capability") or {}
-    all_project_tasks = project_bound_tasks(db.list_tasks(database_path), project_id)
-    archived_count = sum(1 for task in all_project_tasks if db.task_is_archived(task))
     if db.project_is_archived(project):
         return {
             "counts": counts,
@@ -207,13 +205,7 @@ def project_workspace_summary(database_path: Path | str, project: dict[str, Any]
             "launch_ready": False,
             "capability_state": "archived",
             "test_command": (project.get("profile") or {}).get("test_command"),
-            "next_actions": [
-                {
-                    "label": "Task history",
-                    "href": f"/projects/{project_id}/task-history",
-                    "tone": "blue",
-                    "detail": f"{len(all_project_tasks)} total tasks · {archived_count} archived",
-                },
+            "attention_actions": [
                 {
                     "label": "Project settings",
                     "href": "/settings/project",
@@ -222,35 +214,50 @@ def project_workspace_summary(database_path: Path | str, project: dict[str, Any]
                 },
             ],
         }
-    next_actions = [
-        {
-            "label": "Open task board",
-            "href": f"/projects/{project_id}/board",
-            "tone": "green" if counts["Estimated"] or counts["Review"] else "blue",
-            "detail": f"{sum(counts.values())} tasks · {counts['Estimated']} estimated · {counts['Review']} review",
-        },
-        {
-            "label": "Worker setup",
-            "href": "/settings/workers",
-            "tone": "green" if launch_ready else "yellow",
-            "detail": "Launch-ready adapter available" if launch_ready else "Verify a Worker adapter before launch",
-        },
-    ]
+    attention_actions: list[dict[str, str]] = []
+    if not launch_ready:
+        attention_actions.append(
+            {
+                "label": "Worker setup",
+                "href": "/settings/workers",
+                "tone": "yellow",
+                "detail": "Verify a Worker adapter before launch",
+            }
+        )
     if counts["Running"]:
-        next_actions.append({"label": "Running work", "href": f"/projects/{project_id}/board", "tone": "blue", "detail": f"{counts['Running']} running slices need refresh or completion evidence."})
+        attention_actions.append(
+            {
+                "label": "Running work",
+                "href": f"/projects/{project_id}/board",
+                "tone": "blue",
+                "detail": f"{counts['Running']} running slices need refresh or completion evidence.",
+            }
+        )
     if counts["Review"]:
-        next_actions.append({"label": "Review needed", "href": f"/projects/{project_id}/board", "tone": "yellow", "detail": f"{counts['Review']} completed slices need human review disposition."})
+        attention_actions.append(
+            {
+                "label": "Review needed",
+                "href": f"/projects/{project_id}/board",
+                "tone": "yellow",
+                "detail": f"{counts['Review']} completed slices need human review disposition.",
+            }
+        )
     if counts["Blocked"]:
-        next_actions.append({"label": "Blocked work", "href": f"/projects/{project_id}/board", "tone": "yellow", "detail": f"{counts['Blocked']} slices need guardrail, setup, or manual-estimate attention."})
-    next_actions.append({"label": "Task history", "href": f"/projects/{project_id}/task-history", "tone": "blue", "detail": f"{len(all_project_tasks)} total tasks · {archived_count} archived"})
-    next_actions.append({"label": "Session evidence", "href": "/sessions", "tone": "blue", "detail": "Review tokens, guardrails, alarms, checkpoints, and Worker timeline evidence"})
+        attention_actions.append(
+            {
+                "label": "Blocked work",
+                "href": f"/projects/{project_id}/board",
+                "tone": "yellow",
+                "detail": f"{counts['Blocked']} slices need guardrail, setup, or manual-estimate attention.",
+            }
+        )
     return {
         "counts": counts,
         "total_tasks": sum(counts.values()),
         "launch_ready": launch_ready,
         "capability_state": capability.get("state", "unknown"),
         "test_command": (project.get("profile") or {}).get("test_command"),
-        "next_actions": next_actions,
+        "attention_actions": attention_actions,
     }
 
 

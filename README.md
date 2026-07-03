@@ -2,7 +2,7 @@
 
 AGILE-AI-HTB is a local, portal-first governance harness for AI coding agents.
 
-It does **not** replace OpenCode, Claude Code, Codex, Hermes, or another coding CLI. It wraps those tools with a board, budgets, launch checks, token evidence, session reports, and human review.
+It does **not** replace OpenCode, Claude Code, Codex, or another coding CLI. It wraps those tools with a board, budgets, launch checks, token evidence, session reports, and human review.
 
 Use it when you want a coding agent workflow that is easier to inspect:
 
@@ -76,14 +76,15 @@ This updates the global `htb` CLI and preserves repo-local `.htb/` state. See
 ```bash
  htb serve
 ```
-2. Open `http://localhost:8000/login`.
-3. Use the portal token from ignored `.htb/secrets.env`.
-4. Open `/settings/control-plane`.
-5. Pick a control-plane provider/model, paste the provider API key, save, then test the connection.
-6. Connect a local repository from `/projects`.
-7. Open `/settings/workers`, choose a Worker Adapter, discover/allow Worker models, then verify token tracking.
-8. Launch a tiny task from the project board.
-9. Review the session report and token evidence before marking the task done.
+2. Open `http://localhost:8000/`.
+3. Open `/settings/control-plane`.
+4. Pick a control-plane provider/model, paste the provider API key, save, then test the connection.
+5. Connect a local repository from `/projects`.
+6. Open `/settings/workers`, choose a Worker Adapter, discover/allow Worker models, then verify token tracking.
+7. Launch a tiny task from the project board.
+8. Review the session report and token evidence before marking the task done.
+
+Default loopback `htb serve` opens the local Portal without a login token. If you bind the Portal to `0.0.0.0`, run it behind a proxy, or use Docker/shared access, keep the portal token from ignored `.htb/secrets.env` and sign in through `/login`.
 
 For redacted support status:
 
@@ -118,7 +119,7 @@ AGILE-AI-HTB has four main pieces:
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Portal / Control Plane**   | Browser UI and API for setup, estimates, project boards, launch, reports, budgets, and review.                                                                                           |
 | **Local Runner**             | Runs near your local repository so Worker CLIs can see local files, git state, and their own credentials. In local mode it runs inside the same app process.                             |
-| **Worker Adapter**           | Integration for a coding CLI such as OpenCode, Claude Code, Codex, or Hermes. Adapter verification proves the CLI can run and produce trustworthy usage evidence for the selected model. |
+| **Worker Adapter**           | Integration for a coding CLI such as OpenCode, Claude Code, or Codex. Adapter verification proves the CLI can run and produce trustworthy usage evidence for the selected model. |
 | **Token ledger and reports** | SQLite-backed records for estimates, Worker Runs, token evidence, alarms, checkpoints, and session artifacts.                                                                            |
 
 
@@ -131,7 +132,19 @@ There are two model layers:
 | **Worker model**        | the actual coding task                                        | configured by the native Worker CLI                             |
 
 
-Pasting a control-plane API key does not configure OpenCode, Claude Code, Codex, Hermes, or another Worker CLI.
+Pasting a control-plane API key does not configure OpenCode, Claude Code, Codex, or another Worker CLI.
+
+For large Markdown plans, the task-slicing architecture stays in the Control Plane:
+
+```text
+Markdown / oversized intake
+  -> Task Breakdown Agent applies the Task Slicing Policy
+  -> operator reviews AFK/HITL candidates, proof, dependencies, and rejected non-tasks
+  -> accepted implementation cards launch as scoped Worker runs
+  -> final Acceptance Verification card checks the original source contract
+```
+
+This keeps the full source contract in the Harness review record and final verification step, while each Worker receives only the compact objective, boundaries, proof command, dependencies, likely entry points, and execution mode for its slice.
 
 ## Local files and configuration
 
@@ -154,7 +167,7 @@ Common environment variables:
 
 | Variable                        | Purpose                                                                       |
 | ------------------------------- | ----------------------------------------------------------------------------- |
-| `TOKEN_TRACKER_PORTAL_TOKEN`    | Portal login token                                                            |
+| `TOKEN_TRACKER_PORTAL_TOKEN`    | Portal login token for shared/non-loopback access                             |
 | `AGILE_AI_HTB_CONTROL_PROVIDER` | Control-plane provider, such as `openai`, `anthropic`, or `openai-compatible` |
 | `AGILE_AI_HTB_CONTROL_MODEL`    | Control-plane model                                                           |
 | `AGILE_AI_HTB_CONTROL_BASE_URL` | Base URL for OpenAI-compatible providers                                      |

@@ -37,6 +37,31 @@ def test_portal_login_sets_signed_http_only_cookie_and_logout_clears_it(tmp_path
         assert "agile_ai_htb_portal=\"\"" in logout.headers["set-cookie"]
         assert client.get("/dashboard").status_code == 401
 
+
+def test_portal_auth_disabled_opens_local_pages_without_token(tmp_path, monkeypatch):
+    monkeypatch.delenv("TOKEN_TRACKER_PORTAL_TOKEN", raising=False)
+    with _client(tmp_path, portal_auth_required=False) as client:
+        root = client.get("/", follow_redirects=False)
+        login = client.get("/login", follow_redirects=False)
+        dashboard = client.get("/dashboard")
+
+    assert root.status_code == 307
+    assert root.headers["location"] == "/projects"
+    assert login.status_code == 307
+    assert login.headers["location"] == "/projects"
+    assert dashboard.status_code == 200
+    assert "Logout" not in dashboard.text
+
+
+def test_portal_auth_disabled_logout_clears_cookie_and_returns_to_landing(tmp_path, monkeypatch):
+    monkeypatch.delenv("TOKEN_TRACKER_PORTAL_TOKEN", raising=False)
+    with _client(tmp_path, portal_auth_required=False) as client:
+        logout = client.post("/logout", follow_redirects=False)
+
+    assert logout.status_code == 303
+    assert logout.headers["location"] == "/projects"
+    assert "agile_ai_htb_portal=\"\"" in logout.headers["set-cookie"]
+
 def test_portal_login_redirects_to_most_recent_project(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     db.init_db(tmp_path / "harness.db")

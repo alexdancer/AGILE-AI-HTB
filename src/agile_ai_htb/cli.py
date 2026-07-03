@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ipaddress
 import os
 import subprocess
 from pathlib import Path
@@ -52,10 +53,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Wrote {_display_path(secrets_path, cwd)}")
         print(f"Wrote {_display_path(guardrails_path, cwd)}")
         print(f"Wrote {_display_path(database_path, cwd)}")
-        print("Start with htb serve, then add the control-plane API key in /settings/control-plane.")
+        print("Start with htb serve, open http://localhost:8000/, then add the control-plane API key in /settings/control-plane.")
         portal_token_env, control_key_env = secret_env_names(config)
         secrets_display = _display_path(secrets_path, cwd)
-        print(f"Portal login token: set {portal_token_env} in {secrets_display}")
+        print(f"Portal token for shared access: set {portal_token_env} in {secrets_display}")
         print(
             f"Control-plane API key: configure {control_key_env} in /settings/control-plane; "
             f"{secrets_display} or shell env remain supported alternatives."
@@ -66,6 +67,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         config, _, _, _ = _load_default_operator_state()
         database_path = _arg_path(args, "serve_database_path", "global_database_path")
         guardrails_path = _arg_path(args, "serve_guardrails_path", "global_guardrails_path")
+        host = getattr(args, "host", None) or str(config.get("host") or "127.0.0.1")
         _set_path_env("TOKEN_TRACKER_DATABASE_PATH", database_path)
         _set_path_env("TOKEN_TRACKER_GUARDRAILS_PATH", guardrails_path)
         _set_env_if_missing("TOKEN_TRACKER_DATABASE_PATH", config.get("database_path"))
@@ -86,13 +88,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             aliases=("TOKEN_TRACKER_CONTROL_PLANE_API_KEY_ENV",),
         )
         _set_env_if_missing("TOKEN_TRACKER_PORTAL_TOKEN_ENV", config.get("portal_token_env"))
+        _set_env_if_missing("TOKEN_TRACKER_PORTAL_AUTH_REQUIRED", config.get("portal_auth_required"))
+        if os.getenv("TOKEN_TRACKER_PORTAL_AUTH_REQUIRED") is None:
+            uses_proxy_headers = getattr(args, "proxy_headers", False)
+            local_only_bind = _is_loopback_bind_host(host) and not uses_proxy_headers
+            os.environ["TOKEN_TRACKER_PORTAL_AUTH_REQUIRED"] = "0" if local_only_bind else "1"
         if getattr(args, "local_runner", False):
             os.environ["TOKEN_TRACKER_LOCAL_RUNNER"] = "1"
         elif "TOKEN_TRACKER_LOCAL_RUNNER" not in os.environ and _config_bool(config, "local_runner_enabled"):
             os.environ["TOKEN_TRACKER_LOCAL_RUNNER"] = "1"
         uvicorn.run(
             APP_REF,
-            host=getattr(args, "host", None) or str(config.get("host") or "127.0.0.1"),
+            host=host,
             port=getattr(args, "port", None) or int(config.get("port") or 8000),
             proxy_headers=getattr(args, "proxy_headers", False),
             factory=True,
@@ -188,6 +195,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _check_operator_setup() -> int:
     config, secrets, config_path, secrets_path = _load_default_operator_state()
+    _set_env_if_missing("TOKEN_TRACKER_PORTAL_AUTH_REQUIRED", config.get("portal_auth_required"))
+    if os.getenv("TOKEN_TRACKER_PORTAL_AUTH_REQUIRED") is None:
+        host = str(config.get("host") or "127.0.0.1")
+        os.environ["TOKEN_TRACKER_PORTAL_AUTH_REQUIRED"] = "0" if _is_loopback_bind_host(host) else "1"
     settings = Settings(operator_config=config)
     cwd = Path.cwd()
     hard_fail = False
@@ -201,8 +212,16 @@ def _check_operator_setup() -> int:
     else:
         print(f"WARN secrets missing {_display_path(secrets_path, cwd)}; using shell env only")
 
+    if settings.portal_auth_required:
+        if os.getenv(settings.portal_token_env):
+            print(f"PASS portal token env {settings.portal_token_env} present")
+        else:
+            print(f"FAIL portal token env {settings.portal_token_env} missing")
+            hard_fail = True
+    else:
+        print(f"PASS portal auth disabled for local-only access; {settings.portal_token_env} not required")
+
     for env_name, label in [
-        (settings.portal_token_env, "portal token"),
         (settings.control_plane_api_key_env, "control-plane API key"),
     ]:
         if os.getenv(env_name):
@@ -359,3 +378,13 @@ def _set_env_if_missing(name: str, value: object | None, aliases: tuple[str, ...
 
 def _config_bool(config: dict[str, object], name: str) -> bool:
     return bool(config.get(name))
+
+
+def _is_loopback_bind_host(host: str) -> bool:
+    normalized = host.strip().lower().strip("[]")
+    if normalized == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False

@@ -3,9 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -152,19 +150,18 @@ def _daily_cap_tokens(budget: dict[str, Any], config, database_path=None) -> int
 
 
 def _current_day_budgeted_token_usage(request: Request) -> int:
+    database_path = request.app.state.settings.database_path
     return db.budgeted_token_usage(
-        request.app.state.settings.database_path,
-        since=_current_day_start_iso(request.app.state.settings.timezone),
+        database_path,
+        since=db.effective_daily_budget_window_start(
+            database_path,
+            timezone=request.app.state.settings.timezone,
+        ),
     )
 
 
 def _current_day_start_iso(timezone: str) -> str:
-    if timezone == "local":
-        now = datetime.now().astimezone()
-    else:
-        now = datetime.now(ZoneInfo(timezone))
-    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    return start.astimezone(UTC).isoformat()
+    return db.current_day_start_iso(timezone)
 
 
 def _session_cap_tokens(budget: dict[str, Any], config, database_path=None) -> int | None:

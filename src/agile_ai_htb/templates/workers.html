@@ -3,7 +3,8 @@
 {% block content %}
 <h1 class="page-title">Worker adapters</h1>
 <p class="page-sub">local CLI harnesses · token tracking authority · launch readiness</p>
-<p class="muted">Adapter identity is the local CLI harness (OpenCode, Claude Code, Codex, Hermes). Tracking mode is the evidence path: <code>proxy_governed</code>, <code>native_usage</code>, or diagnostic-only <code>observed_only</code>. Control-plane API keys do not configure native Worker CLI auth.</p>
+<p class="muted">Adapter identity is the local CLI harness (OpenCode, Claude Code, Codex). Tracking mode is the evidence path: <code>proxy_governed</code>, <code>native_usage</code>, or diagnostic-only <code>observed_only</code>. Control-plane API keys do not configure native Worker CLI auth.</p>
+{% if error %}<section class="notice warning">{{ error }}</section>{% endif %}
 
 <section class="status-toolbar">
   <div class="status-group">
@@ -46,8 +47,6 @@
         <button type="submit">Discover models</button>
       </form>
       {% if active_adapter.discovered_models %}
-      <p class="muted">{{ active_adapter.model_discovery_label }}</p>
-      <p class="mono">{{ active_adapter.discovered_models|join(', ') }}</p>
       <form method="post" action="/settings/workers/{{ active_adapter.id }}/allowed-models" style="margin-top:10px">
         <p class="muted">Allowed for estimates and board launch</p>
         <label for="worker-model-filter">Filter discovered models</label>
@@ -57,7 +56,7 @@
           <button type="button" data-worker-model-uncheck-visible>Uncheck visible</button>
         </div>
         {% for model in active_adapter.discovered_models %}
-        <label class="mono" data-worker-model-option style="font-size:11px;display:block"><input type="checkbox" name="allowed_models" value="{{ model }}" {% if model in active_adapter.supported_models %}checked{% endif %}> {{ model }}</label>
+        <label class="mono" data-worker-model-option style="font-size:11px"><input type="checkbox" name="allowed_models" value="{{ model }}" {% if model in active_adapter.supported_models %}checked{% endif %}> {{ model }}</label>
         {% endfor %}
         <button type="submit" style="margin-top:8px">Save allowed models</button>
       </form>
@@ -99,6 +98,13 @@
       <p><span class="pill {% if active_adapter.verification_status == 'verified' %}green{% elif active_adapter.verification_status == 'failed' %}red{% else %}yellow{% endif %}">{{ active_adapter.verification_status }}</span></p>
       <p><span class="pill blue">{{ active_adapter.tracking_label }}</span></p>
       <p class="muted">Runtime request guardrails: {{ active_adapter.tracking.runtime_request_guardrails }} · Accounting: {{ active_adapter.tracking.accounting }}</p>
+      {% if active_adapter.verification_diagnostic %}
+      <section class="notice warning" style="margin:10px 0">
+        <strong>{{ active_adapter.verification_diagnostic.summary }}</strong>
+        {% if active_adapter.verification_diagnostic.next_action %}<p>{{ active_adapter.verification_diagnostic.next_action }}</p>{% endif %}
+        {% if active_adapter.verification_diagnostic.setup_href %}<p><a href="{{ active_adapter.verification_diagnostic.setup_href }}">Open Worker Setup</a></p>{% endif %}
+      </section>
+      {% endif %}
       {% if active_adapter.discovered_models and not active_adapter.supported_models %}<p class="muted">Allow at least one discovered Worker model before launch.</p>{% endif %}
       <p><span class="pill {% if active_adapter.launchable %}green{% else %}yellow{% endif %}">{% if active_adapter.launchable %}launchable{% else %}not launchable{% endif %}</span></p>
       {% if active_adapter.is_default %}<p><span class="pill blue">default</span></p>{% endif %}
@@ -163,7 +169,7 @@
     const applyFilter = () => {
       const term = filter.value.trim().toLowerCase();
       options.forEach((option) => {
-        option.style.display = !term || option.textContent.toLowerCase().includes(term) ? 'block' : 'none';
+        option.style.display = !term || option.textContent.toLowerCase().includes(term) ? 'flex' : 'none';
       });
     };
     filter.addEventListener('input', applyFilter);

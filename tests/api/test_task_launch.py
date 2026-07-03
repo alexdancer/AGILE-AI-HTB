@@ -37,7 +37,7 @@ def _configure_codex_worker(db_path: Path, tmp_path: Path, *, tracking_mode: str
         "codex",
         workdir=str(tmp_path),
         config={"launch_template": ["codex", "--model", "{model}"]},
-        supported_models=["gpt-5.1-codex"],
+        supported_models=["gpt-5.4"],
         is_default=True,
     )
     db.mark_worker_adapter_verification(
@@ -45,6 +45,26 @@ def _configure_codex_worker(db_path: Path, tmp_path: Path, *, tracking_mode: str
         "codex",
         verified=True,
         evidence={"ok": True, "tracking_mode": tracking_mode, "tracking_authoritative": tracking_mode != "observed_only"},
+    )
+
+
+def _codex_native_stdout() -> str:
+    return "\n".join(
+        [
+            json.dumps({"type": "thread.started", "thread_id": "thread_2099_demo_codex_launch"}),
+            json.dumps({"type": "item.completed", "item": {"text": "DEMO_2099 launch done"}}),
+            json.dumps(
+                {
+                    "type": "turn.completed",
+                    "usage": {
+                        "input_tokens": 100,
+                        "cached_input_tokens": 40,
+                        "output_tokens": 20,
+                        "reasoning_output_tokens": 5,
+                    },
+                }
+            ),
+        ]
     )
 
 
@@ -231,7 +251,7 @@ def test_launch_blocks_unverified_adapter_without_session_or_runner(tmp_path, mo
             json={
                 "description": "Launch only after token proof",
                 "estimate_tokens": 8000,
-                "recommended_model": "gpt-5.1-codex",
+                "recommended_model": "gpt-5.4",
             },
         ).json()
         db.update_worker_adapter(
@@ -239,7 +259,7 @@ def test_launch_blocks_unverified_adapter_without_session_or_runner(tmp_path, mo
             "codex",
             workdir=str(tmp_path),
             config={"command": "codex"},
-            supported_models=["gpt-5.1-codex"],
+            supported_models=["gpt-5.4"],
             is_default=True,
         )
 
@@ -262,6 +282,48 @@ def test_launch_blocks_unverified_adapter_without_session_or_runner(tmp_path, mo
     assert sessions == []
     assert "Token tracking has not been verified for this adapter." in board.text
 
+def test_codex_launch_rejects_disallowed_model_before_runner(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    runner_calls = []
+    with _client(tmp_path) as client:
+        getattr(client, "app").state.task_launch_runner = runner_calls.append
+        project = db.list_connected_projects(tmp_path / "harness.db")[0]
+        task = db.create_task(
+            tmp_path / "harness.db",
+            description="Launch unsupported Codex model",
+            status="Estimated",
+            estimate_tokens=9000,
+            recommended_model="gpt-5.4",
+            metadata=project_task_metadata(project),
+        )
+        db.update_worker_adapter(
+            tmp_path / "harness.db",
+            "codex",
+            workdir=str(project["root_path"]),
+            config={"command": "codex"},
+            supported_models=["gpt-5.4"],
+            is_default=True,
+        )
+        db.mark_worker_adapter_verification(
+            tmp_path / "harness.db",
+            "codex",
+            verified=True,
+            evidence={"tracking_mode": "native_usage", "tracking_authoritative": True},
+        )
+
+        response = client.post(
+            f"/tasks/{task['id']}/launch",
+            headers=_auth_headers(),
+            json={"adapter_id": "codex", "model": "gpt-5.5"},
+        )
+        blocked = db.get_task(tmp_path / "harness.db", task["id"])
+
+    assert response.status_code == 409
+    assert blocked["status"] == "Estimated"
+    assert "Selected model is not supported" in blocked["metadata"]["launch_blocked_reason"]
+    assert runner_calls == []
+
+
 def test_launch_verified_adapter_creates_running_session_and_redacts_raw_session_key(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     runner_calls = []
@@ -277,7 +339,7 @@ def test_launch_verified_adapter_creates_running_session_and_redacts_raw_session
             json={
                 "description": "Implement launch button",
                 "estimate_tokens": 8000,
-                "recommended_model": "gpt-5.1-codex",
+                "recommended_model": "gpt-5.4",
             },
         ).json()
         db.update_worker_adapter(
@@ -285,7 +347,7 @@ def test_launch_verified_adapter_creates_running_session_and_redacts_raw_session
             "codex",
             workdir=str(tmp_path),
             config={"launch_template": ["codex", "--model", "{model}", "--prompt", "{prompt}"]},
-            supported_models=["gpt-5.1-codex"],
+            supported_models=["gpt-5.4"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -329,7 +391,7 @@ def test_launch_sanitizes_runner_output_everywhere(tmp_path, monkeypatch):
             json={
                 "description": "Do not leak runner output secrets",
                 "estimate_tokens": 8000,
-                "recommended_model": "gpt-5.1-codex",
+                "recommended_model": "gpt-5.4",
             },
         ).json()
         db.update_worker_adapter(
@@ -337,7 +399,7 @@ def test_launch_sanitizes_runner_output_everywhere(tmp_path, monkeypatch):
             "codex",
             workdir=str(tmp_path),
             config={"command": "codex"},
-            supported_models=["gpt-5.1-codex"],
+            supported_models=["gpt-5.4"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -386,7 +448,7 @@ def test_board_form_launch_uses_default_proxy_for_verified_default_adapter(tmp_p
             json={
                 "description": "Launch from board form",
                 "estimate_tokens": 8000,
-                "recommended_model": "gpt-5.1-codex",
+                "recommended_model": "gpt-5.4",
             },
         ).json()
         db.update_worker_adapter(
@@ -394,7 +456,7 @@ def test_board_form_launch_uses_default_proxy_for_verified_default_adapter(tmp_p
             "codex",
             workdir=str(tmp_path),
             config={"launch_template": ["codex", "--model", "{model}"]},
-            supported_models=["gpt-5.1-codex"],
+            supported_models=["gpt-5.4"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -415,6 +477,298 @@ def test_board_form_launch_uses_default_proxy_for_verified_default_adapter(tmp_p
     assert runner_calls[0].env["OPENAI_BASE_URL"] == "http://127.0.0.1:8000/v1"
     assert "sk_sess_" not in response.text
 
+
+def test_codex_native_launch_records_normalized_usage_and_exec_command(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    runner_calls = []
+
+    def fake_runner(plan):
+        runner_calls.append(plan)
+        (Path(plan.metadata["project_root"]) / "codex_native_result_DEMO_2099.txt").write_text("done\n")
+        return {"returncode": 0, "stdout": _codex_native_stdout(), "stderr": ""}
+
+    with _client(tmp_path) as client:
+        client.app.state.task_launch_runner = fake_runner
+        project = db.list_connected_projects(tmp_path / "harness.db")[0]
+        task = db.create_task(
+            tmp_path / "harness.db",
+            description="Implement DEMO_2099 Codex native usage accounting",
+            status="Estimated",
+            estimate_tokens=9000,
+            recommended_model="gpt-5.4",
+            metadata=project_task_metadata(project),
+        )
+        db.update_worker_adapter(
+            tmp_path / "harness.db",
+            "codex",
+            workdir=str(tmp_path),
+            config={"command": "codex"},
+            supported_models=["gpt-5.4"],
+            is_default=True,
+        )
+        db.mark_worker_adapter_verification(
+            tmp_path / "harness.db",
+            "codex",
+            verified=True,
+            evidence={"tracking_mode": "native_usage", "tracking_authoritative": True},
+        )
+
+        response = client.post(
+            f"/tasks/{task['id']}/launch",
+            headers=_auth_headers(),
+            json={"adapter_id": "codex", "model": "gpt-5.4", "proxy_url": "http://127.0.0.1:8000/v1"},
+        )
+        _wait_for_worker_run(tmp_path / "harness.db", task["id"], "completed")
+        refreshed = db.get_task(tmp_path / "harness.db", task["id"])
+        session_artifact = db.build_session_artifact(tmp_path / "harness.db", refreshed["session_id"])
+        project_root = str(project["root_path"])
+
+    assert response.status_code == 200
+    assert refreshed["status"] == "Review"
+    assert refreshed["actual_tokens"] == 85
+    assert len(runner_calls) == 1
+    assert runner_calls[0].command[:8] == [
+        "codex",
+        "exec",
+        "--json",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "workspace-write",
+        "-m",
+        "gpt-5.4",
+    ]
+    assert runner_calls[0].command[-3:-1] == ["--cd", project_root]
+    assert runner_calls[0].cwd == Path(project_root)
+    assert runner_calls[0].metadata["project_root"] == project_root
+    assert refreshed["metadata"]["launch_command_plan"]["command"][:8] == [
+        "codex",
+        "exec",
+        "--json",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "workspace-write",
+        "-m",
+        "gpt-5.4",
+    ]
+    assert refreshed["metadata"]["launch_command_plan"]["cwd"] == project_root
+    assert refreshed["metadata"]["launch_command_plan"]["metadata"]["project_root"] == project_root
+    assert "Implement DEMO_2099 Codex native usage accounting" not in str(refreshed["metadata"]["launch_command_plan"])
+    assert refreshed["metadata"]["launch_command_plan"]["metadata"]["prompt_redacted"] is True
+    assert runner_calls[0].env == {}
+    turn = session_artifact["token_log"][0]
+    assert turn["usage_kind"] == "task_execution"
+    assert turn["total_tokens"] == 125
+    assert turn["raw_usage"]["usage"]["cached_input_tokens"] == 40
+    assert turn["raw_usage"]["usage_source"] == "native_usage"
+
+
+def test_codex_native_read_only_non_git_mutation_blocks_task(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+
+    def fake_runner(plan):
+        Path(plan.metadata["project_root"], "changed.txt").write_text("mutated\n")
+        return {"returncode": 0, "stdout": _codex_native_stdout(), "stderr": ""}
+
+    with _client(tmp_path) as client:
+        getattr(client, "app").state.task_launch_runner = fake_runner
+        project = db.list_connected_projects(tmp_path / "harness.db")[0]
+        task = db.create_task(
+            tmp_path / "harness.db",
+            description="Read only DEMO_2099 Codex task",
+            status="Estimated",
+            estimate_tokens=9000,
+            recommended_model="gpt-5.4",
+            metadata={**project_task_metadata(project), "launch_mode": "read_only"},
+        )
+        db.update_worker_adapter(
+            tmp_path / "harness.db",
+            "codex",
+            workdir=str(project["root_path"]),
+            config={"command": "codex"},
+            supported_models=["gpt-5.4"],
+            is_default=True,
+        )
+        db.mark_worker_adapter_verification(
+            tmp_path / "harness.db",
+            "codex",
+            verified=True,
+            evidence={"tracking_mode": "native_usage", "tracking_authoritative": True},
+        )
+
+        response = client.post(
+            f"/tasks/{task['id']}/launch",
+            headers=_auth_headers(),
+            json={"adapter_id": "codex", "model": "gpt-5.4"},
+        )
+        _wait_for_worker_run(tmp_path / "harness.db", task["id"], "failed")
+        blocked = db.get_task(tmp_path / "harness.db", task["id"])
+
+    assert response.status_code == 200
+    assert blocked["status"] == "Blocked"
+    assert blocked["metadata"]["launch_blocked_reason"] == "Read-only Worker session modified the connected project."
+    assert "changed.txt" in blocked["metadata"]["readonly_diff_evidence"]["after"]
+
+
+def test_codex_native_launch_failed_exit_does_not_record_costless_usage(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+
+    def fake_runner(plan):
+        return {"returncode": 1, "stdout": _codex_native_stdout(), "stderr": "DEMO_2099 Codex failed"}
+
+    with _client(tmp_path) as client:
+        client.app.state.task_launch_runner = fake_runner
+        project = db.list_connected_projects(tmp_path / "harness.db")[0]
+        task = db.create_task(
+            tmp_path / "harness.db",
+            description="Fail DEMO_2099 Codex native usage accounting",
+            status="Estimated",
+            estimate_tokens=9000,
+            recommended_model="gpt-5.4",
+            metadata=project_task_metadata(project),
+        )
+        db.update_worker_adapter(
+            tmp_path / "harness.db",
+            "codex",
+            workdir=str(tmp_path),
+            config={"command": "codex"},
+            supported_models=["gpt-5.4"],
+            is_default=True,
+        )
+        db.mark_worker_adapter_verification(
+            tmp_path / "harness.db",
+            "codex",
+            verified=True,
+            evidence={"tracking_mode": "native_usage", "tracking_authoritative": True},
+        )
+
+        response = client.post(
+            f"/tasks/{task['id']}/launch",
+            headers=_auth_headers(),
+            json={"adapter_id": "codex", "model": "gpt-5.4", "proxy_url": "http://127.0.0.1:8000/v1"},
+        )
+        _wait_for_worker_run(tmp_path / "harness.db", task["id"], "failed")
+        refreshed = db.get_task(tmp_path / "harness.db", task["id"])
+        session_artifact = db.build_session_artifact(tmp_path / "harness.db", refreshed["session_id"])
+
+    assert response.status_code == 200
+    assert refreshed["status"] == "Estimated"
+    assert refreshed["metadata"]["launch_failure_type"] == "worker_adapter_failure"
+    assert session_artifact["token_log"] == []
+
+
+def test_board_shows_codex_trusted_directory_failure_as_retryable_setup_diagnostic(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+
+    def fake_runner(plan):
+        return {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "Not inside a trusted directory and --skip-git-repo-check was not specified. api_key=abc123 Bearer abc.def",
+        }
+
+    with _client(tmp_path) as client:
+        getattr(client, "app").state.task_launch_runner = fake_runner
+        project = db.list_connected_projects(tmp_path / "harness.db")[0]
+        task = db.create_task(
+            tmp_path / "harness.db",
+            description="DEMO_2099 Codex trust diagnostic task",
+            status="Estimated",
+            estimate_tokens=9000,
+            recommended_model="gpt-5.4",
+            metadata=project_task_metadata(project),
+        )
+        db.update_worker_adapter(
+            tmp_path / "harness.db",
+            "codex",
+            workdir=str(project["root_path"]),
+            config={"command": "codex"},
+            supported_models=["gpt-5.4"],
+            is_default=True,
+        )
+        db.mark_worker_adapter_verification(
+            tmp_path / "harness.db",
+            "codex",
+            verified=True,
+            evidence={"tracking_mode": "native_usage", "tracking_authoritative": True},
+        )
+
+        response = client.post(
+            f"/tasks/{task['id']}/launch",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={"adapter_id": "codex", "model": "gpt-5.4"},
+            follow_redirects=False,
+        )
+        _wait_for_worker_run(tmp_path / "harness.db", task["id"], "failed")
+        refreshed = db.get_task(tmp_path / "harness.db", task["id"])
+        board = client.get(f"/projects/{project['id']}/board", headers=_auth_headers())
+
+    assert response.status_code == 303
+    assert refreshed["status"] == "Estimated"
+    assert refreshed["metadata"]["launch_retryable"] is True
+    assert refreshed["metadata"]["launch_diagnostic"]["code"] == "codex_untrusted_directory"
+    assert "Not inside a trusted directory and --skip-git-repo-check was not specified." in board.text
+    assert "Open Worker Setup" in board.text
+    assert "Adapter: codex" in board.text
+    assert "Model: gpt-5.4" in board.text
+    assert str(project["root_path"]) in board.text
+    assert f'action="/tasks/{task["id"]}/launch"' in board.text
+    assert "api_key=abc123" not in board.text
+    assert "Bearer abc.def" not in board.text
+
+
+def test_codex_native_sandbox_rejection_with_zero_exit_stays_retryable(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+
+    def fake_runner(plan):
+        return {
+            "returncode": 0,
+            "stdout": _codex_native_stdout(),
+            "stderr": 'Rejected CreateProcess: /bin/zsh -lc "rm -rf .venv && python3 -m venv .venv && pip install -e \'[test]\'" was blocked by sandbox policy.',
+        }
+
+    with _client(tmp_path) as client:
+        getattr(client, "app").state.task_launch_runner = fake_runner
+        project = db.list_connected_projects(tmp_path / "harness.db")[0]
+        task = db.create_task(
+            tmp_path / "harness.db",
+            description="DEMO_2099 Codex sandbox rejected venv setup",
+            status="Estimated",
+            estimate_tokens=9000,
+            recommended_model="gpt-5.4",
+            metadata=project_task_metadata(project),
+        )
+        db.update_worker_adapter(
+            tmp_path / "harness.db",
+            "codex",
+            workdir=str(project["root_path"]),
+            config={"command": "codex"},
+            supported_models=["gpt-5.4"],
+            is_default=True,
+        )
+        db.mark_worker_adapter_verification(
+            tmp_path / "harness.db",
+            "codex",
+            verified=True,
+            evidence={"tracking_mode": "native_usage", "tracking_authoritative": True},
+        )
+
+        response = client.post(
+            f"/tasks/{task['id']}/launch",
+            headers=_auth_headers(),
+            json={"adapter_id": "codex", "model": "gpt-5.4", "proxy_url": "http://127.0.0.1:8000/v1"},
+        )
+        run = _wait_for_worker_run(tmp_path / "harness.db", task["id"], "failed")
+        refreshed = db.get_task(tmp_path / "harness.db", task["id"])
+
+    assert response.status_code == 200
+    assert refreshed["status"] == "Estimated"
+    assert refreshed["metadata"]["launch_retryable"] is True
+    assert refreshed["metadata"]["launch_failure_type"] == "worker_action_rejected"
+    assert "operator approval" in refreshed["metadata"]["launch_error"]
+    assert "Rejected CreateProcess" in refreshed["metadata"]["action_rejections"][0]
+    assert run["error_type"] == "worker_action_rejected"
+
+
 def test_board_form_recoverable_launch_error_stays_on_task_card_with_launch_form(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
 
@@ -429,7 +783,7 @@ def test_board_form_recoverable_launch_error_stays_on_task_card_with_launch_form
                 "description": "Retryable DEMO launch timeout 2099",
                 "status": "Ready",
                 "estimate_tokens": 8000,
-                "recommended_model": "gpt-5.1-codex",
+                "recommended_model": "gpt-5.4",
             },
         ).json()
         db.update_worker_adapter(
@@ -437,7 +791,7 @@ def test_board_form_recoverable_launch_error_stays_on_task_card_with_launch_form
             "codex",
             workdir=str(tmp_path),
             config={"launch_template": ["codex", "--model", "{model}"]},
-            supported_models=["gpt-5.1-codex"],
+            supported_models=["gpt-5.4"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -520,7 +874,7 @@ def test_project_board_status_endpoint_reports_terminal_worker_run_without_manua
             json={
                 "description": "Launch for live refresh",
                 "estimate_tokens": 8000,
-                "recommended_model": "gpt-5.1-codex",
+                "recommended_model": "gpt-5.4",
             },
         ).json()
         project_id = task["metadata"]["connected_project_id"]
@@ -529,7 +883,7 @@ def test_project_board_status_endpoint_reports_terminal_worker_run_without_manua
             "codex",
             workdir=str(tmp_path),
             config={"launch_template": ["codex", "--model", "{model}"]},
-            supported_models=["gpt-5.1-codex"],
+            supported_models=["gpt-5.4"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -577,7 +931,7 @@ def test_project_run_next_launches_one_project_task_with_automation_metadata(tmp
             description="first automated task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="gpt-5.4",
             metadata=project_task_metadata(project),
         )
         second = db.create_task(
@@ -585,7 +939,7 @@ def test_project_run_next_launches_one_project_task_with_automation_metadata(tmp
             description="second automated task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="gpt-5.4",
             metadata=project_task_metadata(project),
         )
         db.update_worker_adapter(
@@ -593,7 +947,7 @@ def test_project_run_next_launches_one_project_task_with_automation_metadata(tmp
             "codex",
             workdir=str(tmp_path),
             config={"launch_template": ["codex", "--model", "{model}"]},
-            supported_models=["gpt-5.1-codex"],
+            supported_models=["gpt-5.4"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -647,7 +1001,7 @@ def test_project_run_queue_launches_next_after_review_without_cross_project_fall
             description="first queue task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="gpt-5.4",
             metadata=project_task_metadata(project),
         )
         second = db.create_task(
@@ -655,7 +1009,7 @@ def test_project_run_queue_launches_next_after_review_without_cross_project_fall
             description="second queue task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="gpt-5.4",
             metadata=project_task_metadata(project),
         )
         other = db.create_task(
@@ -663,7 +1017,7 @@ def test_project_run_queue_launches_next_after_review_without_cross_project_fall
             description="other project task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="gpt-5.4",
             metadata=project_task_metadata(other_project),
         )
         db.update_worker_adapter(
@@ -671,7 +1025,7 @@ def test_project_run_queue_launches_next_after_review_without_cross_project_fall
             "codex",
             workdir=str(tmp_path),
             config={"launch_template": ["codex", "--model", "{model}"]},
-            supported_models=["gpt-5.1-codex"],
+            supported_models=["gpt-5.4"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -704,7 +1058,7 @@ def test_project_run_queue_stops_before_budget_override(tmp_path, monkeypatch):
             description="over budget queue task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="gpt-5.4",
             metadata=project_task_metadata(project),
         )
         _configure_codex_worker(tmp_path / "harness.db", tmp_path)
@@ -727,7 +1081,7 @@ def test_project_run_queue_stops_before_native_usage_acknowledgement(tmp_path, m
             description="native usage budget queue task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="gpt-5.4",
             metadata=project_task_metadata(project),
         )
         _configure_codex_worker(tmp_path / "harness.db", tmp_path, tracking_mode="native_usage")
@@ -752,7 +1106,7 @@ def test_project_run_queue_stops_on_observed_only_adapter(tmp_path, monkeypatch)
             description="observed only queue task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="gpt-5.4",
             metadata=project_task_metadata(project),
         )
         _configure_codex_worker(tmp_path / "harness.db", tmp_path, tracking_mode="observed_only")
@@ -779,7 +1133,7 @@ def test_project_run_queue_stops_on_retryable_worker_failure(tmp_path, monkeypat
             description="retryable queue task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="gpt-5.4",
             metadata=project_task_metadata(project),
         )
         _configure_codex_worker(tmp_path / "harness.db", tmp_path)
@@ -839,7 +1193,7 @@ def test_launch_accepts_manual_estimate_payload_before_guardrails(tmp_path, monk
             "codex",
             workdir=str(tmp_path),
             config={"command": "codex"},
-            supported_models=["gpt-5.1-codex"],
+            supported_models=["gpt-5.4"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -847,7 +1201,7 @@ def test_launch_accepts_manual_estimate_payload_before_guardrails(tmp_path, monk
         response = client.post(
             f"/tasks/{task['id']}/launch",
             headers=_auth_headers(),
-            json={"adapter_id": "codex", "model": "gpt-5.1-codex", "estimate_tokens": 9000},
+            json={"adapter_id": "codex", "model": "gpt-5.4", "estimate_tokens": 9000},
         )
         _wait_for_worker_run(tmp_path / "harness.db", task["id"], "completed")
 
@@ -855,7 +1209,7 @@ def test_launch_accepts_manual_estimate_payload_before_guardrails(tmp_path, monk
     assert response.status_code == 200
     assert body["task"]["status"] == "Running"
     assert body["task"]["estimate_tokens"] == 9000
-    assert body["task"]["recommended_model"] == "gpt-5.1-codex"
+    assert body["task"]["recommended_model"] == "gpt-5.4"
     assert body["task"]["metadata"]["estimation_source"] == "manual"
     assert runner_calls[0].env["OPENAI_BASE_URL"] == "http://127.0.0.1:8000/v1"
 
@@ -869,21 +1223,21 @@ def test_launch_done_with_manual_estimate_payload_stays_done_without_session_or_
             description="Already done",
             status="Done",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="gpt-5.4",
         )
         before_sessions = len(db.list_sessions(tmp_path / "harness.db"))
 
         response = client.post(
             f"/tasks/{task['id']}/launch",
             headers=_auth_headers(),
-            json={"adapter_id": "codex", "model": "gpt-5.1-codex", "estimate_tokens": 9000},
+            json={"adapter_id": "codex", "model": "gpt-5.4", "estimate_tokens": 9000},
         )
         after = db.get_task(tmp_path / "harness.db", task["id"])
 
     assert response.status_code == 409
     assert after["status"] == "Done"
     assert after["estimate_tokens"] == 8000
-    assert after["recommended_model"] == "gpt-5.1-codex"
+    assert after["recommended_model"] == "gpt-5.4"
     assert len(db.list_sessions(tmp_path / "harness.db")) == before_sessions
     assert runner_calls == []
 
@@ -903,7 +1257,7 @@ def test_launch_second_call_after_running_claim_is_rejected_without_second_runne
             json={
                 "description": "Launch once only",
                 "estimate_tokens": 8000,
-                "recommended_model": "gpt-5.1-codex",
+                "recommended_model": "gpt-5.4",
             },
         ).json()
         db.update_worker_adapter(
@@ -911,7 +1265,7 @@ def test_launch_second_call_after_running_claim_is_rejected_without_second_runne
             "codex",
             workdir=str(tmp_path),
             config={"command": "codex"},
-            supported_models=["gpt-5.1-codex"],
+            supported_models=["gpt-5.4"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -948,7 +1302,7 @@ def test_duplicate_launch_rejects_mismatched_project_before_active_run_reuse(tmp
             json={
                 "description": "Launch only from bound board",
                 "estimate_tokens": 8000,
-                "recommended_model": "gpt-5.1-codex",
+                "recommended_model": "gpt-5.4",
             },
         ).json()
         project_a = db.get_connected_project(tmp_path / "harness.db", task["metadata"]["connected_project_id"])
@@ -966,7 +1320,7 @@ def test_duplicate_launch_rejects_mismatched_project_before_active_run_reuse(tmp
             "codex",
             workdir=str(tmp_path),
             config={"command": "codex"},
-            supported_models=["gpt-5.1-codex"],
+            supported_models=["gpt-5.4"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -996,7 +1350,7 @@ def test_launch_rejects_invalid_manual_estimate_tokens(tmp_path, monkeypatch, es
         response = client.post(
             f"/tasks/{task['id']}/launch",
             headers=_auth_headers(),
-            json={"model": "gpt-5.1-codex", "estimate_tokens": estimate_tokens},
+            json={"model": "gpt-5.4", "estimate_tokens": estimate_tokens},
         )
 
     assert response.status_code == 422
@@ -1013,7 +1367,7 @@ def test_launch_is_status_gated_without_session_or_runner(tmp_path, monkeypatch,
             session_id = db.create_session(
                 tmp_path / "harness.db",
                 task_description="Already running",
-                model="gpt-5.1-codex",
+                model="gpt-5.4",
                 session_key_hash="d" * 64,
                 guardrail_overrides={},
                 status="running",
@@ -1023,14 +1377,14 @@ def test_launch_is_status_gated_without_session_or_runner(tmp_path, monkeypatch,
             description=f"{status} task",
             status=status,
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="gpt-5.4",
             session_id=session_id,
         )
         before_sessions = len(db.list_sessions(tmp_path / "harness.db"))
         response = client.post(
             f"/tasks/{task['id']}/launch",
             headers=_auth_headers(),
-            json={"adapter_id": "codex", "model": "gpt-5.1-codex"},
+            json={"adapter_id": "codex", "model": "gpt-5.4"},
         )
         after = db.get_task(tmp_path / "harness.db", task["id"])
 
@@ -1085,14 +1439,14 @@ def test_fake_worker_token_row_after_launch_appears_in_session_report(tmp_path, 
         client.app.state.task_launch_runner = fake_runner
         task = client.post(
             "/tasks",
-            json={"description": "Record worker tokens", "estimate_tokens": 8000, "recommended_model": "gpt-5.1-codex"},
+            json={"description": "Record worker tokens", "estimate_tokens": 8000, "recommended_model": "gpt-5.4"},
         ).json()
         db.update_worker_adapter(
             tmp_path / "harness.db",
             "codex",
             workdir=str(tmp_path),
             config={"command": "codex"},
-            supported_models=["gpt-5.1-codex"],
+            supported_models=["gpt-5.4"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -1211,7 +1565,7 @@ def test_project_run_queue_auto_agent_review_stores_advisory_evidence(tmp_path, 
             description="auto review queue task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="gpt-5.4",
             metadata=project_task_metadata(project),
         )
         _configure_codex_worker(tmp_path / "harness.db", tmp_path)
@@ -1265,7 +1619,7 @@ def test_project_run_queue_auto_agent_review_failure_leaves_review(tmp_path, mon
             description="failing auto review queue task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="gpt-5.4",
             metadata=project_task_metadata(project),
         )
         _configure_codex_worker(tmp_path / "harness.db", tmp_path)
@@ -1304,7 +1658,7 @@ def test_project_run_queue_waits_when_manual_project_run_is_active(tmp_path, mon
             description="manual running project task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="gpt-5.4",
             metadata=project_task_metadata(project),
         )
         queued = db.create_task(
@@ -1312,7 +1666,7 @@ def test_project_run_queue_waits_when_manual_project_run_is_active(tmp_path, mon
             description="queued task must wait",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="gpt-5.4",
             metadata=project_task_metadata(project),
         )
         _configure_codex_worker(tmp_path / "harness.db", tmp_path)
@@ -1337,7 +1691,7 @@ def test_auto_agent_review_claim_is_single_use(tmp_path):
         description="review claim task",
         status="Review",
         estimate_tokens=8000,
-        recommended_model="gpt-5.1-codex",
+        recommended_model="gpt-5.4",
         metadata={},
     )
 
@@ -1385,7 +1739,7 @@ def test_project_run_queue_honors_stop_after_auto_review_before_next_launch(tmp_
             description="first queue task before stop",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="gpt-5.4",
             metadata=project_task_metadata(project),
         )
         second = db.create_task(
@@ -1393,7 +1747,7 @@ def test_project_run_queue_honors_stop_after_auto_review_before_next_launch(tmp_
             description="second queue task must not launch after stop",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="gpt-5.4",
             metadata=project_task_metadata(project),
         )
         _configure_codex_worker(tmp_path / "harness.db", tmp_path)
@@ -1420,7 +1774,7 @@ def test_project_run_queue_auto_agent_review_skips_without_completed_evidence(tm
             description="review task without completed evidence",
             status="Review",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="gpt-5.4",
             metadata=project_task_metadata(project),
         )
         portal_routes.start_run_automation(

@@ -67,7 +67,9 @@ def test_readme_documents_portal_first_operator_flow():
     assert "htb init" in readme
     assert "created or migrated by `htb init`" in readme
     assert "uv run htb init" not in operator_install
-    assert "http://localhost:8000/login" in readme
+    assert "http://localhost:8000/" in readme
+    assert "Default loopback `htb serve` opens the local Portal without a login token" in readme
+    assert "sign in through `/login`" in readme
     assert "htb check" in readme
     removed_command = "seed" + "-demo"
     assert f"htb {removed_command}" not in readme
@@ -75,6 +77,9 @@ def test_readme_documents_portal_first_operator_flow():
     assert "Docker path" not in readme
     assert "uv run pytest" in readme
     assert "provider" in readme.lower()
+    assert "Task Breakdown Agent applies the Task Slicing Policy" in readme
+    assert "final Acceptance Verification card checks the original source contract" in readme
+    assert "compact objective, boundaries, proof command, dependencies, likely entry points, and execution mode" in readme
     assert "environment variables" in readme.lower()
     assert "AGILE_AI_HTB_CONTROL_API_KEY" in readme
     assert "proxy_governed" not in readme

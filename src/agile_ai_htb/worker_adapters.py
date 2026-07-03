@@ -13,8 +13,12 @@ from typing import Any, Callable, Protocol
 
 from agile_ai_htb import db
 from agile_ai_htb.native_usage import native_sentinel_matched, parse_native_usage_evidence
+from agile_ai_htb.native_cli_diagnostics import native_cli_diagnostic, redact_native_cli_text
 from agile_ai_htb.tracking_modes import NATIVE_USAGE, OBSERVED_ONLY, PROXY_GOVERNED
-from agile_ai_htb.worker_model_allowlist import SEEDED_WORKER_ADAPTER_MODELS, allowed_worker_model_ids
+from agile_ai_htb.worker_model_allowlist import (
+    allowed_worker_model_ids,
+    selectable_worker_model_ids,
+)
 
 SENTINEL_RESPONSE = "AGILE_AI_HTB_ADAPTER_OK"
 SENTINEL_PROMPT = (
@@ -25,6 +29,7 @@ SECRET_ENV_TERMS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "AUTHORIZATION")
 SECRET_VALUE_PATTERN = re.compile("s" "k_" r"[A-Za-z0-9_\-.]+")
 MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$")
 SUBPROCESS_RUNNER_TIMEOUT_SECONDS = 60
+CODEX_AGENT_LAUNCH_TIMEOUT_SECONDS = 600
 OPENCODE_AGENT_LAUNCH_TIMEOUT_SECONDS = 600
 CLAUDE_CODE_AGENT_LAUNCH_TIMEOUT_SECONDS = 600
 SECRET_COMMAND_FLAGS = {
@@ -126,6 +131,8 @@ class WorkerAdapterBuilder:
                 "kind": self.adapter["kind"],
                 "model": model,
                 "purpose": "native_adapter_verification",
+                "project_root": str(workdir) if workdir else None,
+                "prompt_argument_indices": _prompt_argument_indices(command, prompt),
                 "tracking_mode": "native_usage",
                 **self._timeout_metadata("verification_timeout_seconds"),
             },
@@ -165,6 +172,8 @@ class WorkerAdapterBuilder:
                 "kind": self.adapter["kind"],
                 "model": model,
                 "purpose": "task_launch",
+                "project_root": str(workdir) if workdir else None,
+                "prompt_argument_indices": _prompt_argument_indices(command, task_prompt),
                 "tracking_mode": "native_usage",
                 "usage_source": "native_usage",
                 **self._timeout_metadata("launch_timeout_seconds"),
@@ -231,6 +240,7 @@ class WorkerAdapterBuilder:
                 "kind": self.adapter["kind"],
                 "model": model,
                 "purpose": purpose,
+                "prompt_argument_indices": _prompt_argument_indices(command, prompt),
                 **self._timeout_metadata(
                     "verification_timeout_seconds" if purpose == "adapter_verification" else "launch_timeout_seconds"
                 ),
@@ -313,6 +323,78 @@ class ClaudeCodeAdapterBuilder(WorkerAdapterBuilder):
 class CodexAdapterBuilder(WorkerAdapterBuilder):
     api_key_env = "OPENAI_API_KEY"
     base_url_env = "OPENAI_BASE_URL"
+
+    def _default_native_verification_template(self) -> list[str]:
+        command = self.config.get("command") or self.adapter["kind"]
+        return [str(command), "exec", "--json", "--skip-git-repo-check", "-m", "{model}", "{prompt}"]
+
+    def _default_native_launch_template(self) -> list[str]:
+        command = self.config.get("command") or self.adapter["kind"]
+        return [
+            str(command),
+            "exec",
+            "--json",
+            "--skip-git-repo-check",
+            "--sandbox",
+            "workspace-write",
+            "-m",
+            "{model}",
+            "--cd",
+            "{workdir}",
+            "{prompt}",
+        ]
+
+    def _normalize_template(self, template_key: str, template: list[Any]) -> list[Any]:
+        command = [str(part) for part in template]
+        if template_key in {"native_launch_template", "native_verification_template"} and len(command) == 1:
+            command = (
+                self._default_native_launch_template()
+                if template_key == "native_launch_template"
+                else self._default_native_verification_template()
+            )
+            command[0] = str(template[0])
+        if template_key in {"native_launch_template", "native_verification_template"} and len(command) >= 2 and command[1] == "exec":
+            command = self._ensure_native_exec_flags(command)
+            if template_key == "native_launch_template":
+                command = self._ensure_workspace_write_sandbox(command)
+                command = self._ensure_cd_argument(command)
+        return command
+
+    def _ensure_native_exec_flags(self, command: list[str]) -> list[str]:
+        rest = [part for part in command[2:] if part not in {"--json", "--skip-git-repo-check"}]
+        return [*command[:2], "--json", "--skip-git-repo-check", *rest]
+
+    def _ensure_workspace_write_sandbox(self, command: list[str]) -> list[str]:
+        if "--full-auto" in command or "--dangerously-bypass-approvals-and-sandbox" in command:
+            return command
+        for flag in ("--sandbox", "-s"):
+            if flag not in command:
+                continue
+            index = command.index(flag)
+            if index + 1 < len(command) and command[index + 1] == "read-only":
+                return [*command[: index + 1], "workspace-write", *command[index + 2 :]]
+            return command
+        for index, part in enumerate(command):
+            if part in {"--sandbox=read-only", "-s=read-only"}:
+                prefix = part.split("=", 1)[0]
+                return [*command[:index], f"{prefix}=workspace-write", *command[index + 1 :]]
+        return [*command[:4], "--sandbox", "workspace-write", *command[4:]]
+
+    def _timeout_metadata(self, purpose_key: str) -> dict[str, int]:
+        metadata = super()._timeout_metadata(purpose_key)
+        if metadata or purpose_key != "launch_timeout_seconds":
+            return metadata
+        return {"timeout_seconds": CODEX_AGENT_LAUNCH_TIMEOUT_SECONDS}
+
+    def _ensure_cd_argument(self, command: list[str]) -> list[str]:
+        for flag in ("--cd", "-C"):
+            if flag not in command:
+                continue
+            index = command.index(flag)
+            if index + 1 < len(command):
+                return [*command[: index + 1], "{workdir}", *command[index + 2 :]]
+            return [*command, "{workdir}"]
+        return [*command[:-1], "--cd", "{workdir}", command[-1]]
 
 
 class OpenCodeAdapterBuilder(WorkerAdapterBuilder):
@@ -399,6 +481,8 @@ class OpenCodeAdapterBuilder(WorkerAdapterBuilder):
                 "kind": self.adapter["kind"],
                 "model": model,
                 "purpose": "task_launch",
+                "project_root": str(workdir) if workdir else None,
+                "prompt_argument_indices": _prompt_argument_indices(command, task_prompt),
                 "tracking_mode": "native_usage",
                 "usage_source": "native_usage",
                 **self._timeout_metadata("launch_timeout_seconds"),
@@ -434,7 +518,7 @@ BUILDERS = {
 
 CURATED_MODEL_DISCOVERY_SOURCES = {
     "claude_code": "agile_ai_htb_curated_claude_code_models",
-    "hermes": "agile_ai_htb_curated_hermes_models",
+    "codex": "agile_ai_htb_curated_codex_models",
 }
 
 
@@ -541,7 +625,7 @@ def _discover_curated_worker_models(
     source: str,
 ) -> ModelDiscoveryResult:
     adapter_id = str(adapter["id"])
-    models = list(SEEDED_WORKER_ADAPTER_MODELS[adapter_id])
+    models = selectable_worker_model_ids(adapter)
     config = dict(adapter.get("config") or {})
     approved_models = [model for model in allowed_worker_model_ids(adapter) if model in models]
     evidence = {
@@ -575,13 +659,12 @@ def _curated_discovered_model_ids(adapter: dict[str, Any]) -> list[str] | None:
     source = CURATED_MODEL_DISCOVERY_SOURCES.get(str(adapter.get("kind")))
     if not source:
         return None
-    seeded_models = list(SEEDED_WORKER_ADAPTER_MODELS[str(adapter["id"])])
-    discovery = (adapter.get("config") or {}).get("model_discovery") or {}
-    if discovery.get("tracking_mode") != "curated" or discovery.get("source") != source:
-        return seeded_models
-    discovered_models = [str(model) for model in discovery.get("models") or []]
-    discovered_models = [model for model in discovered_models if model in seeded_models]
-    return discovered_models or seeded_models
+    seeded_models = selectable_worker_model_ids(adapter)
+    # Curated inventories are code-owned, not a durable database cache. If the
+    # curated list changes, existing DB rows must immediately expose the new
+    # selectable inventory instead of narrowing the UI to stale persisted
+    # model_discovery.models evidence from a prior run.
+    return seeded_models
 
 
 def _adapter_command_name(adapter: dict[str, Any]) -> str | None:
@@ -663,12 +746,22 @@ def _models_from_json(value: Any) -> list[str]:
     return []
 
 
+def _prompt_argument_indices(command: list[str], prompt: str) -> list[int]:
+    if not prompt:
+        return []
+    return [index for index, part in enumerate(command) if prompt in part]
+
+
 def redact_command_plan(plan: CommandPlan) -> dict[str, Any]:
+    metadata = dict(plan.metadata)
+    prompt_indices = {int(index) for index in metadata.pop("prompt_argument_indices", [])}
+    if prompt_indices:
+        metadata["prompt_redacted"] = True
     return {
-        "command": _redact_command(plan.command),
+        "command": _redact_command(plan.command, prompt_indices=prompt_indices),
         "cwd": str(plan.cwd) if plan.cwd else None,
         "env": {key: ("***REDACTED***" if _is_secret_name(key) else _redact_value(value)) for key, value in plan.env.items()},
-        "metadata": dict(plan.metadata),
+        "metadata": metadata,
     }
 
 
@@ -732,10 +825,14 @@ def verify_worker_adapter(
             stderr=f"Failed to launch command {redact_command_plan(plan)['command'][0]!r}: {type(exc).__name__}",
         )
     stdout = str(_result_field(completed, "stdout") or "")
+    stderr = str(_result_field(completed, "stderr", ""))
     returncode = int(_result_field(completed, "returncode", 0) or 0)
+    cli_failure = _native_cli_failure_reason(stdout, stderr) if returncode != 0 else None
     sentinel_matched = native_sentinel_matched(stdout, SENTINEL_RESPONSE) if tracking_mode in {NATIVE_USAGE, OBSERVED_ONLY} else stdout.strip() == SENTINEL_RESPONSE
     if returncode != 0:
         reasons.append("Adapter verification command failed.")
+    if cli_failure:
+        reasons.append(f"Adapter CLI reported: {cli_failure}")
     if not sentinel_matched:
         reasons.append("Adapter did not return exact verification sentinel.")
 
@@ -775,11 +872,21 @@ def verify_worker_adapter(
         "tracking_authoritative": resolved_tracking_mode in {PROXY_GOVERNED, NATIVE_USAGE},
         "returncode": returncode,
         "stdout": _redact_value(stdout.strip()),
-        "stderr": _redact_value(str(_result_field(completed, "stderr", ""))),
+        "stderr": _redact_value(stderr),
         "sentinel_matched": sentinel_matched,
         "token_recorded": token_recorded,
         "command_plan": redact_command_plan(plan),
     }
+    if reasons:
+        diagnostic = native_cli_diagnostic(
+            adapter_id=adapter_id,
+            adapter_kind=str(adapter.get("kind") or adapter_id),
+            stdout=stdout,
+            stderr=stderr,
+            returncode=returncode,
+        )
+        if diagnostic:
+            evidence["diagnostic"] = diagnostic
     if native_usage is not None:
         evidence["native_usage"] = native_usage.raw_usage
     passed = not reasons
@@ -836,15 +943,75 @@ def _result_field(result: Any, field: str, default: Any = "") -> Any:
     return getattr(result, field, default)
 
 
+def _native_cli_failure_reason(stdout: str, stderr: str) -> str | None:
+    for payload in _json_line_payloads(stdout):
+        text = _cli_payload_text(payload)
+        if text and (payload.get("is_error") or payload.get("type") == "error" or payload.get("error")):
+            return _redact_value(text)[:500]
+    return _redact_value(stderr.strip())[:500] if stderr.strip() else None
+
+
+def _json_line_payloads(text: str) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            payloads.append(payload)
+    return payloads
+
+
+def _cli_payload_text(payload: dict[str, Any]) -> str | None:
+    for value in (payload.get("result"), payload.get("message"), payload.get("error")):
+        text = _cli_text(value)
+        if text:
+            return text
+    return None
+
+
+def _cli_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("{"):
+            try:
+                nested = json.loads(stripped)
+            except json.JSONDecodeError:
+                return stripped
+            return _cli_text(nested) or stripped
+        return stripped or None
+    if isinstance(value, dict):
+        error = value.get("error")
+        if isinstance(error, dict) and error.get("message"):
+            return str(error["message"])
+        content = value.get("content")
+        if isinstance(content, list):
+            texts = [str(item.get("text")) for item in content if isinstance(item, dict) and item.get("text")]
+            if texts:
+                return " ".join(texts)
+        for key in ("message", "result", "text"):
+            if value.get(key):
+                return _cli_text(value[key])
+    return None
+
+
 def _is_secret_name(name: str) -> bool:
     return any(term in name.upper() for term in SECRET_ENV_TERMS)
 
 
-def _redact_command(command: list[str]) -> list[str]:
+def _redact_command(command: list[str], *, prompt_indices: set[int] | None = None) -> list[str]:
     redacted: list[str] = []
     redact_next = False
     previous_was_header_flag = False
-    for part in command:
+    prompt_indices = prompt_indices or set()
+    for index, part in enumerate(command):
+        if index in prompt_indices:
+            redacted.append(f"***PROMPT_REDACTED:{len(part)} chars***")
+            redact_next = False
+            previous_was_header_flag = False
+            continue
+
         if redact_next:
             redacted.append("***REDACTED***")
             redact_next = False
@@ -875,6 +1042,7 @@ def _redact_command(command: list[str]) -> list[str]:
 
 
 def _redact_value(value: str) -> str:
-    if "secret" in value.lower():
+    redacted = redact_native_cli_text(SECRET_VALUE_PATTERN.sub("***REDACTED***", value))
+    if "secret" in value.lower() and redacted == value:
         return "***REDACTED***"
-    return SECRET_VALUE_PATTERN.sub("***REDACTED***", value)
+    return redacted

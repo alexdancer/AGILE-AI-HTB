@@ -10,14 +10,14 @@ def test_launch_guardrails_pass_when_adapter_and_proxy_ready(tmp_path):
         "codex",
         workdir=str(tmp_path),
         config={"command": "codex"},
-        supported_models=["gpt-5.1-codex"],
+        supported_models=["gpt-5.4"],
     )
     db.mark_worker_adapter_verification(db_path, "codex", verified=True, evidence={"ok": True})
 
     result = evaluate_launch_guardrails(
         db_path,
         adapter_id="codex",
-        model="gpt-5.1-codex",
+        model="gpt-5.4",
         session_api_key="sk_session",
         proxy_url="http://127.0.0.1:8000/v1",
     )
@@ -35,7 +35,7 @@ def test_launch_guardrails_block_observed_only_tracking(tmp_path):
         "codex",
         workdir=str(tmp_path),
         config={"command": "codex"},
-        supported_models=["gpt-5.1-codex"],
+        supported_models=["gpt-5.4"],
     )
     db.mark_worker_adapter_verification(
         db_path,
@@ -47,7 +47,7 @@ def test_launch_guardrails_block_observed_only_tracking(tmp_path):
     result = evaluate_launch_guardrails(
         db_path,
         adapter_id="codex",
-        model="gpt-5.1-codex",
+        model="gpt-5.4",
         session_api_key="sk_session",
         proxy_url="http://127.0.0.1:8000/v1",
     )
@@ -71,7 +71,7 @@ def test_launch_guardrails_return_human_readable_failures(tmp_path):
     result = evaluate_launch_guardrails(
         db_path,
         adapter_id="claude_code",
-        model="gpt-5.1-codex",
+        model="5.4",
         session_api_key="",
         proxy_url="",
     )

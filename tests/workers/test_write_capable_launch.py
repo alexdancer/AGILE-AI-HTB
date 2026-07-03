@@ -107,6 +107,58 @@ def test_write_capable_launch_blocks_dirty_repo_before_runner(tmp_path):
     assert calls == []
 
 
+def test_write_capable_codex_native_launch_blocks_non_git_project_before_runner(tmp_path):
+    db_path = tmp_path / "harness.db"
+    root = tmp_path / "non-git-project"
+    root.mkdir()
+    db.init_db(db_path)
+    project = db.upsert_connected_project(
+        db_path,
+        name="Non Git Project",
+        root_path=str(root),
+        profile={"root_path": str(root)},
+        capability={"state": "launch_ready", "can_launch": True},
+    )
+    db.update_worker_adapter(
+        db_path,
+        "codex",
+        workdir=str(root),
+        config={"command": "codex"},
+        supported_models=["gpt-5.4"],
+        is_default=True,
+    )
+    db.mark_worker_adapter_verification(
+        db_path,
+        "codex",
+        verified=True,
+        evidence={"tracking_mode": "native_usage", "tracking_authoritative": True},
+    )
+    task = db.create_task(
+        db_path,
+        description="Write Codex change",
+        status="Ready",
+        estimate_tokens=1000,
+        recommended_model="gpt-5.4",
+        metadata={**project_task_metadata(project), "launch_mode": "write_capable"},
+    )
+    calls = []
+
+    def runner(plan):
+        calls.append(plan)
+        return {"returncode": 0, "stdout": "", "stderr": ""}
+
+    try:
+        launch_task(db_path, task["id"], adapter_id="codex", model=None, proxy_url=None, runner=runner)
+    except TaskLaunchBlocked as exc:
+        blocked = exc.task
+    else:
+        raise AssertionError("expected non-git project to block")
+
+    assert blocked["status"] == "Blocked"
+    assert "git repository" in blocked["metadata"]["launch_blocked_reason"]
+    assert calls == []
+
+
 def test_write_capable_launch_creates_task_branch_runs_tests_and_commits(tmp_path):
     db_path = tmp_path / "harness.db"
     root = _git_project(tmp_path)
@@ -213,6 +265,26 @@ def test_write_capable_verification_failure_preserves_uncommitted_diff(tmp_path)
     assert metadata["post_run_verification"]["passed"] is False
     assert "test_sample.py" in metadata["diff_summary"]["stat"]
     assert "test_sample.py" in porcelain
+
+
+def test_write_capable_no_diff_blocks_instead_of_review(tmp_path):
+    db_path = tmp_path / "harness.db"
+    root = _git_project(tmp_path, test_command="python -m pytest")
+    task = _verified_task(db_path, root, test_command="python -m pytest")
+
+    def runner(plan):
+        _record_worker_usage(db_path, plan)
+        return {"returncode": 0, "stdout": "no changes", "stderr": ""}
+
+    launch_task(db_path, task["id"], adapter_id="opencode", model=None, proxy_url=None, runner=runner)
+    run = _wait_for_worker_run(db_path, task["id"], "failed")
+    blocked = db.get_task(db_path, task["id"])
+
+    assert blocked["status"] == "Blocked"
+    assert blocked["actual_tokens"] == 15
+    assert blocked["metadata"]["launch_blocked_reason"] == "Worker completed but produced no code changes."
+    assert blocked["metadata"]["diff_summary"]["has_changes"] is False
+    assert run["error_message"] == "Worker completed but produced no code changes."
 
 
 def test_pr_capability_detection_handles_missing_github_remote(tmp_path):

@@ -9,9 +9,11 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from agile_ai_htb.adapter_readiness import evaluate_adapter_readiness
 from agile_ai_htb.native_usage import token_usage_components
+from agile_ai_htb.worker_model_allowlist import SEEDED_WORKER_ADAPTER_MODELS
 
 SCHEMA = """
 create table if not exists sessions (
@@ -196,7 +198,7 @@ WORKER_ADAPTER_PRESETS = [
         "kind": "codex",
         "name": "Codex",
         "config": {"verification_template": ["codex", "--prompt", "{prompt}"], "launch_template": ["codex"]},
-        "supported_models": ["gpt-5.1-codex", "openai/gpt-4.1-mini"],
+        "supported_models": ["gpt-5.4", "gpt-5.4-mini", "5.3-codex-spark", "gpt-5.5"],
     },
     {
         "id": "opencode",
@@ -208,13 +210,6 @@ WORKER_ADAPTER_PRESETS = [
             "launch_timeout_seconds": 600,
         },
         "supported_models": ["opencode/gpt-5.1", "gpt-5.1-codex"],
-    },
-    {
-        "id": "hermes",
-        "kind": "hermes",
-        "name": "Hermes",
-        "config": {"verification_template": ["hermes", "--prompt", "{prompt}"], "launch_template": ["hermes"]},
-        "supported_models": ["anthropic/claude-sonnet-4", "openai/gpt-5.1"],
     },
 ]
 
@@ -394,6 +389,7 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
 
 def _seed_worker_adapters(conn: sqlite3.Connection) -> None:
     now = _now_iso()
+    conn.execute("delete from worker_adapters where id = ?", ("hermes",))
     for preset in WORKER_ADAPTER_PRESETS:
         conn.execute(
             """
@@ -796,8 +792,8 @@ def task_is_archived(task: dict[str, Any]) -> bool:
 
 def archive_task(path: Path | str, task_id: str) -> dict[str, Any]:
     task = get_task(path, task_id)
-    if task.get("status") not in {"Done", "Blocked"}:
-        raise ValueError("Only Done or Blocked tasks can be archived.")
+    if task.get("status") not in {"Done", "Blocked", "Estimated"}:
+        raise ValueError("Only Done, Blocked, or Estimated tasks can be archived or dismissed.")
     metadata = {**task.get("metadata", {})}
     if metadata.get("archived_at"):
         return task
@@ -1511,15 +1507,58 @@ def set_token_budget_settings(
     daily_cap_tokens: int,
     session_cap_tokens: int,
 ) -> dict[str, Any]:
-    return set_portal_setting(
-        path,
-        "token_budget",
+    existing = dict(get_token_budget_settings(path))
+    existing.update(
         {
             "daily_cap_tokens": int(daily_cap_tokens),
             "session_cap_tokens": int(session_cap_tokens),
             "confirmed": True,
-        },
+        }
     )
+    return set_portal_setting(
+        path,
+        "token_budget",
+        existing,
+    )
+
+
+def reset_daily_budget_counter(path: Path | str, *, reset_at: str | None = None) -> dict[str, Any]:
+    reset_at_iso = _normalize_utc_iso(reset_at or _now_iso())
+
+    def update(current: dict[str, Any]) -> dict[str, Any]:
+        updated = dict(current or {})
+        updated["daily_usage_reset_at"] = reset_at_iso
+        return updated
+
+    return update_portal_setting(path, "token_budget", {}, update)
+
+
+def current_day_start_iso(timezone: str, *, now: datetime | None = None) -> str:
+    if timezone == "local":
+        current = (now or datetime.now().astimezone()).astimezone()
+    else:
+        try:
+            zone = ZoneInfo(timezone)
+        except Exception:
+            zone = UTC
+        current = (now or datetime.now(zone)).astimezone(zone)
+    start = current.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start.astimezone(UTC).isoformat()
+
+
+def effective_daily_budget_window_start(
+    path: Path | str,
+    *,
+    timezone: str = "local",
+    now: datetime | None = None,
+) -> str:
+    day_start = _parse_iso_datetime(current_day_start_iso(timezone, now=now))
+    reset_at = _parse_iso_datetime(get_token_budget_settings(path).get("daily_usage_reset_at"))
+    if reset_at is not None and day_start is not None and reset_at >= day_start:
+        return reset_at.isoformat()
+    if day_start is None:  # defensive fallback; current_day_start_iso should always parse
+        return current_day_start_iso(timezone, now=now)
+    return day_start.isoformat()
 
 
 def get_execution_backend_status(path: Path | str, backend_id: str) -> dict[str, Any]:
@@ -2191,6 +2230,25 @@ def _from_json(value: str) -> dict[str, Any]:
 def _from_json_list(value: str) -> list[Any]:
     parsed = json.loads(value)
     return parsed if isinstance(parsed, list) else []
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _normalize_utc_iso(value: str) -> str:
+    parsed = _parse_iso_datetime(value)
+    if parsed is None:
+        return _now_iso()
+    return parsed.isoformat()
 
 
 def _now_iso() -> str:

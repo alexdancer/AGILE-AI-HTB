@@ -1,4 +1,7 @@
+from urllib.parse import unquote
+
 from agile_ai_htb import db
+from agile_ai_htb.board_automation import list_eligible_estimated_tasks
 from agile_ai_htb.project_context import project_task_metadata
 from tests.portal.helpers import PORTAL_TOKEN, _client, _connect_project, _portal_headers, _project_metadata
 
@@ -159,7 +162,9 @@ def test_board_uses_bounded_details_for_verbose_evidence(tmp_path, monkeypatch):
     stderr_tail = "BOARD_STDERR_TAIL_2099"
     stdout_tail = "BOARD_STDOUT_TAIL_2099"
     timeline_tail = "BOARD_TIMELINE_TAIL_2099"
-    review_tail = "BOARD_REVIEW_TAIL_2099"
+    review_prompt_tail = "BOARD_REVIEW_PROMPT_TAIL_2099"
+    review_summary_tail = "BOARD_REVIEW_SUMMARY_TAIL_2099"
+    review_finding_tail = "BOARD_REVIEW_FINDING_TAIL_2099"
     with _client(tmp_path) as client:
         task = db.create_task(
             database_path,
@@ -179,12 +184,12 @@ def test_board_uses_bounded_details_for_verbose_evidence(tmp_path, monkeypatch):
                 "worker_run_events": [
                     {"kind": "launch", "title": "Worker started", "detail_summary": "timeline detail " + timeline_tail}
                 ],
-                "review_prompt": "Focus on the bounded review details " + review_tail,
+                "review_prompt": "Focus on the bounded review details " + review_prompt_tail,
                 "agent_review": {
                     "status": "completed",
-                    "summary": "Review summary " + review_tail,
+                    "summary": "Review summary " + review_summary_tail,
                     "recommendation": "inspect",
-                    "findings": [{"severity": "medium", "message": "Finding " + review_tail}],
+                    "findings": [{"severity": "medium", "message": "Finding " + review_finding_tail}],
                 },
             },
         )
@@ -203,7 +208,9 @@ def test_board_uses_bounded_details_for_verbose_evidence(tmp_path, monkeypatch):
     assert card.index("<summary>Timeline</summary>") < card.index(timeline_tail)
     assert card.index("<summary>Logs</summary>") < card.index(stderr_tail)
     assert card.index("<summary>Logs</summary>") < card.index(stdout_tail)
-    assert card.index("<summary>Review</summary>") < card.index(review_tail)
+    assert card.index("<summary>Review</summary>") < card.index(review_prompt_tail)
+    assert card.index("Agent Review") < card.index(review_summary_tail)
+    assert card.index("Agent Review") < card.index(review_finding_tail)
 
 
 def test_board_launch_details_show_successful_worker_run_evidence(tmp_path, monkeypatch):
@@ -255,7 +262,7 @@ def test_board_hides_launch_details_when_no_launch_evidence_exists(tmp_path, mon
             description="Review task without launch evidence",
             status="Review",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="5.4",
             metadata=_project_metadata(database_path, tmp_path / "connected-project"),
         )
 
@@ -293,7 +300,7 @@ def test_board_review_card_shows_disposition_actions_prompt_and_agent_review(tmp
         session = db.create_session(
             database_path,
             task_description="Review UI task",
-            model="gpt-5.1-codex",
+            model="5.4",
             session_key_hash="u" * 64,
             guardrail_overrides={},
             status="completed",
@@ -303,7 +310,7 @@ def test_board_review_card_shows_disposition_actions_prompt_and_agent_review(tmp
             description="Review UI task",
             status="Review",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="5.4",
             session_id=session["id"],
             metadata={
                 **_project_metadata(database_path, tmp_path / "connected-project"),
@@ -348,7 +355,7 @@ def test_board_review_card_hides_actions_without_completed_evidence(tmp_path, mo
             description="Review task without completed evidence",
             status="Review",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="5.4",
             metadata=_project_metadata(database_path, tmp_path / "connected-project"),
         )
         response = client.get("/board", headers=_portal_headers())
@@ -401,7 +408,7 @@ def test_mark_done_keeps_task_visible_until_archived(tmp_path, monkeypatch):
         session = db.create_session(
             database_path,
             task_description="Accepted review task",
-            model="gpt-5.1-codex",
+            model="5.4",
             session_key_hash="a" * 64,
             guardrail_overrides={},
             status="completed",
@@ -411,7 +418,7 @@ def test_mark_done_keeps_task_visible_until_archived(tmp_path, monkeypatch):
             description="Accepted review task",
             status="Review",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="5.4",
             actual_tokens=4200,
             session_id=session["id"],
             metadata=project_task_metadata(project),
@@ -444,7 +451,7 @@ def test_archive_done_task_hides_from_board_and_preserves_history_evidence(tmp_p
         session = db.create_session(
             database_path,
             task_description="Archived done task",
-            model="gpt-5.1-codex",
+            model="5.4",
             session_key_hash="b" * 64,
             guardrail_overrides={},
             status="completed",
@@ -454,7 +461,7 @@ def test_archive_done_task_hides_from_board_and_preserves_history_evidence(tmp_p
             description="Archived done task",
             status="Done",
             estimate_tokens=9000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="5.4",
             actual_tokens=4500,
             session_id=session["id"],
             metadata={**project_task_metadata(project), "active_worker_run_id": "wr_DEMO_999"},
@@ -495,7 +502,7 @@ def test_archive_blocked_task_hides_from_board_and_preserves_history_evidence(tm
         session = db.create_session(
             database_path,
             task_description="Archived blocked task",
-            model="gpt-5.1-codex",
+            model="5.4",
             session_key_hash="c" * 64,
             guardrail_overrides={},
             status="completed",
@@ -505,7 +512,7 @@ def test_archive_blocked_task_hides_from_board_and_preserves_history_evidence(tm
             description="Archived blocked task",
             status="Blocked",
             estimate_tokens=7000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="5.4",
             actual_tokens=2100,
             session_id=session["id"],
             metadata={
@@ -549,6 +556,76 @@ def test_archive_blocked_task_hides_from_board_and_preserves_history_evidence(tm
     assert "Unarchive" in history.text
 
 
+def test_dismiss_estimated_task_hides_from_board_and_preserves_history_evidence(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "connected-project")
+        task = db.create_task(
+            database_path,
+            description="Dismiss estimated task",
+            status="Estimated",
+            estimate_tokens=9000,
+            recommended_model="5.4",
+            metadata={
+                **project_task_metadata(project),
+                "launch_adapter_id": "opencode",
+                "launch_model": "5.4",
+            },
+        )
+
+        initial_board = client.get(f"/projects/{project['id']}/board", headers=_portal_headers())
+        dismiss_response = client.post(
+            f"/projects/{project['id']}/tasks/{task['id']}/archive",
+            headers=_portal_headers(),
+            follow_redirects=False,
+        )
+        dismissed_board = client.get(f"/projects/{project['id']}/board", headers=_portal_headers())
+        history = client.get(f"/projects/{project['id']}/task-history?filter=archived", headers=_portal_headers())
+        dismissed = db.get_task(database_path, task["id"])
+        eligible_after_dismiss = list_eligible_estimated_tasks(database_path, project["id"])
+        unarchive_response = client.post(
+            f"/projects/{project['id']}/tasks/{task['id']}/unarchive",
+            headers=_portal_headers(),
+            follow_redirects=False,
+        )
+        restored_board = client.get(f"/projects/{project['id']}/board", headers=_portal_headers())
+        restored = db.get_task(database_path, task["id"])
+        eligible_after_restore = list_eligible_estimated_tasks(database_path, project["id"])
+
+    assert initial_board.status_code == 200
+    initial_card = _task_card(initial_board.text, task["id"])
+    assert "Dismiss estimated task" in initial_card
+    assert "Dismiss" in initial_card
+    assert dismiss_response.status_code == 303
+    assert dismiss_response.headers["location"] == f"/projects/{project['id']}/board"
+    assert dismissed["status"] == "Estimated"
+    assert dismissed["estimate_tokens"] == 9000
+    assert dismissed["recommended_model"] == "5.4"
+    assert dismissed["metadata"]["launch_adapter_id"] == "opencode"
+    assert dismissed["metadata"]["archived_at"]
+    assert eligible_after_dismiss == []
+    assert dismissed_board.status_code == 200
+    assert "Dismiss estimated task" not in dismissed_board.text
+    assert "History 1 · Archived 1" in dismissed_board.text
+    assert history.status_code == 200
+    assert "Dismiss estimated task" in history.text
+    assert "Estimated" in history.text
+    assert "Archived" in history.text
+    assert "Estimate: 9,000" in history.text
+    assert "Model: 5.4" in history.text
+    assert "Unarchive" in history.text
+    assert unarchive_response.status_code == 303
+    assert unarchive_response.headers["location"] == f"/projects/{project['id']}/task-history"
+    assert restored["status"] == "Estimated"
+    assert "archived_at" not in restored["metadata"]
+    assert restored_board.status_code == 200
+    restored_card = _task_card(restored_board.text, task["id"])
+    assert "Dismiss estimated task" in restored_card
+    assert "Dismiss" in restored_card
+    assert [task["id"] for task in eligible_after_restore] == [task["id"]]
+
+
 def test_archive_all_done_is_project_scoped_and_keeps_estimation_accuracy(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
@@ -576,7 +653,7 @@ def test_archive_all_done_is_project_scoped_and_keeps_estimation_accuracy(tmp_pa
             description="First estimated task",
             status="Estimated",
             estimate_tokens=3000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="5.4",
             metadata=project_task_metadata(first_project),
         )
         other_done = db.create_task(
@@ -680,13 +757,13 @@ def test_archive_rejects_active_non_archivable_tasks(tmp_path, monkeypatch):
     db.init_db(database_path)
     project = _connect_project(database_path, tmp_path / "connected-project")
     task_ids = []
-    for blocked_status in ["Estimated", "Running", "Review"]:
+    for blocked_status in ["Running", "Review"]:
         task = db.create_task(
             database_path,
             description=f"{blocked_status} task cannot archive",
             status=blocked_status,
             estimate_tokens=9000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="5.4",
             metadata=project_task_metadata(project),
         )
         task_ids.append(task["id"])
@@ -704,6 +781,6 @@ def test_archive_rejects_active_non_archivable_tasks(tmp_path, monkeypatch):
     for response, task_id in zip(responses, task_ids):
         assert response.status_code == 303
         assert response.headers["location"].startswith(f"/projects/{project['id']}/board?error=")
-        assert "Only%20Done%20or%20Blocked%20tasks%20can%20be%20archived" in response.headers["location"]
+        assert "Only Done, Blocked, or Estimated tasks can be archived or dismissed." in unquote(response.headers["location"])
         assert not db.get_task(database_path, task_id)["metadata"].get("archived_at")
 

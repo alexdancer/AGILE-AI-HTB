@@ -64,7 +64,7 @@ def test_list_alarms_filters_by_session_type_severity_and_resolved_state(tmp_pat
     assert filtered.json()["alarms"][0]["resolved_at"] is None
 
 
-def test_resolve_alarm_records_action_history_and_keeps_alarm_visible(tmp_path):
+def test_resolve_alarm_records_action_history_and_keeps_alarm_auditable(tmp_path):
     with _client(tmp_path) as client:
         session_id = _start_session(client)
         record_alarm(
@@ -84,6 +84,7 @@ def test_resolve_alarm_records_action_history_and_keeps_alarm_visible(tmp_path):
             json={"action": "raise_budget", "payload": {"session_cap_tokens": 300_000}},
         )
         listed = client.get("/alarms", params={"resolved": True})
+        open_list = client.get("/alarms", params={"resolved": False})
 
     assert resolved.status_code == 200
     assert resolved.json()["alarm"]["id"] == "alarm-resolve-1"
@@ -91,6 +92,7 @@ def test_resolve_alarm_records_action_history_and_keeps_alarm_visible(tmp_path):
     assert resolved.json()["action"]["action"] == "raise_budget"
     assert resolved.json()["action"]["payload"] == {"session_cap_tokens": 300_000}
     assert [alarm["id"] for alarm in listed.json()["alarms"]] == ["alarm-resolve-1"]
+    assert [alarm["id"] for alarm in open_list.json()["alarms"]] == []
     session = get_session(tmp_path / "harness.db", session_id)
     assert session["guardrail_overrides"]["budget"]["session_cap_tokens"] == 300_000
 
@@ -147,3 +149,27 @@ def test_resolve_alarm_rejects_unknown_action_and_missing_alarm(tmp_path):
 
     assert bad_action.status_code == 422
     assert missing.status_code == 404
+
+
+def test_resolve_alarm_preserves_validation_errors_for_empty_or_malformed_json(tmp_path):
+    with _client(tmp_path) as client:
+        empty_body = client.post("/alarms/missing/resolve", headers={"content-type": "application/json"})
+        malformed_json = client.post(
+            "/alarms/missing/resolve",
+            content="{",
+            headers={"content-type": "application/json"},
+        )
+
+    assert empty_body.status_code == 422
+    assert malformed_json.status_code == 422
+
+
+def test_resolve_alarm_openapi_documents_json_request_body(tmp_path):
+    with _client(tmp_path) as client:
+        schema = client.get("/openapi.json").json()
+
+    operation = schema["paths"]["/alarms/{alarm_id}/resolve"]["post"]
+    request_body = operation["requestBody"]
+    assert "application/json" in request_body["content"]
+    assert "application/x-www-form-urlencoded" in request_body["content"]
+    assert request_body["content"]["application/json"]["schema"]["required"] == ["action"]

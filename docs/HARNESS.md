@@ -34,7 +34,7 @@ AGILE-AI-HTB uses a deployable control-plane / execution-plane architecture. The
          │                                │
     ┌────┴────┐                      ┌────┴────┐
     │  AGENT   │                      │  USER   │
-    │ (Hermes, │                      │ Portal  │
+    │ (OpenCode│                      │ Portal  │
     │  Claude, │                      │   UI    │
     │  Codex)  │                      └─────────┘
     └─────────┘
@@ -55,7 +55,7 @@ The Harness separates coordination from execution:
 | Concept | Responsibility | First target |
 |---|---|---|
 | **Control Plane** | Portal, AGILE Board, budgets, Task Breakdown Agent, Estimator LLM, Proxy Engine, token accounting, reports | Local Docker/FastAPI app; hosted target stays platform-neutral |
-| **Local Runner** | Runs near the user's local repo, launches local Claude Code/Codex/OpenCode/Hermes adapters, sends model traffic through the Harness proxy | Built into all-in-one local mode first; split/tunnel runner later |
+| **Local Runner** | Runs near the user's local repo, launches local Claude Code/Codex/OpenCode adapters through their verified tracking mode; only `proxy_governed` launches send model traffic through the Harness proxy | Built into all-in-one local mode first; split/tunnel runner later |
 | **Hosted Workspace/Sandbox** | Clones Git repos for hosted analysis and later cloud-side Worker execution | Future launch backend; analysis-only first |
 | **Analysis-only backend** | Allows task breakdown and estimation without Worker launch | Available for hosted Git URL workspaces |
 
@@ -115,7 +115,7 @@ htb check
 uv run python scripts/local_runner_smoke.py
 ```
 
-The smoke intentionally does not require provider secrets. It records synthetic `task_execution` token rows through the same SQLite ledger APIs used by the proxy path, so Launch Guardrails still prove that session accounting, budget override metadata, overrun alarms, task branch creation, test-command gating, diff summary capture, and Harness-owned commit persistence all work. For a real Worker Adapter verification, use the Portal Worker Setup flow so OpenCode makes the sentinel model call through `/v1/chat/completions` and the Harness records adapter-verification token usage.
+The smoke intentionally does not require provider secrets. It records synthetic `task_execution` token rows through the same SQLite ledger APIs used by the proxy path, so Launch Guardrails still prove that session accounting, budget override metadata, overrun alarms, task branch creation, test-command gating, diff summary capture, and Harness-owned commit persistence all work. For a real Worker Adapter verification, use the Portal Worker Setup flow so the selected adapter proves its configured tracking mode: `proxy_governed` through `/v1/chat/completions`, or `native_usage` through trustworthy CLI-emitted usage evidence.
 
 Later modes preserve the same Execution Backend contract:
 
@@ -127,7 +127,7 @@ Later modes preserve the same Execution Backend contract:
 
 The local-first implementation must keep the code boundary as an `ExecutionBackend` so split runner, tunnel runner, and hosted sandbox can be added without rewriting the AGILE Board.
 
-The first verified local Worker Adapter target is **OpenCode** through native usage import. Claude Code, Codex, and Hermes remain first-class adapter presets in the Portal, but Launch Guardrails keep them non-launchable until adapter verification proves budget-authoritative token tracking. Adapter verification is not an install-only check: it must run a tiny sentinel prompt through the real Worker Adapter CLI and prove token usage through one verified tracking mode. Public README/getting-started docs should describe the verified native-usage path only; `proxy_governed` stays architecture/internal until a stock proxy-capable adapter is proven end-to-end:
+The first verified local Worker Adapter target is **OpenCode** through native usage import. Claude Code and Codex remain adapter presets in the Portal, but Launch Guardrails keep them non-launchable until adapter verification proves budget-authoritative token tracking. Adapter verification is not an install-only check: it must run a tiny sentinel prompt through the real Worker Adapter CLI and prove token usage through one verified tracking mode. Public README/getting-started docs should describe the verified native-usage path only; `proxy_governed` stays architecture/internal until a stock proxy-capable adapter is proven end-to-end:
 
 - `proxy_governed` — advanced/custom path where Worker model traffic routes through the Harness Proxy with a session-scoped Harness key and records token rows under `adapter_verification` orchestration spend.
 - `native_usage` — the Worker CLI emits trustworthy machine-readable native token usage evidence that the Harness records under `adapter_verification` orchestration spend. The evidence must include the selected model, prompt/input tokens, completion/output tokens, total tokens, exit status, and a command/session identifier or equivalent evidence binding usage to the launched Worker Run. Human-readable logs, approximate usage, missing model identity, or usage that cannot be bound to the run is not authoritative and leaves the adapter `observed_only`.
@@ -245,13 +245,13 @@ Launch guardrails run before a Task can move from **Estimated** to **Running** o
 
 | Launch guardrail | Requirement | Failure behavior |
 |---|---|---|
-| Worker Adapter configured | User selected and configured Claude Code, Codex, OpenCode, Hermes, or another supported adapter | Launch is guardrail-blocked |
+| Worker Adapter configured | User selected and configured Claude Code, Codex, OpenCode, or another supported adapter | Launch is guardrail-blocked |
 | Token tracking verified | A setup test proves the adapter has a budget-authoritative tracking mode: `proxy_governed` token rows through `/v1/chat/completions` or trustworthy `native_usage` evidence from the CLI | Launch is guardrail-blocked |
 | Session key wiring present | Required only for `proxy_governed` adapters so the adapter can receive the harness URL and session-scoped API key | Launch is guardrail-blocked for proxy-governed launches |
 | Working directory valid | Adapter can start in the selected project directory | Task remains Estimated or Blocked |
 | Model allowed | Selected/recommended model is allowed by config and compatible with the adapter | User must pick another model or adjust config |
 
-The setup test is intentionally synthetic but must exercise the real adapter launch path: the harness creates a small disposable Session, launches the configured Worker Adapter with one harmless prompt, then checks that `prompt_tokens`, `completion_tokens`, and `total_tokens` were recorded from the verified tracking mode. A direct proxy call is not enough; the point is to prove Claude Code, Codex, OpenCode, Hermes, or the custom command is actually launchable under Harness observation. If no budget-authoritative usage appears, the adapter is **not launchable** from the AGILE Board for governed Tasks.
+The setup test is intentionally synthetic but must exercise the real adapter launch path: the harness creates a small disposable Session, launches the configured Worker Adapter with one harmless prompt, then checks that `prompt_tokens`, `completion_tokens`, and `total_tokens` were recorded from the verified tracking mode. A direct proxy call is not enough; the point is to prove Claude Code, Codex, OpenCode, or the custom command is actually launchable under Harness observation. If no budget-authoritative usage appears, the adapter is **not launchable** from the AGILE Board for governed Tasks.
 
 Adapter verification prompt:
 
@@ -378,7 +378,7 @@ The AGILE Board is the user-facing Kanban-style orchestration surface for coding
 - Task description
 - Estimated token budget (user-overridable)
 - Recommended model (task-complexity driven, user-overridable)
-- Selected Worker Adapter (Claude Code, Codex, OpenCode, Hermes, or custom)
+- Selected Worker Adapter (Claude Code, Codex, OpenCode, or custom)
 - Per-task Worker Adapter override when the default is not desired
 - Launch guardrail status, especially whether token tracking has been verified
 - Actual token cost + estimate vs. actual delta (populated on completion)
@@ -501,7 +501,7 @@ Every alarm in the portal includes action buttons. The harness polls for the hum
 
 ## Worker Adapter Interface (Swappable)
 
-The harness is Worker-agnostic only after a Worker Adapter proves budget-authoritative tracking. A Worker Adapter is the launch/control integration for one coding agent: Claude Code, Codex, OpenCode, Hermes, or a custom command. The model recommendation is separate from the Worker Adapter.
+The harness is Worker-agnostic only after a Worker Adapter proves budget-authoritative tracking. A Worker Adapter is the launch/control integration for one coding agent: Claude Code, Codex, OpenCode, or a custom command. The model recommendation is separate from the Worker Adapter.
 
 An adapter is launchable from the AGILE Board only when setup verification proves token tracking works through either Harness Proxy traffic or trustworthy native CLI usage evidence. Observed-only logs are diagnostic, not launch-ready.
 
@@ -510,7 +510,7 @@ An adapter is launchable from the AGILE Board only when setup verification prove
 For proxy-governed sessions, the agent is pointed at the local harness URL instead of directly at the LLM provider. Native-usage adapters keep their own CLI auth/config and report trustworthy usage after the run.
 
 ```bash
-# Hermes points at the harness
+# Worker CLI points at the harness
 OPENAI_BASE_URL=http://localhost:8000/v1
 OPENAI_API_KEY=***  # harness-generated per-session key
 ```
@@ -525,7 +525,7 @@ OPENAI_API_KEY=***  # harness-generated per-session key
 ```python
 # Inside the harness FastAPI app
 subprocess.Popen(
-    ["hermes", "--prompt", task.description],
+    ["opencode", "run", task.description],
     env={
         "OPENAI_BASE_URL": "http://localhost:8000/v1",
         "OPENAI_API_KEY": f"sk-harness-{session.id}",
@@ -542,7 +542,7 @@ subprocess.Popen(
 On every API call from the agent:
 
 ```
-Hermes: POST /v1/chat/completions
+Worker CLI: POST /v1/chat/completions
   Header: Authorization: Bearer sk-harness-a1b2c3
   Body: {model: "claude-haiku", messages: [...], tools: [...], max_tokens: 4096}
 
@@ -590,7 +590,7 @@ The agent cannot call those tools because they don't appear in the API response.
 
 | Plane | Endpoint | Caller | Frequency |
 |---|---|---|---|
-| **Data plane** | `POST /v1/chat/completions` | The agent (Hermes) | Every API call — high volume, streaming |
+| **Data plane** | `POST /v1/chat/completions` | The Worker agent | Every API call — high volume, streaming |
 | **Control plane** | `POST /session/start`, `GET /dashboard`, etc. | The portal (user) | On user action — low volume, request/response |
 
 Both run in the same FastAPI process. The data plane is the governance hot path; the control plane serves the user experience.

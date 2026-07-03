@@ -91,7 +91,7 @@
       {% set launch_model = task.metadata.launch_model %}
       {% set display_model = launch_model or task.recommended_model %}
       {% set has_launch_returncode = task.metadata.launch_returncode is defined and task.metadata.launch_returncode is not none %}
-      {% set has_launch_details = task.metadata.launch_adapter_id or task.metadata.launch_model or task.metadata.tracking_mode or task.metadata.usage_source or has_launch_returncode or task.metadata.worker_run_status or task.metadata.active_worker_run_id or task.metadata.workdir_evidence or task.metadata.launch_error or task.metadata.last_launch_failure or task.metadata.launch_blocked_reason or task.metadata.launch_stdout %}
+      {% set has_launch_details = task.metadata.launch_adapter_id or task.metadata.launch_model or task.metadata.tracking_mode or task.metadata.usage_source or has_launch_returncode or task.metadata.worker_run_status or task.metadata.active_worker_run_id or task.metadata.workdir_evidence or task.metadata.launch_error or task.metadata.last_launch_failure or task.metadata.launch_blocked_reason or task.metadata.launch_stdout or task.metadata.launch_diagnostic %}
       {% set has_blocked_details = column == 'Blocked' and (task.metadata.blocked_reason or task.metadata.requires_manual_estimate) %}
       {% set has_review_details = task.metadata.review_prompt or task.metadata.agent_review %}
       {% set agent_review = task.metadata.agent_review %}
@@ -146,10 +146,41 @@
         <button type="submit">Archive</button>
       </form>
       {% endif %}
+      {% if active_project and column == 'Estimated' %}
+      <form method="post" action="/projects/{{ active_project.id }}/tasks/{{ task.id }}/archive" style="margin-top:8px">
+        <button type="submit">Dismiss</button>
+      </form>
+      {% endif %}
       {% if has_launch_details %}<p class="muted mono compact-text lines-2">Launch diagnostics recorded · expand Details</p>{% endif %}
+      {% if task.metadata.launch_diagnostic %}
+      <section class="notice warning" style="margin-top:8px">
+        <strong>{{ task.metadata.launch_diagnostic.summary }}</strong>
+        {% if task.metadata.launch_diagnostic.next_action %}<p>{{ task.metadata.launch_diagnostic.next_action }}</p>{% endif %}
+        <p class="muted mono compact-text lines-2">
+          {% if task.metadata.launch_adapter_id %}Adapter: {{ task.metadata.launch_adapter_id }}{% endif %}
+          {% if task.metadata.launch_model %} · Model: {{ task.metadata.launch_model }}{% endif %}
+          {% if task.metadata.launch_project_root %} · Project: {{ task.metadata.launch_project_root }}{% endif %}
+        </p>
+        {% if task.metadata.launch_diagnostic.setup_href %}<p><a href="{{ task.metadata.launch_diagnostic.setup_href }}">Open Worker Setup</a></p>{% endif %}
+      </section>
+      {% endif %}
       {% if task.metadata.worker_token_components and task.metadata.worker_token_components.available %}<p class="muted mono compact-text lines-2">Actual token components recorded · expand Details</p>{% endif %}
       {% if agent_review %}
-      <p class="muted mono compact-text lines-2">Agent Review {{ agent_review.status }}{% if agent_review.recommendation %} · {{ agent_review.recommendation }}{% endif %}{% if agent_review.token_totals and agent_review.token_totals.total_tokens is defined %} · {{ "{:,}".format(agent_review.token_totals.total_tokens) }} tokens{% endif %}{% if agent_review.model %} · {{ agent_review.model }}{% endif %}{% if agent_review.review_session_id %} · <a href="/sessions/{{ agent_review.review_session_id }}">review session {{ agent_review.review_session_id }}</a>{% endif %}</p>
+      <div class="agent-review-card compact">
+        <div class="agent-review-head">
+          <span class="agent-review-title">Agent Review</span>
+          <span class="agent-review-status">
+            <span class="pill {% if agent_review.status == 'completed' %}green{% elif agent_review.status == 'failed' %}red{% else %}yellow{% endif %}">{{ agent_review.status }}</span>
+            {% if agent_review.recommendation %}<span class="pill {% if agent_review.recommendation == 'approve' %}green{% elif agent_review.recommendation == 'block' %}red{% else %}yellow{% endif %}">{{ agent_review.recommendation }}</span>{% endif %}
+          </span>
+        </div>
+        {% if agent_review.summary %}<p class="agent-review-summary compact-text lines-3">{{ agent_review.summary }}</p>{% endif %}
+        <div class="agent-review-meta">
+          {% if agent_review.token_totals and agent_review.token_totals.total_tokens is defined %}<span>{{ "{:,}".format(agent_review.token_totals.total_tokens) }} tokens</span>{% endif %}
+          {% if agent_review.model %}<span>{{ agent_review.model }}</span>{% endif %}
+          {% if agent_review.review_session_id %}<a href="/sessions/{{ agent_review.review_session_id }}">review session</a>{% endif %}
+        </div>
+      </div>
       {% endif %}
       {% if has_blocked_details %}<p class="muted mono compact-text lines-2">Blocked/manual details recorded · expand Details</p>{% endif %}
       {% if column == 'Review' %}
@@ -231,6 +262,10 @@
           <p class="section-label mt-12">Last launch failure</p>
           <pre class="mono raw-evidence">returncode={{ task.metadata.last_launch_failure.returncode }}</pre>
           {% endif %}
+          {% if task.metadata.launch_diagnostic %}
+          <p class="section-label mt-12">Actionable diagnostic</p>
+          <pre class="mono raw-evidence">{{ task.metadata.launch_diagnostic }}</pre>
+          {% endif %}
         </details>
         {% endif %}
 
@@ -270,17 +305,34 @@
           <pre class="mono raw-evidence">{{ task.metadata.review_prompt }}</pre>
           {% endif %}
           {% if task.metadata.agent_review %}
-          <p class="muted"><strong>Agent Review</strong> · {{ task.metadata.agent_review.status }} · {{ task.metadata.agent_review.recommendation }}</p>
-          {% if task.metadata.agent_review.review_session_id %}<p class="muted mono">Review session: <a href="/sessions/{{ task.metadata.agent_review.review_session_id }}">{{ task.metadata.agent_review.review_session_id }}</a></p>{% endif %}
-          {% if task.metadata.agent_review.model %}<p class="muted mono">Control-plane model: {{ task.metadata.agent_review.model }}</p>{% endif %}
-          {% if task.metadata.agent_review.token_totals and task.metadata.agent_review.token_totals.total_tokens is defined %}<p class="muted mono">Review tokens: {{ "{:,}".format(task.metadata.agent_review.token_totals.total_tokens) }}</p>{% endif %}
-          <pre class="mono raw-evidence">{{ task.metadata.agent_review.summary }}</pre>
-          {% if task.metadata.agent_review.findings %}
-          <p class="section-label mt-12">Findings</p>
-          {% for finding in task.metadata.agent_review.findings %}
-          <pre class="mono raw-evidence">{{ finding.severity }}: {{ finding.message }}{% if finding.path %} {{ finding.path }}{% if finding.line %}:{{ finding.line }}{% endif %}{% endif %}</pre>
-          {% endfor %}
-          {% endif %}
+          <article class="agent-review-card">
+            <div class="agent-review-head">
+              <span class="agent-review-title">Agent Review</span>
+              <span class="agent-review-status">
+                <span class="pill {% if task.metadata.agent_review.status == 'completed' %}green{% elif task.metadata.agent_review.status == 'failed' %}red{% else %}yellow{% endif %}">{{ task.metadata.agent_review.status }}</span>
+                {% if task.metadata.agent_review.recommendation %}<span class="pill {% if task.metadata.agent_review.recommendation == 'approve' %}green{% elif task.metadata.agent_review.recommendation == 'block' %}red{% else %}yellow{% endif %}">{{ task.metadata.agent_review.recommendation }}</span>{% endif %}
+              </span>
+            </div>
+            {% if task.metadata.agent_review.summary %}<p class="agent-review-summary">{{ task.metadata.agent_review.summary }}</p>{% endif %}
+            <div class="agent-review-meta">
+              {% if task.metadata.agent_review.review_session_id %}<span>Review session: <a href="/sessions/{{ task.metadata.agent_review.review_session_id }}">{{ task.metadata.agent_review.review_session_id }}</a></span>{% endif %}
+              {% if task.metadata.agent_review.model %}<span>Model: {{ task.metadata.agent_review.model }}</span>{% endif %}
+              {% if task.metadata.agent_review.token_totals and task.metadata.agent_review.token_totals.total_tokens is defined %}<span>{{ "{:,}".format(task.metadata.agent_review.token_totals.total_tokens) }} review tokens</span>{% endif %}
+            </div>
+            {% if task.metadata.agent_review.findings %}
+            <div class="review-findings">
+              {% for finding in task.metadata.agent_review.findings %}
+              <div class="review-finding severity-{{ (finding.severity or 'info')|lower }}">
+                <div class="review-finding-head">
+                  <span class="pill {% if finding.severity in ['critical', 'high'] %}red{% elif finding.severity == 'medium' %}yellow{% elif finding.severity == 'low' %}green{% else %}blue{% endif %}">{{ finding.severity or 'info' }}</span>
+                  {% if finding.path %}<span class="review-finding-path">{{ finding.path }}{% if finding.line %}:{{ finding.line }}{% endif %}</span>{% endif %}
+                </div>
+                <div>{{ finding.message }}</div>
+              </div>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </article>
           {% endif %}
         </details>
         {% endif %}

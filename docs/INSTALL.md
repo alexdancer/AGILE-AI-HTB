@@ -48,7 +48,7 @@ AGILE_AI_HTB_INSTALL_SOURCE="git+https://github.com/alexdancer/AI-Harness-Token-
   sh install.sh
 ```
 
-The installer does not ask for or store API keys, portal tokens, Worker credentials, or native CLI auth. Configure the Control Plane after login at `/settings/control-plane`; configure native Worker CLIs such as OpenCode, Claude Code, Codex, and Hermes separately.
+The installer does not ask for or store API keys, portal tokens, Worker credentials, or native CLI auth. Configure the Control Plane after login at `/settings/control-plane`; configure native Worker CLIs such as OpenCode, Claude Code, and Codex separately.
 
 ## Updating AGILE-AI-HTB
 

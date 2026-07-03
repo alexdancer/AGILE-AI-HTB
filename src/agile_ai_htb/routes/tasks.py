@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
-from zoneinfo import ZoneInfo
-
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -137,7 +136,10 @@ async def launch_task_endpoint(task_id: str, request: Request):
             estimate_tokens=payload.estimate_tokens,
             budget_override=payload.budget_override,
             native_budget_acknowledged=payload.native_budget_acknowledged,
-            budget_since=_current_day_start_iso(request.app.state.settings.timezone),
+            budget_since=db.effective_daily_budget_window_start(
+                database_path,
+                timezone=request.app.state.settings.timezone,
+            ),
             runner=runner,
         )
     except KeyError as exc:
@@ -491,9 +493,16 @@ async def accept_task_breakdown(breakdown_id: str, request: Request) -> Redirect
                 "task_breakdown_count": len(accepted_candidates),
                 "task_breakdown_kind": candidate["kind"],
                 "task_breakdown_title": candidate["title"],
+                "task_breakdown_objective": candidate["objective"],
                 "task_breakdown_prompt": candidate["prompt"],
                 "task_breakdown_acceptance_criteria": candidate["acceptance_criteria"],
                 "task_breakdown_constraints": candidate["constraints"],
+                "task_breakdown_proof": candidate["proof"],
+                "task_breakdown_dependencies": candidate["dependencies"],
+                "task_breakdown_likely_entry_points": candidate["likely_entry_points"],
+                "task_breakdown_execution_mode": candidate["execution_mode"],
+                "task_breakdown_hitl_reason": candidate["hitl_reason"],
+                "task_breakdown_policy_evidence": _candidate_policy_evidence(candidate),
                 "task_breakdown_global_contract_summary": global_contract_summary,
                 "task_breakdown_global_constraints": global_constraints,
                 "task_breakdown_verification": verification,
@@ -553,9 +562,18 @@ async def manual_task_breakdown_candidate(
     candidate = {
         "kind": "implementation",
         "title": (title or "Manual task from source").strip(),
+        "objective": (prompt or breakdown["source_text"]).strip(),
         "prompt": (prompt or breakdown["source_text"]).strip(),
         "acceptance_criteria": acceptance_criteria.strip(),
         "constraints": [],
+        "proof": acceptance_criteria.strip() or "Operator-provided manual candidate requires manual verification.",
+        "why_this_task_exists": "Operator created this manual candidate from the original source.",
+        "why_not_smaller": "Manual recovery keeps the source as one reviewed slice until the operator refines it.",
+        "why_not_larger": "This manual candidate is scoped to the original Task Breakdown source.",
+        "dependencies": [],
+        "likely_entry_points": [],
+        "execution_mode": "HITL",
+        "hitl_reason": "Manual recovery candidate requires operator review.",
         "human_in_loop": True,
     }
     db.update_task_breakdown(
@@ -617,6 +635,7 @@ async def _task_breakdown_agent_updates(
             intake_metadata=intake_metadata,
             structure_hints=_markdown_task_items(description),
             repo_context=repo_context,
+            timeout_seconds=settings.task_breakdown_timeout_seconds,
         )
         session = db.create_session(
             database_path,
@@ -722,12 +741,25 @@ def _accepted_breakdown_candidates(breakdown: dict[str, Any], form: Any) -> list
         title = str(form.get(f"title_{index}") or original.get("title") or "").strip()
         prompt = str(form.get(f"prompt_{index}") or original.get("prompt") or "").strip()
         kind = str(form.get(f"kind_{index}") or original.get("kind") or "implementation").strip()
+        objective = _form_or_original_text(form, original, "objective", index, fallback=prompt)
+        proof = _form_or_original_text(
+            form,
+            original,
+            "proof",
+            index,
+            fallback=str(original.get("acceptance_criteria") or "").strip(),
+        )
+        execution_mode = _candidate_execution_mode(form, original, index)
+        hitl_reason = _form_or_original_text(form, original, "hitl_reason", index, fallback="")
+        if execution_mode == "AFK":
+            hitl_reason = ""
         if not title or not prompt:
             continue
         accepted.append(
             {
                 "kind": kind,
                 "title": title,
+                "objective": objective,
                 "prompt": prompt,
                 "acceptance_criteria": str(
                     form.get(f"acceptance_criteria_{index}")
@@ -737,12 +769,45 @@ def _accepted_breakdown_candidates(breakdown: dict[str, Any], form: Any) -> list
                 "constraints": _textarea_lines(
                     str(form.get(f"constraints_{index}") or "\n".join(original.get("constraints", [])))
                 ),
-                "human_in_loop": True,
+                "proof": proof,
+                "why_this_task_exists": _form_or_original_text(
+                    form,
+                    original,
+                    "why_this_task_exists",
+                    index,
+                    fallback=f"{title} is a distinct board-card candidate from the source contract.",
+                ),
+                "why_not_smaller": _form_or_original_text(
+                    form,
+                    original,
+                    "why_not_smaller",
+                    index,
+                    fallback="Smaller substeps would not be independently useful and verifiable.",
+                ),
+                "why_not_larger": _form_or_original_text(
+                    form,
+                    original,
+                    "why_not_larger",
+                    index,
+                    fallback="Merging this with adjacent work would broaden the Worker prompt and weaken reviewability.",
+                ),
+                "dependencies": _textarea_lines(
+                    str(form.get(f"dependencies_{index}") or "\n".join(original.get("dependencies", [])))
+                ),
+                "likely_entry_points": _textarea_lines(
+                    str(
+                        form.get(f"likely_entry_points_{index}")
+                        or "\n".join(original.get("likely_entry_points", []))
+                    )
+                ),
+                "execution_mode": execution_mode,
+                "hitl_reason": hitl_reason,
+                "human_in_loop": execution_mode == "HITL",
             }
         )
     if not accepted:
         raise HTTPException(status_code=422, detail="Select at least one task candidate to accept.")
-    validate_breakdown_result(
+    result = validate_breakdown_result(
         {
             "decision": breakdown.get("decision") if breakdown.get("decision") in {"single_task", "proposed_task_breakdown"} else "proposed_task_breakdown",
             "candidates": accepted,
@@ -757,7 +822,40 @@ def _accepted_breakdown_candidates(breakdown: dict[str, Any], form: Any) -> list
             "source": "llm",
         }
     )
-    return accepted
+    return [candidate.as_dict() for candidate in result.candidates]
+
+
+def _form_or_original_text(
+    form: Any, original: dict[str, Any], field: str, index: int, *, fallback: str
+) -> str:
+    value = form.get(f"{field}_{index}")
+    if value is None:
+        value = original.get(field)
+    text = str(value or "").strip()
+    return text or fallback.strip()
+
+
+def _candidate_execution_mode(form: Any, original: dict[str, Any], index: int) -> str:
+    value = form.get(f"execution_mode_{index}")
+    if value is None:
+        value = original.get("execution_mode")
+    if value is None or value == "":
+        return "AFK" if original.get("human_in_loop") is False else "HITL"
+    return str(value).strip().upper()
+
+
+def _candidate_policy_evidence(candidate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "objective": candidate.get("objective", ""),
+        "proof": candidate.get("proof", ""),
+        "why_this_task_exists": candidate.get("why_this_task_exists", ""),
+        "why_not_smaller": candidate.get("why_not_smaller", ""),
+        "why_not_larger": candidate.get("why_not_larger", ""),
+        "dependencies": list(candidate.get("dependencies", [])),
+        "likely_entry_points": list(candidate.get("likely_entry_points", [])),
+        "execution_mode": candidate.get("execution_mode", ""),
+        "hitl_reason": candidate.get("hitl_reason", ""),
+    }
 
 
 def _breakdown_candidate_description(
@@ -768,7 +866,10 @@ def _breakdown_candidate_description(
     *,
     source_text: str,
 ) -> str:
-    sections = [candidate["title"], "", candidate["prompt"]]
+    sections = [candidate["title"]]
+    if candidate.get("objective"):
+        sections.extend(["", "Objective:", candidate["objective"]])
+    sections.extend(["", "Task instructions:", candidate["prompt"]])
     if global_contract_summary:
         sections.extend(["", "Global contract summary:", global_contract_summary])
     if candidate.get("kind") == "acceptance_verification":
@@ -789,8 +890,20 @@ def _breakdown_candidate_description(
                 "Implement only this slice. Use the global contract summary and constraints as boundaries; do not rerun or re-solve the full source task.",
             ]
         )
+    if candidate.get("dependencies"):
+        sections.extend(["", "Dependencies:", *[f"- {item}" for item in candidate["dependencies"]]])
+    if candidate.get("likely_entry_points"):
+        sections.extend(
+            ["", "Likely repo entry points:", *[f"- {item}" for item in candidate["likely_entry_points"]]]
+        )
     if candidate.get("acceptance_criteria"):
         sections.extend(["", "Acceptance criteria:", candidate["acceptance_criteria"]])
+    if candidate.get("proof"):
+        sections.extend(["", "Candidate proof:", candidate["proof"]])
+    if candidate.get("execution_mode"):
+        sections.extend(["", "Execution mode:", candidate["execution_mode"]])
+        if candidate.get("execution_mode") == "HITL" and candidate.get("hitl_reason"):
+            sections.extend(["HITL reason:", candidate["hitl_reason"]])
     combined_constraints = [*global_constraints, *candidate.get("constraints", [])]
     if combined_constraints:
         sections.extend(["", "Constraints:", *[f"- {item}" for item in combined_constraints]])
@@ -954,7 +1067,8 @@ async def _run_agent_review(request: Request, task: dict[str, Any], prompt: str 
                     "You are the AGILE-AI-HTB control-plane reviewer. Review completed Worker Run evidence. "
                     "Return compact JSON with keys summary, recommendation, findings. "
                     "recommendation must be approve, needs_changes, or block. findings is an array of objects "
-                    "with severity and message, optionally path and line. Do not include secrets."
+                    "with severity and message, optionally path and line. Use plain human-readable text in every "
+                    "string field: no Markdown, bullets, headings, tables, or fenced code blocks. Do not include secrets."
                 ),
             },
             {"role": "user", "content": _agent_review_prompt(task, review_prompt, database_path)},
@@ -1044,22 +1158,151 @@ def _agent_review_prompt(task: dict[str, Any], review_prompt: str, database_path
 
 
 def _parse_agent_review(content: str) -> dict[str, Any]:
-    parsed: Any
-    try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError:
-        parsed = {"summary": content.strip()}
+    parsed: Any = _extract_agent_review_json(content)
     if not isinstance(parsed, dict):
-        parsed = {"summary": str(parsed)}
-    findings = parsed.get("findings") if isinstance(parsed.get("findings"), list) else []
-    recommendation = str(parsed.get("recommendation") or "needs_changes")
-    if recommendation not in {"approve", "needs_changes", "block"}:
-        recommendation = "needs_changes"
+        parsed = _parse_markdownish_agent_review(content)
+    findings = _clean_review_findings(parsed.get("findings"))
+    recommendation = _normalize_review_recommendation(parsed.get("recommendation"))
     return {
-        "summary": str(parsed.get("summary") or "Agent Review completed."),
+        "summary": _clean_review_text(parsed.get("summary") or "Agent Review completed."),
         "findings": findings,
         "recommendation": recommendation,
     }
+
+
+def _normalize_review_recommendation(value: Any) -> str:
+    normalized = _clean_review_text(value or "needs_changes").lower().replace(" ", "_").replace("-", "_")
+    if normalized in {"approve", "approved"}:
+        return "approve"
+    if normalized in {"block", "blocked"}:
+        return "block"
+    if normalized in {"needs_changes", "needs_change", "changes_requested", "request_changes"}:
+        return "needs_changes"
+    return "needs_changes"
+
+
+def _clean_review_findings(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    cleaned: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, dict):
+            message = _clean_review_text(item.get("message") or item.get("summary") or "")
+            if not message:
+                continue
+            severity = _normalize_review_severity(item.get("severity"))
+            finding: dict[str, Any] = {"severity": severity, "message": message}
+            path = _clean_review_text(item.get("path") or "")
+            if path:
+                finding["path"] = path
+            line = item.get("line")
+            if line not in (None, ""):
+                finding["line"] = line
+            cleaned.append(finding)
+        elif isinstance(item, str):
+            parsed_finding = _finding_from_text(item)
+            if parsed_finding:
+                cleaned.append(parsed_finding)
+    return cleaned
+
+
+def _normalize_review_severity(value: Any) -> str:
+    severity = _clean_review_text(value or "info").lower()
+    return severity if severity in {"critical", "high", "medium", "low", "info"} else "info"
+
+
+def _parse_markdownish_agent_review(content: str) -> dict[str, Any]:
+    lines = [line.strip() for line in _strip_code_fences(content).splitlines()]
+    summary_lines: list[str] = []
+    finding_lines: list[str] = []
+    recommendation: str | None = None
+    section = "summary"
+    for line in lines:
+        if not line:
+            continue
+        clean_heading = _clean_review_text(line).rstrip(":").lower()
+        if clean_heading in {"summary", "review summary", "agent review"}:
+            section = "summary"
+            continue
+        if clean_heading in {"findings", "issues", "review findings"}:
+            section = "findings"
+            continue
+        if clean_heading in {"recommendation", "decision"}:
+            section = "recommendation"
+            continue
+        recommendation_match = re.match(r"^\s*(?:[-*]\s*)?(?:\*\*)?recommendation(?:\*\*)?\s*[:\-]\s*(.+)$", line, re.IGNORECASE)
+        if recommendation_match:
+            recommendation = recommendation_match.group(1)
+            continue
+        if section == "recommendation" and recommendation is None:
+            recommendation = line
+            continue
+        if section == "findings":
+            finding_lines.append(line)
+        else:
+            summary_lines.append(line)
+    findings = [finding for line in finding_lines if (finding := _finding_from_text(line))]
+    summary = _clean_review_text(" ".join(summary_lines) or content)
+    return {"summary": summary, "recommendation": recommendation or "needs_changes", "findings": findings}
+
+
+def _finding_from_text(value: str) -> dict[str, str] | None:
+    text = _clean_review_text(value)
+    if not text:
+        return None
+    match = re.match(r"^(critical|high|medium|low|info)\s*[:\-]\s*(.+)$", text, re.IGNORECASE)
+    if match:
+        return {"severity": _normalize_review_severity(match.group(1)), "message": match.group(2).strip()}
+    return {"severity": "info", "message": text}
+
+
+def _strip_code_fences(value: Any) -> str:
+    text = str(value or "")
+    text = re.sub(r"```(?:\w+)?", "", text)
+    return text.replace("```", "")
+
+
+def _clean_review_text(value: Any) -> str:
+    text = _strip_code_fences(value)
+    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", text)
+    cleaned_lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        line = re.sub(r"^#{1,6}\s+", "", line)
+        line = re.sub(r"^>\s*", "", line)
+        line = re.sub(r"^(?:[-*+]\s+|\d+[.)]\s+)", "", line)
+        line = line.replace("**", "").replace("__", "").replace("`", "")
+        line = re.sub(r"\s+", " ", line).strip()
+        if line:
+            cleaned_lines.append(line)
+    return " ".join(cleaned_lines).strip()
+
+
+def _extract_agent_review_json(content: str) -> Any:
+    stripped = content.strip()
+    for candidate in _agent_review_json_candidates(stripped):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _agent_review_json_candidates(content: str) -> list[str]:
+    candidates = [content]
+    candidates.extend(match.group(1).strip() for match in re.finditer(r"```(?:json)?\s*(.*?)```", content, re.DOTALL | re.IGNORECASE))
+    first_brace = content.find("{")
+    if first_brace != -1:
+        try:
+            parsed, end = json.JSONDecoder().raw_decode(content[first_brace:])
+        except json.JSONDecodeError:
+            parsed = None
+            end = 0
+        if isinstance(parsed, dict):
+            candidates.append(content[first_brace : first_brace + end])
+    return candidates
 
 
 def _agent_review_session_key_hash(task_id: str, timestamp: str) -> str:
@@ -1079,14 +1322,7 @@ def _now_iso() -> str:
 
 
 def _current_day_start_iso(timezone: str) -> str:
-    if timezone == "local":
-        now = datetime.now().astimezone()
-    else:
-        try:
-            now = datetime.now(ZoneInfo(timezone))
-        except Exception:
-            now = datetime.now(UTC)
-    return now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC).isoformat()
+    return db.current_day_start_iso(timezone)
 
 
 def _estimation_session_key_hash(description: str) -> str:

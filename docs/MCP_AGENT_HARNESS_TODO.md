@@ -22,7 +22,7 @@ The MCP layer should call existing paths, not duplicate orchestration logic.
 
 ## Intricacies to preserve
 
-- **Model layers stay separate:** control-plane/orchestrator model handles estimates, breakdowns, reports, reviews; Worker Adapter models belong to OpenCode, Claude Code, Codex, Hermes, etc.
+- **Model layers stay separate:** control-plane/orchestrator model handles estimates, breakdowns, reports, reviews; Worker Adapter models belong to OpenCode, Claude Code, Codex, etc.
 - **MCP is not token metering:** an MCP server sees tool calls, not the external harness's own LLM token usage.
 - **Authoritative Worker usage needs one of:** verified native usage import, a verified harness-owned proxy path, or explicit non-authoritative diagnostic labeling.
 - **Long-running launches return handles:** `launch_task` should return `worker_run_id`, `task_id`, status, and portal/report links; polling/fetch tools return progress and artifacts later.

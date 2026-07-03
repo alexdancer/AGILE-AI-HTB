@@ -160,8 +160,9 @@ class FakeEstimatorLLM:
         self.requests.append(request)
         if self.exc:
             raise self.exc
+        content = self.content if isinstance(self.content, str) else json.dumps(self.content)
         return {
-            "choices": [{"message": {"content": json.dumps(self.content)}}],
+            "choices": [{"message": {"content": content}}],
             "usage": self.usage,
         }
 
@@ -193,7 +194,7 @@ def test_review_action_save_prompt_and_mark_done_preserve_completed_session_evid
         session = db.create_session(
             database_path,
             task_description="Reviewable work",
-            model="gpt-5.1-codex",
+            model="5.4",
             session_key_hash="r" * 64,
             guardrail_overrides={},
             status="completed",
@@ -203,7 +204,7 @@ def test_review_action_save_prompt_and_mark_done_preserve_completed_session_evid
             description="Reviewable work",
             status="Review",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="5.4",
             actual_tokens=321,
             session_id=session["id"],
         )
@@ -237,7 +238,7 @@ def test_review_action_block_requires_reason_and_records_operator_decision(tmp_p
         session = db.create_session(
             database_path,
             task_description="Blockable review",
-            model="gpt-5.1-codex",
+            model="5.4",
             session_key_hash="s" * 64,
             guardrail_overrides={},
             status="completed",
@@ -247,7 +248,7 @@ def test_review_action_block_requires_reason_and_records_operator_decision(tmp_p
             description="Blockable review",
             status="Review",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="5.4",
             session_id=session["id"],
         )
 
@@ -285,7 +286,7 @@ def test_review_action_agent_review_uses_control_plane_and_stays_in_review(tmp_p
         session = db.create_session(
             database_path,
             task_description="Agent reviewed work",
-            model="gpt-5.1-codex",
+            model="5.4",
             session_key_hash="t" * 64,
             guardrail_overrides={},
             status="completed",
@@ -294,7 +295,7 @@ def test_review_action_agent_review_uses_control_plane_and_stays_in_review(tmp_p
             database_path,
             session_id=session["id"],
             usage_kind="worker",
-            model="gpt-5.1-codex",
+            model="5.4",
             prompt_tokens=111,
             completion_tokens=22,
             cost=0,
@@ -305,7 +306,7 @@ def test_review_action_agent_review_uses_control_plane_and_stays_in_review(tmp_p
             description="Agent reviewed work",
             status="Review",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="5.4",
             actual_tokens=133,
             session_id=session["id"],
             metadata={
@@ -355,9 +356,162 @@ def test_review_action_agent_review_uses_control_plane_and_stays_in_review(tmp_p
     assert all_breakdown["by_category"]["worker_execution"] == 133
     assert all_breakdown["by_category"]["reporting_summary"] == 49
     assert db.session_token_breakdown(database_path, session["id"])["by_category"]["worker_execution"] == body["actual_tokens"]
-    assert "Agent Review completed · approve · 49 tokens" in board.text
-    assert f"review session {review['review_session_id']}" in board.text
+    assert "Agent Review" in board.text
+    assert "approve" in board.text
+    assert "49 tokens" in board.text
+    assert "review session" in board.text
     assert f"/sessions/{review['review_session_id']}" in board.text
+
+
+def test_review_action_agent_review_parses_fenced_json_without_raw_board_dump(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM(
+        content='''Here is the review:\n```json\n{"summary":"DEMO fenced review 2099 is clean.","recommendation":"approve","findings":[{"severity":"low","message":"DEMO fenced finding 2099.","path":"README.md","line":7}]}\n```''',
+        usage={"prompt_tokens": 20, "completion_tokens": 7, "total_tokens": 27},
+    )
+    database_path = tmp_path / "harness.db"
+    with _client_with_llm(tmp_path, llm) as client:
+        session = db.create_session(
+            database_path,
+            task_description="Fenced review work",
+            model="5.4",
+            session_key_hash="f" * 64,
+            guardrail_overrides={},
+            status="completed",
+        )
+        task = db.create_task(
+            database_path,
+            description="Fenced review work",
+            status="Review",
+            estimate_tokens=8000,
+            recommended_model="5.4",
+            session_id=session["id"],
+            metadata=project_task_metadata(db.list_connected_projects(database_path)[0]),
+        )
+
+        response = client.post(
+            f"/tasks/{task['id']}/review",
+            headers=_auth_headers(),
+            json={"action": "agent_review"},
+        )
+        board = client.get(f"/projects/{task['metadata']['connected_project_id']}/board", headers=_auth_headers())
+
+    assert response.status_code == 200
+    review = response.json()["metadata"]["agent_review"]
+    assert review["summary"] == "DEMO fenced review 2099 is clean."
+    assert review["recommendation"] == "approve"
+    assert review["findings"][0]["path"] == "README.md"
+    assert "DEMO fenced review 2099 is clean." in board.text
+    assert "DEMO fenced finding 2099." in board.text
+    assert "```json" not in board.text
+    assert "Here is the review" not in board.text
+
+
+def test_review_action_agent_review_normalizes_markdown_to_plain_text(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM(
+        content="""# Agent Review
+## Summary
+- **DEMO_2099 worker verification is incomplete** because `pip install` was skipped.
+## Findings
+- **High:** `README.md` still references the wrong DEMO_2099 path.
+- Low - **Minor wording** still reads like markdown.
+## Recommendation
+- needs changes
+""",
+        usage={"prompt_tokens": 20, "completion_tokens": 8, "total_tokens": 28},
+    )
+    database_path = tmp_path / "harness.db"
+    with _client_with_llm(tmp_path, llm) as client:
+        session = db.create_session(
+            database_path,
+            task_description="Markdown review work",
+            model="5.4",
+            session_key_hash="m" * 64,
+            guardrail_overrides={},
+            status="completed",
+        )
+        task = db.create_task(
+            database_path,
+            description="Markdown review work",
+            status="Review",
+            estimate_tokens=8000,
+            recommended_model="5.4",
+            session_id=session["id"],
+            metadata=project_task_metadata(db.list_connected_projects(database_path)[0]),
+        )
+
+        response = client.post(
+            f"/tasks/{task['id']}/review",
+            headers=_auth_headers(),
+            json={"action": "agent_review"},
+        )
+        board = client.get(f"/projects/{task['metadata']['connected_project_id']}/board", headers=_auth_headers())
+
+    assert response.status_code == 200
+    review = response.json()["metadata"]["agent_review"]
+    assert review["summary"] == "DEMO_2099 worker verification is incomplete because pip install was skipped."
+    assert review["recommendation"] == "needs_changes"
+    assert review["findings"] == [
+        {"severity": "high", "message": "README.md still references the wrong DEMO_2099 path."},
+        {"severity": "low", "message": "Minor wording still reads like markdown."},
+    ]
+    assert "DEMO_2099 worker verification is incomplete because pip install was skipped." in board.text
+    assert "README.md still references the wrong DEMO_2099 path." in board.text
+    assert "# Agent Review" not in board.text
+    assert "**" not in board.text
+    assert "`pip install`" not in board.text
+    assert "- needs changes" not in board.text
+
+
+def test_review_action_agent_review_cleans_markdown_inside_json_fields(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM(
+        content={
+            "summary": "**DEMO_2099 review:**\n- Worker output is readable.",
+            "recommendation": "Approved",
+            "findings": [
+                {"severity": "**Low**", "message": "- **No blocker** in `README.md`.", "path": "`README.md`"}
+            ],
+        },
+        usage={"prompt_tokens": 18, "completion_tokens": 7, "total_tokens": 25},
+    )
+    database_path = tmp_path / "harness.db"
+    with _client_with_llm(tmp_path, llm) as client:
+        session = db.create_session(
+            database_path,
+            task_description="JSON markdown review work",
+            model="5.4",
+            session_key_hash="j" * 64,
+            guardrail_overrides={},
+            status="completed",
+        )
+        task = db.create_task(
+            database_path,
+            description="JSON markdown review work",
+            status="Review",
+            estimate_tokens=8000,
+            recommended_model="5.4",
+            session_id=session["id"],
+            metadata=project_task_metadata(db.list_connected_projects(database_path)[0]),
+        )
+
+        response = client.post(
+            f"/tasks/{task['id']}/review",
+            headers=_auth_headers(),
+            json={"action": "agent_review"},
+        )
+        board = client.get(f"/projects/{task['metadata']['connected_project_id']}/board", headers=_auth_headers())
+
+    assert response.status_code == 200
+    review = response.json()["metadata"]["agent_review"]
+    assert review["summary"] == "DEMO_2099 review: Worker output is readable."
+    assert review["recommendation"] == "approve"
+    assert review["findings"][0] == {"severity": "low", "message": "No blocker in README.md.", "path": "README.md"}
+    assert "DEMO_2099 review: Worker output is readable." in board.text
+    assert "No blocker in README.md." in board.text
+    assert "**DEMO_2099" not in board.text
+    assert "`README.md`" not in board.text
 
 def test_review_action_accepts_completed_worker_run_evidence_when_session_is_not_completed(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
@@ -366,7 +520,7 @@ def test_review_action_accepts_completed_worker_run_evidence_when_session_is_not
         session = db.create_session(
             database_path,
             task_description="Worker run evidence work",
-            model="gpt-5.1-codex",
+            model="5.4",
             session_key_hash="w" * 64,
             guardrail_overrides={},
             status="failed",
@@ -376,7 +530,7 @@ def test_review_action_accepts_completed_worker_run_evidence_when_session_is_not
             description="Worker run evidence work",
             status="Review",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="5.4",
             session_id=session["id"],
         )
         run = db.create_worker_run(
@@ -384,7 +538,7 @@ def test_review_action_accepts_completed_worker_run_evidence_when_session_is_not
             task_id=task["id"],
             session_id=session["id"],
             adapter_id="codex",
-            model="gpt-5.1-codex",
+            model="5.4",
             tracking_mode="native_usage",
             command_plan={"argv": ["codex"]},
         )
@@ -409,7 +563,7 @@ def test_review_action_rejects_non_review_task_without_changing_status(tmp_path,
             description="Estimated task is not reviewable",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="5.4",
         )
         response = client.post(
             f"/tasks/{task['id']}/review",
@@ -430,7 +584,7 @@ def test_review_action_agent_review_failure_is_stored_and_task_remains_review(tm
         session = db.create_session(
             database_path,
             task_description="Review failure work",
-            model="gpt-5.1-codex",
+            model="5.4",
             session_key_hash="v" * 64,
             guardrail_overrides={},
             status="completed",
@@ -440,7 +594,7 @@ def test_review_action_agent_review_failure_is_stored_and_task_remains_review(tm
             description="Review failure work",
             status="Review",
             estimate_tokens=8000,
-            recommended_model="gpt-5.1-codex",
+            recommended_model="5.4",
             session_id=session["id"],
             metadata=project_task_metadata(db.list_connected_projects(database_path)[0]),
         )

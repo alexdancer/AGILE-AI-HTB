@@ -186,7 +186,6 @@ def test_project_workspace_displays_profile_capability_and_workflow_links(tmp_pa
     assert "Running work" in html
     assert "Review needed" in html
     assert "Blocked work" in html
-    assert "Session evidence" in html
     assert "Analysis-ready" in html
     assert "pytest" in html
     assert "fastapi" in html

@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 import time
 
@@ -377,12 +378,11 @@ def test_native_worker_run_fails_when_output_points_outside_empty_configured_wor
     assert run["metadata"]["workdir_evidence"] == evidence
 
 
-def test_native_worker_run_records_workdir_evidence_and_moves_to_review(tmp_path):
+def test_native_worker_workdir_evidence_ignores_json_escaped_newline_after_configured_root(tmp_path):
     db_path = tmp_path / "harness.db"
     db.init_db(db_path)
     harness_target = tmp_path / "harness-target"
     harness_target.mkdir()
-    (harness_target / "README.md").write_text("# DEMO_2099\n")
     _connect_project(db_path, harness_target)
     db.update_worker_adapter(db_path, "opencode", workdir=str(harness_target), supported_models=["openai/gpt-5.5"])
     db.mark_worker_adapter_verification(db_path, "opencode", verified=True, evidence={"tracking_mode": "native_usage"})
@@ -394,17 +394,126 @@ def test_native_worker_run_records_workdir_evidence_and_moves_to_review(tmp_path
         adapter_id="opencode",
         model="openai/gpt-5.5",
         proxy_url="http://127.0.0.1:8000/v1",
-        runner=lambda plan: {"returncode": 0, "stdout": _native_usage_stdout("openai/gpt-5.5"), "stderr": ""},
+        runner=lambda plan: {
+            "returncode": 0,
+            "stdout": _native_usage_stdout("openai/gpt-5.5", extra_path=f"{harness_target.resolve()}\\n"),
+            "stderr": "",
+        },
     )
     run = _wait_for_worker_run(db_path, task["id"], "completed")
     reviewed = db.get_task(db_path, task["id"])
 
     assert reviewed["status"] == "Review"
-    evidence = reviewed["metadata"]["workdir_evidence"]
+    assert reviewed["metadata"]["workdir_evidence"]["outside_paths"] == []
+    assert run["metadata"]["workdir_evidence"] == reviewed["metadata"]["workdir_evidence"]
+
+
+def test_native_worker_workdir_evidence_keeps_outside_path_after_json_escaped_newline(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    harness_target = tmp_path / "harness-target"
+    harness_target.mkdir()
+    outside_file = tmp_path / "outside-root" / "demo.py"
+    outside_file.parent.mkdir()
+    outside_file.write_text("print('DEMO_2099')\n")
+    _connect_project(db_path, harness_target)
+    db.update_worker_adapter(db_path, "opencode", workdir=str(harness_target), supported_models=["openai/gpt-5.5"])
+    db.mark_worker_adapter_verification(db_path, "opencode", verified=True, evidence={"tracking_mode": "native_usage"})
+    task = _estimated_task(db_path)
+
+    launch_task(
+        db_path,
+        task["id"],
+        adapter_id="opencode",
+        model="openai/gpt-5.5",
+        proxy_url="http://127.0.0.1:8000/v1",
+        runner=lambda plan: {
+            "returncode": 0,
+            "stdout": _native_usage_stdout(
+                "openai/gpt-5.5", extra_path=f"{harness_target.resolve()}\\n{outside_file.resolve()}"
+            ),
+            "stderr": "",
+        },
+    )
+    run = _wait_for_worker_run(db_path, task["id"], "failed")
+    blocked = db.get_task(db_path, task["id"])
+
+    assert blocked["status"] == "Estimated"
+    evidence = blocked["metadata"]["workdir_evidence"]
+    assert str(outside_file.resolve()) in evidence["outside_paths"]
+    assert run["metadata"]["workdir_evidence"] == evidence
+
+
+def test_native_worker_run_blocks_when_no_workdir_changes_are_produced(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    harness_target = tmp_path / "harness-target"
+    harness_target.mkdir()
+    (harness_target / "README.md").write_text("# DEMO_2099\n")
+    _connect_project(db_path, harness_target)
+    db.update_worker_adapter(db_path, "codex", workdir=str(harness_target), supported_models=["gpt-5.4"])
+    db.mark_worker_adapter_verification(db_path, "codex", verified=True, evidence={"tracking_mode": "native_usage"})
+    task = _estimated_task(db_path)
+
+    launch_task(
+        db_path,
+        task["id"],
+        adapter_id="codex",
+        model="gpt-5.4",
+        proxy_url="http://127.0.0.1:8000/v1",
+        runner=lambda plan: {"returncode": 0, "stdout": _native_usage_stdout("gpt-5.4"), "stderr": ""},
+    )
+    run = _wait_for_worker_run(db_path, task["id"], "failed")
+    blocked = db.get_task(db_path, task["id"])
+
+    assert blocked["status"] == "Estimated"
+    assert blocked["metadata"]["launch_failure_type"] == "no_workdir_changes"
+    assert blocked["metadata"]["launch_error"] == "Worker completed but produced no filesystem changes in the connected project."
+    evidence = blocked["metadata"]["workdir_evidence"]
     assert evidence["configured_workdir"] == str(harness_target.resolve())
     assert evidence["top_level_entries"] == ["README.md"]
     assert evidence["outside_paths"] == []
     assert run["metadata"]["workdir_evidence"] == evidence
+
+
+def test_native_worker_dirty_git_edit_is_not_misclassified_as_no_workdir_changes(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    harness_target = tmp_path / "harness-target"
+    harness_target.mkdir()
+    readme = harness_target / "README.md"
+    readme.write_text("# DEMO_2099\n")
+    subprocess.run(["git", "init"], cwd=harness_target, check=True, capture_output=True)
+    subprocess.run(["git", "add", "README.md"], cwd=harness_target, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-c", "user.email=demo@example.invalid", "-c", "user.name=DEMO", "commit", "-m", "init"],
+        cwd=harness_target,
+        check=True,
+        capture_output=True,
+    )
+    readme.write_text("# DEMO_2099 dirty before\n")
+    _connect_project(db_path, harness_target)
+    db.update_worker_adapter(db_path, "codex", workdir=str(harness_target), supported_models=["gpt-5.4"])
+    db.mark_worker_adapter_verification(db_path, "codex", verified=True, evidence={"tracking_mode": "native_usage"})
+    task = _estimated_task(db_path)
+
+    def runner(plan):
+        readme.write_text("# DEMO_2099 dirty after\n")
+        return {"returncode": 0, "stdout": _native_usage_stdout("gpt-5.4"), "stderr": ""}
+
+    launch_task(
+        db_path,
+        task["id"],
+        adapter_id="codex",
+        model="gpt-5.4",
+        proxy_url="http://127.0.0.1:8000/v1",
+        runner=runner,
+    )
+    run = _wait_for_worker_run(db_path, task["id"], "completed")
+    reviewed = db.get_task(db_path, task["id"])
+
+    assert reviewed["status"] == "Review"
+    assert run["status"] == "completed"
 
 
 def test_claude_code_native_worker_run_records_cache_inclusive_usage(tmp_path):

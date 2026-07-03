@@ -7,7 +7,6 @@ Worker Adapters are local coding-agent CLI integrations. The supported local set
 | OpenCode | Installed `opencode` CLI config/auth | Machine-readable, selected-model-aware, successful-exit, run-bound OpenCode usage evidence | CLI not installed, no model discovery, no allowed models, native usage missing run-bound tokens |
 | Claude Code | Installed `claude` CLI config/auth | `claude -p --output-format json` or `stream-json --verbose` evidence with usage/cost tied to the run | `claude models` unavailable, budget cap confused with accounting proof, cache tokens omitted |
 | Codex | Installed Codex CLI config/auth | Machine-readable successful-run usage when supported by the CLI | CLI auth missing, non-interactive command shape unavailable, no trustworthy usage evidence |
-| Hermes | Installed Hermes CLI/profile config | Run-bound Hermes usage evidence when supported by the profile/tooling | Wrong profile, missing gateway/tool auth, usage unavailable or not bound to the launched task |
 
 ## Verification states
 
@@ -20,4 +19,4 @@ Diagnostic-only observation is useful for PATH checks and troubleshooting, but i
 
 ## Key rule
 
-The control-plane API key from `/settings/control-plane` powers AGILE-AI-HTB estimation, planning, recommendations, and reports. It does not configure OpenCode, Claude Code, Codex, Hermes, or other native Worker CLIs.
+The control-plane API key from `/settings/control-plane` powers AGILE-AI-HTB estimation, planning, recommendations, and reports. It does not configure OpenCode, Claude Code, Codex, or other native Worker CLIs.

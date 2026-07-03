@@ -14,13 +14,15 @@ class Settings:
     guardrails_path: Path = Path("guardrails.yaml")
     timezone: str = "local"
     control_plane_provider: str = "openai"
-    control_plane_model: str = "gpt-4o-mini"
+    control_plane_model: str = "gpt-5.4"
     control_plane_api_key_env: str = "AGILE_AI_HTB_CONTROL_API_KEY"
     control_plane_base_url: str = ""
     provider_api_key_env: str = "PROVIDER_API_KEY"
-    estimator_model: str = "gpt-4o-mini"
-    task_breakdown_model: str = "gpt-4o-mini"
+    estimator_model: str = "gpt-5.4"
+    task_breakdown_model: str = "gpt-5.4"
+    task_breakdown_timeout_seconds: int = 120
     portal_token_env: str = "TOKEN_TRACKER_PORTAL_TOKEN"
+    portal_auth_required: bool = True
     portal_cookie_secure: bool = False
     local_runner_enabled: bool = False
 
@@ -36,7 +38,9 @@ class Settings:
         provider_api_key_env: str | None = None,
         estimator_model: str | None = None,
         task_breakdown_model: str | None = None,
+        task_breakdown_timeout_seconds: int | None = None,
         portal_token_env: str | None = None,
+        portal_auth_required: bool | None = None,
         portal_cookie_secure: bool | None = None,
         local_runner_enabled: bool | None = None,
         operator_config: dict[str, Any] | None = None,
@@ -82,7 +86,7 @@ class Settings:
             or estimator_model
             or os.getenv("TOKEN_TRACKER_ESTIMATOR_MODEL")
             or config.get("control_plane_model")
-            or "gpt-4o-mini"
+            or "gpt-5.4"
         )
         object.__setattr__(
             self,
@@ -129,11 +133,29 @@ class Settings:
         )
         object.__setattr__(
             self,
+            "task_breakdown_timeout_seconds",
+            _positive_int(
+                task_breakdown_timeout_seconds
+                or os.getenv("AGILE_AI_HTB_TASK_BREAKDOWN_TIMEOUT_SECONDS")
+                or os.getenv("TOKEN_TRACKER_TASK_BREAKDOWN_TIMEOUT_SECONDS")
+                or config.get("task_breakdown_timeout_seconds"),
+                120,
+            ),
+        )
+        object.__setattr__(
+            self,
             "portal_token_env",
             portal_token_env
             or os.getenv("TOKEN_TRACKER_PORTAL_TOKEN_ENV")
             or config.get("portal_token_env")
             or "TOKEN_TRACKER_PORTAL_TOKEN",
+        )
+        object.__setattr__(
+            self,
+            "portal_auth_required",
+            portal_auth_required
+            if portal_auth_required is not None
+            else _env_bool("TOKEN_TRACKER_PORTAL_AUTH_REQUIRED", _config_bool(config, "portal_auth_required", True)),
         )
         object.__setattr__(
             self,
@@ -158,5 +180,17 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
-def _config_bool(config: dict[str, Any], name: str) -> bool:
+def _config_bool(config: dict[str, Any], name: str, default: bool = False) -> bool:
+    if name not in config:
+        return default
     return bool(config.get(name))
+
+
+def _positive_int(value: Any, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default

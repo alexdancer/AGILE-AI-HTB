@@ -73,10 +73,19 @@ def _breakdown_content(*titles):
         {
             "kind": "implementation",
             "title": title,
+            "objective": f"Deliver {title} as one independently verifiable slice.",
             "prompt": f"Implement {title}",
             "acceptance_criteria": f"{title} is covered by tests.",
             "constraints": [],
-            "human_in_loop": True,
+            "proof": f"Run targeted tests proving {title}.",
+            "why_this_task_exists": f"{title} maps to a distinct behavior from the source contract.",
+            "why_not_smaller": "Smaller subtasks would split implementation from proof.",
+            "why_not_larger": "Larger tasks would mix sibling source requirements.",
+            "dependencies": [],
+            "likely_entry_points": ["tests/api/test_task_estimation.py"],
+            "execution_mode": "AFK",
+            "hitl_reason": "",
+            "human_in_loop": False,
         }
         for title in titles
     ]
@@ -104,25 +113,52 @@ def _integrated_artifact_breakdown():
             {
                 "kind": "implementation",
                 "title": "Build DEMO_CLI_2099 parser",
+                "objective": "Parse DEMO_INPUT_999 for DEMO_CLI_2099 as one vertical slice.",
                 "prompt": "Implement the parser slice for DEMO_CLI_2099.",
                 "acceptance_criteria": "Parser tests pass.",
                 "constraints": ["Preserve DEMO_ID_999 values."],
-                "human_in_loop": True,
+                "proof": "Run parser tests for DEMO_INPUT_999.",
+                "why_this_task_exists": "Parser behavior is a distinct executable seam.",
+                "why_not_smaller": "Separating parser branches would lose an independently useful CLI slice.",
+                "why_not_larger": "Merging report rendering would over-broaden this Worker task.",
+                "dependencies": [],
+                "likely_entry_points": ["src/demo_cli_2099.py", "tests/test_demo_cli_2099.py"],
+                "execution_mode": "AFK",
+                "hitl_reason": "",
+                "human_in_loop": False,
             },
             {
                 "kind": "implementation",
                 "title": "Render DEMO_REPORT_2099 output",
+                "objective": "Render DEMO_REPORT_2099 after parsed DEMO_INPUT_999 values are available.",
                 "prompt": "Implement the report rendering slice for DEMO_REPORT_2099.",
                 "acceptance_criteria": "Report shape is covered.",
                 "constraints": [],
-                "human_in_loop": True,
+                "proof": "Run report rendering tests for DEMO_REPORT_2099 shape.",
+                "why_this_task_exists": "Report output is independently reviewable after parser behavior exists.",
+                "why_not_smaller": "Splitting fields individually would over-fragment the report slice.",
+                "why_not_larger": "Merging acceptance verification would make the task both implement and audit.",
+                "dependencies": ["Build DEMO_CLI_2099 parser"],
+                "likely_entry_points": ["src/demo_cli_2099.py", "tests/test_demo_report_2099.py"],
+                "execution_mode": "AFK",
+                "hitl_reason": "",
+                "human_in_loop": False,
             },
             {
                 "kind": "acceptance_verification",
                 "title": "Acceptance Verification for DEMO_CLI_2099",
+                "objective": "Prove DEMO_CLI_2099 satisfies the original integrated source contract.",
                 "prompt": "Verify the combined CLI/report artifact against the source contract.",
                 "acceptance_criteria": "Executable smoke proof and findings are recorded.",
                 "constraints": ["Do not rebuild the CLI."],
+                "proof": "Run a CLI smoke check against DEMO_INPUT_999 and inspect DEMO_REPORT_2099 output.",
+                "why_this_task_exists": "The parser and report slices produce one integrated artifact requiring final proof.",
+                "why_not_smaller": "A smaller verification would miss end-to-end CLI/report behavior.",
+                "why_not_larger": "This must not become a whole-task reimplementation rerun.",
+                "dependencies": ["Build DEMO_CLI_2099 parser", "Render DEMO_REPORT_2099 output"],
+                "likely_entry_points": ["tests/test_demo_cli_2099.py"],
+                "execution_mode": "HITL",
+                "hitl_reason": "Operator reviews final findings before global acceptance.",
                 "human_in_loop": True,
             },
         ],
@@ -725,6 +761,68 @@ def test_estimate_form_accepts_pasted_markdown_task(tmp_path, monkeypatch):
     assert "Add parser" in board.text
 
 
+def test_accepting_legacy_afk_breakdown_preserves_afk_and_clears_hitl_reason(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeSequentialLLM([FakeEstimatorLLM().content])
+    db_path = tmp_path / "harness.db"
+
+    with _client_with_llm(tmp_path, llm) as client:
+        breakdown = db.create_task_breakdown(
+            db_path,
+            source_text="# DEMO_TASK_2099 legacy AFK\n\n- [ ] Implement legacy slice",
+            source_sha256="demo-legacy-afk-2099",
+            intake_metadata={},
+            status="pending_review",
+            decision="single_task",
+            model="legacy-model-2099",
+            candidates=[
+                {
+                    "kind": "implementation",
+                    "title": "DEMO_TASK_2099 legacy AFK slice",
+                    "prompt": "Implement the legacy AFK slice.",
+                    "acceptance_criteria": "Legacy AFK tests pass.",
+                    "constraints": [],
+                    "human_in_loop": False,
+                }
+            ],
+            rejected_items=[],
+            global_contract_summary="Legacy AFK source summary.",
+            global_constraints=[],
+            verification=["Run legacy AFK tests."],
+            non_goals=[],
+            recommended_sequence=["DEMO_TASK_2099 legacy AFK slice"],
+            confidence=0.8,
+            rationale="Legacy candidate before execution_mode existed.",
+        )
+        review = client.get(f"/task-breakdowns/{breakdown['id']}/review", headers=_auth_headers())
+        accept = client.post(
+            f"/task-breakdowns/{breakdown['id']}/accept",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={
+                "accept_0": "1",
+                "kind_0": "implementation",
+                "title_0": "DEMO_TASK_2099 legacy AFK slice",
+                "prompt_0": "Implement the legacy AFK slice.",
+                "acceptance_criteria_0": "Legacy AFK tests pass.",
+                "constraints_0": "",
+                "hitl_reason_0": "Stale operator approval reason should not survive AFK.",
+                "global_contract_summary": "Legacy AFK source summary.",
+                "global_constraints": "",
+                "verification": "Run legacy AFK tests.",
+            },
+            follow_redirects=False,
+        )
+        tasks = db.list_tasks(db_path)
+
+    assert 'value="AFK" selected' in review.text
+    assert accept.status_code == 303
+    assert tasks[0]["metadata"]["task_breakdown_execution_mode"] == "AFK"
+    assert tasks[0]["metadata"]["task_breakdown_hitl_reason"] == ""
+    assert tasks[0]["metadata"]["task_breakdown_policy_evidence"]["hitl_reason"] == ""
+    assert "Execution mode:\nAFK" in tasks[0]["description"]
+    assert "Stale operator approval reason" not in tasks[0]["description"]
+
+
 def test_accepting_breakdown_estimates_candidates_with_fenced_estimator_json(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     estimator_response = f"```json\n{json.dumps(FakeEstimatorLLM().content)}\n```"
@@ -915,6 +1013,7 @@ The final artifact must be verified with a CLI smoke check and must never use re
                 "prompt_2": "Verify the combined artifact.",
                 "acceptance_criteria_2": "Smoke proof and findings are recorded.",
                 "constraints_2": "Do not rebuild the CLI.",
+                "hitl_reason_2": "",
                 "global_contract_summary": "Edited summary: DEMO_CLI_2099 parses DEMO_INPUT_999 and emits DEMO_REPORT_2099.",
                 "global_constraints": "Use only synthetic DEMO_2099 data.",
                 "verification": "Run a CLI smoke check.",
@@ -927,19 +1026,39 @@ The final artifact must be verified with a CLI smoke check and must never use re
     assert response.status_code == 303
     assert "Global contract summary" in review.text
     assert "acceptance_verification" in review.text
+    assert "Execution mode" in review.text
+    assert "Candidate proof / verification path" in review.text
+    assert "Task slicing evidence" in review.text
     assert accept.status_code == 303
     assert [task["metadata"]["task_breakdown_kind"] for task in tasks] == [
         "implementation",
         "implementation",
         "acceptance_verification",
     ]
+    assert [task["metadata"]["task_breakdown_execution_mode"] for task in tasks] == [
+        "AFK",
+        "AFK",
+        "HITL",
+    ]
+    assert tasks[2]["metadata"]["task_breakdown_hitl_reason"] == (
+        "Requires operator review or judgment before completion."
+    )
+    assert tasks[0]["metadata"]["task_breakdown_policy_evidence"]["why_not_smaller"] == (
+        "Separating parser branches would lose an independently useful CLI slice."
+    )
+    assert tasks[1]["metadata"]["task_breakdown_dependencies"] == ["Build DEMO_CLI_2099 parser"]
     implementation_description = tasks[0]["description"]
     verification_description = tasks[2]["description"]
+    assert "Objective:" in implementation_description
+    assert "Candidate proof:" in implementation_description
+    assert "Likely repo entry points:" in implementation_description
     assert "Edited summary: DEMO_CLI_2099 parses DEMO_INPUT_999" in implementation_description
     assert "Implementation slice scope:" in implementation_description
     assert "do not rerun or re-solve the full source task" in implementation_description
     assert "Original source contract:" not in implementation_description
     assert "The final artifact must be verified with a CLI smoke check" not in implementation_description
+    assert "Execution mode:\nHITL" in verification_description
+    assert "Dependencies:" in verification_description
     assert "Original source contract:" in verification_description
     assert "Build DEMO_CLI_2099 so it parses DEMO_INPUT_999" in verification_description
     assert "Do not reimplement the whole source task" in verification_description
@@ -1032,6 +1151,103 @@ def test_estimate_form_invalid_breakdown_output_creates_manual_recovery_review(t
     assert retried["failure_type"] is None
     assert retried["failure_message"] is None
     assert retried["candidates"][0]["title"] == "Retry succeeded"
+
+
+def test_estimate_form_timeout_breakdown_failure_has_safe_actionable_diagnostics(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    markdown = "# DEMO_TASK_2099 timeout recovery\n\n- [ ] Split safe timeout diagnostics"
+    raw_secret = "Bearer DEMO_BEARER_TOKEN_2099"
+    llm = FakeEstimatorLLM(exc=TimeoutError(f"provider timed out after prompt {markdown} {raw_secret}"))
+
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={"description": markdown},
+            follow_redirects=False,
+        )
+        breakdown_id = response.headers["location"].split("/")[2]
+        breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
+        review = client.get(response.headers["location"], headers=_auth_headers())
+
+    assert response.status_code == 303
+    assert breakdown["status"] == "failed"
+    assert breakdown["failure_type"] == "TaskBreakdownUnavailableError"
+    assert "provider timeout" in breakdown["failure_message"]
+    assert "model=" in breakdown["failure_message"]
+    assert "source_chars=" in breakdown["failure_message"]
+    assert "max_output_tokens=16384" in breakdown["failure_message"]
+    assert "timeout_seconds=120" in breakdown["failure_message"]
+    assert markdown not in breakdown["failure_message"]
+    assert raw_secret not in breakdown["failure_message"]
+    assert "Breakdown failed" in review.text
+    assert "Retry breakdown" in review.text
+    assert "Create manual candidate" in review.text
+    assert raw_secret not in review.text
+
+
+def test_estimate_form_provider_rejection_breakdown_failure_is_sanitized(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM(
+        exc=RuntimeError(
+            "provider request failed with HTTP 400: temperature is deprecated for this model api_key=DEMO_SECRET_2099_VALUE"
+        )
+    )
+    markdown = "# DEMO_TASK_2099 provider rejection\n\n- [ ] Retry without unsupported parameters"
+
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={"description": markdown},
+            follow_redirects=False,
+        )
+        breakdown_id = response.headers["location"].split("/")[2]
+        breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
+
+    assert response.status_code == 303
+    assert breakdown["status"] == "failed"
+    assert "provider rejection or transport failure" in breakdown["failure_message"]
+    assert "HTTP 400" in breakdown["failure_message"]
+    assert "temperature is deprecated" in breakdown["failure_message"]
+    assert "DEMO_SECRET_2099_VALUE" not in breakdown["failure_message"]
+    assert "[REDACTED]" in breakdown["failure_message"]
+
+
+def test_estimate_form_provider_echoed_source_payload_is_redacted(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    markdown = "# DEMO_TASK_2099 escaped payload\n\n- [ ] Keep provider echo safe"
+    escaped_source = json.dumps(markdown)[1:-1]
+    normalized_source = " ".join(markdown.split())
+    llm = FakeEstimatorLLM(
+        exc=RuntimeError(
+            f'provider request failed with HTTP 400: {{"source_text":"{escaped_source}",'
+            f'"messages":[{{"content":"{normalized_source}"}}]}}'
+        )
+    )
+
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={"description": markdown},
+            follow_redirects=False,
+        )
+        breakdown_id = response.headers["location"].split("/")[2]
+        breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
+        review = client.get(response.headers["location"], headers=_auth_headers())
+
+    assert response.status_code == 303
+    assert breakdown["status"] == "failed"
+    assert "HTTP 400" in breakdown["failure_message"]
+    assert "[REDACTED_SOURCE_TEXT]" in breakdown["failure_message"]
+    assert markdown not in breakdown["failure_message"]
+    assert escaped_source not in breakdown["failure_message"]
+    assert normalized_source not in breakdown["failure_message"]
+    assert "[REDACTED_SOURCE_TEXT]" in review.text
+    assert escaped_source not in review.text
+    assert normalized_source not in review.text
+
 
 def test_estimate_form_rejects_non_markdown_upload_without_creating_task(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)

@@ -202,6 +202,49 @@ def test_chat_completions_ignores_previous_day_usage_for_zone_selection(tmp_path
     assert artifact["guardrail_snapshots"][0]["zone"] == "green"
 
 
+def test_chat_completions_honors_daily_budget_reset_window_for_zone_selection(tmp_path):
+    client, fake = _client(tmp_path)
+    with client:
+        old = client.post(
+            "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
+            json={"task_description": "Pre-reset spend", "model": "claude-haiku"},
+        ).json()
+        db.record_token_turn(
+            tmp_path / "harness.db",
+            session_id=old["session_id"],
+            model="claude-haiku",
+            prompt_tokens=900_000,
+            completion_tokens=0,
+            cost=0,
+            raw_usage={"total_tokens": 900_000},
+        )
+        with db.connect(tmp_path / "harness.db") as conn:
+            conn.execute("update token_turns set created_at = ?", (db.current_day_start_iso("local"),))
+        db.reset_daily_budget_counter(tmp_path / "harness.db")
+
+        started = client.post(
+            "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
+            json={
+                "task_description": "New budget window",
+                "model": "claude-haiku",
+                "budget": {"daily_cap_tokens": 1_000_000},
+            },
+        ).json()
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {started['session_api_key']}"},
+            json={"model": "claude-haiku", "messages": [{"role": "user", "content": "finish"}], "max_tokens": 4096},
+        )
+
+    assert response.status_code == 200
+    assert fake.requests[-1]["max_tokens"] == 4096
+    artifact = db.build_session_artifact(tmp_path / "harness.db", started["session_id"])
+    assert artifact["guardrail_snapshots"][0]["zone"] == "green"
+    assert artifact["alarms"] == []
+
+
 def test_chat_completions_rejects_aborted_session(tmp_path):
     client, _fake = _client(tmp_path)
     with client:

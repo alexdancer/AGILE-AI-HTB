@@ -13,4 +13,10 @@
     {% if alarm.context %}<div class="muted mono" style="font-size:11px;margin-top:4px">{{ alarm.context }}</div>{% endif %}
   </div>
   <div class="reco">→ {{ alarm.recommended_action }}</div>
+  {% if not alarm.resolved_at %}
+  <form method="post" action="/alarms/{{ alarm.id }}/resolve" style="margin-top:10px">
+    <input type="hidden" name="action" value="continue">
+    <button type="submit">Dismiss</button>
+  </form>
+  {% endif %}
 </div>

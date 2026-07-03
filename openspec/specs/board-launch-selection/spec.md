@@ -22,7 +22,7 @@ The board task card for Estimated tasks SHALL include a dropdown selector listin
 The board launch form SHALL include a model selector populated from the selected adapter's allowed Worker models. Changing the adapter selection SHALL update the model dropdown to show only that adapter's allowed models.
 
 #### Scenario: Adapter has allowed models
-- **WHEN** operator selects an adapter with allowed models `["opencode/gpt-5.1", "gpt-5.1-codex"]`
+- **WHEN** operator selects an adapter with allowed models `["opencode/gpt-5.1", "opencode/gpt-5.2"]`
 - **THEN** the model dropdown shows those two models
 
 #### Scenario: Adapter has discovered models but no allowed models

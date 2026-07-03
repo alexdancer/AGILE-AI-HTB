@@ -27,10 +27,10 @@ Include:
 - Whether `command -v htb` succeeds
 - Control-plane provider/model
 - Control-plane key configured through `/settings/control-plane`, `.htb/secrets.env`, or environment variable
-- Worker Adapter identity: OpenCode, Claude Code, Codex, Hermes, or other
+- Worker Adapter identity: OpenCode, Claude Code, Codex, or other
 - Worker tracking status shown in the Portal: verified native usage, diagnostic-only, failed, or unknown
 - Whether you are running local Python or Docker
 
 ## Boundary reminder
 
-Installing AGILE-AI-HTB exposes the `htb` operator CLI. It does not install or authenticate OpenCode, Claude Code, Codex, Hermes, provider API keys, portal tokens, or Worker credentials. Native Worker CLI setup happens separately in those tools and through the Portal Worker Adapter setup flow.
+Installing AGILE-AI-HTB exposes the `htb` operator CLI. It does not install or authenticate OpenCode, Claude Code, Codex, provider API keys, portal tokens, or Worker credentials. Native Worker CLI setup happens separately in those tools and through the Portal Worker Adapter setup flow.

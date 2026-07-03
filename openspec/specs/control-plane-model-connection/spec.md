@@ -86,7 +86,7 @@ The system SHALL provide a small set of portal presets and a real model dropdown
 
 #### Scenario: OpenAI preset selected
 - **WHEN** the operator selects the OpenAI preset
-- **THEN** the form SHALL set provider `openai` and model `gpt-5.4-mini`
+- **THEN** the form SHALL set provider `openai` and model `gpt-5.4`
 - **AND** it SHALL leave the default OpenAI base URL behavior unless the operator overrides it
 
 #### Scenario: Anthropic preset selected
@@ -106,12 +106,12 @@ The system SHALL provide a small set of portal presets and a real model dropdown
 
 #### Scenario: OpenAI provider filters model choices
 - **WHEN** the operator selects provider `openai`
-- **THEN** the model dropdown SHALL show OpenAI curated model choices
+- **THEN** the model dropdown SHALL show OpenAI curated model choices, including `gpt-5.4`
 - **AND** it SHALL NOT show Anthropic `claude-*` curated choices as selectable options
 
 #### Scenario: Anthropic provider filters model choices
 - **WHEN** the operator selects provider `anthropic`
-- **THEN** the model dropdown SHALL show Anthropic `claude-*` curated model choices
+- **THEN** the model dropdown SHALL show Anthropic `claude-*` curated model choices, including `claude-sonnet-5`
 - **AND** it SHALL NOT show OpenAI curated choices as selectable options
 
 #### Scenario: OpenAI-compatible provider uses custom model path

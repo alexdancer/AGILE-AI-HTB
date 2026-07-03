@@ -142,7 +142,7 @@ def list_eligible_estimated_tasks(database_path: Path | str, project_id: str) ->
     return [
         task
         for task in db.list_tasks(database_path)
-        if task.get("status") == "Estimated" and task_matches_project(task, project_id)
+        if task.get("status") == "Estimated" and task_matches_project(task, project_id) and not db.task_is_archived(task)
     ]
 
 

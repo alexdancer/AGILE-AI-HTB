@@ -53,14 +53,42 @@
             <option value="implementation" {% if candidate.kind|default('implementation') == 'implementation' %}selected{% endif %}>implementation</option>
             <option value="acceptance_verification" {% if candidate.kind|default('implementation') == 'acceptance_verification' %}selected{% endif %}>acceptance_verification</option>
           </select>
+          {% set candidate_execution_mode = candidate.execution_mode|default('') %}
+          {% if not candidate_execution_mode %}
+            {% set candidate_execution_mode = 'AFK' if candidate.human_in_loop is defined and not candidate.human_in_loop else 'HITL' %}
+          {% endif %}
+          <label>Execution mode</label>
+          <select name="execution_mode_{{ loop.index0 }}">
+            <option value="AFK" {% if candidate_execution_mode == 'AFK' %}selected{% endif %}>AFK</option>
+            <option value="HITL" {% if candidate_execution_mode == 'HITL' %}selected{% endif %}>HITL</option>
+          </select>
           <label>Title</label>
           <input name="title_{{ loop.index0 }}" value="{{ candidate.title }}">
+          <label>Objective</label>
+          <textarea name="objective_{{ loop.index0 }}" rows="2">{{ candidate.objective|default(candidate.prompt) }}</textarea>
           <label>Implementation prompt</label>
           <textarea name="prompt_{{ loop.index0 }}" rows="5">{{ candidate.prompt }}</textarea>
           <label>Acceptance criteria</label>
           <textarea name="acceptance_criteria_{{ loop.index0 }}" rows="3">{{ candidate.acceptance_criteria }}</textarea>
+          <label>Candidate proof / verification path</label>
+          <textarea name="proof_{{ loop.index0 }}" rows="2">{{ candidate.proof|default(candidate.acceptance_criteria) }}</textarea>
+          <label>HITL reason</label>
+          <input name="hitl_reason_{{ loop.index0 }}" value="{{ candidate.hitl_reason|default('') }}" placeholder="Required only for HITL candidates">
           <label>Task-specific constraints</label>
           <textarea name="constraints_{{ loop.index0 }}" rows="2">{{ candidate.constraints|join('\n') }}</textarea>
+          <details>
+            <summary>Task slicing evidence</summary>
+            <label>Why this task exists</label>
+            <textarea name="why_this_task_exists_{{ loop.index0 }}" rows="2">{{ candidate.why_this_task_exists|default('') }}</textarea>
+            <label>Why not smaller</label>
+            <textarea name="why_not_smaller_{{ loop.index0 }}" rows="2">{{ candidate.why_not_smaller|default('') }}</textarea>
+            <label>Why not larger</label>
+            <textarea name="why_not_larger_{{ loop.index0 }}" rows="2">{{ candidate.why_not_larger|default('') }}</textarea>
+            <label>Dependencies</label>
+            <textarea name="dependencies_{{ loop.index0 }}" rows="2">{{ candidate.dependencies|default([])|join('\n') }}</textarea>
+            <label>Likely repo entry points</label>
+            <textarea name="likely_entry_points_{{ loop.index0 }}" rows="2">{{ candidate.likely_entry_points|default([])|join('\n') }}</textarea>
+          </details>
         </div>
         {% else %}
         <p class="muted">No candidates available.</p>

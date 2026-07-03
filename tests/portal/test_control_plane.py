@@ -100,7 +100,7 @@ def test_control_plane_save_updates_bootstrap_env_override(tmp_path, monkeypatch
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     monkeypatch.setenv("AGILE_AI_HTB_CONTROL_PROVIDER", "openai")
-    monkeypatch.setenv("AGILE_AI_HTB_CONTROL_MODEL", "gpt-5.4-mini")
+    monkeypatch.setenv("AGILE_AI_HTB_CONTROL_MODEL", "gpt-5.4")
     monkeypatch.setenv("AGILE_AI_HTB_CONTROL_API_KEY_ENV", "AGILE_AI_HTB_CONTROL_API_KEY")
 
     app = create_app(Settings(database_path=tmp_path / "harness.db", guardrails_path=ROOT / "guardrails.yaml"))
@@ -139,7 +139,7 @@ def test_control_plane_save_loads_existing_secret_env_for_new_key(tmp_path, monk
             headers=_portal_headers(),
             json={
                 "control_plane_provider": "openai",
-                "control_plane_model": "gpt-5.4-mini",
+                "control_plane_model": "gpt-5.4",
                 "control_plane_base_url": "",
                 "control_plane_api_key_env": "NEW_CONTROL_KEY",
             },
@@ -306,6 +306,9 @@ def test_control_plane_settings_page_shows_presets_and_needs_test(tmp_path, monk
         setup = client.get("/setup", headers=_portal_headers())
 
     assert response.status_code == 200
+    assert "setControlPlanePreset('openai','gpt-5.4','')" in response.text
+    assert "setControlPlanePreset('anthropic','claude-sonnet-5','')" in response.text
+    assert "gpt-5.4" in response.text
     assert "gpt-5.4-mini" in response.text
     assert "gpt-5.5" in response.text
     assert '<select id="control_plane_model" name="control_plane_model"' in response.text
@@ -314,14 +317,17 @@ def test_control_plane_settings_page_shows_presets_and_needs_test(tmp_path, monk
     assert "Custom model…" in response.text
     assert 'name="custom_control_plane_model"' in response.text
     assert "claude-fable-5" in response.text
+    assert "claude-sonnet-5" in response.text
     assert "claude-opus-4-8" in response.text
     assert "claude-sonnet-4-6" in response.text
     assert "claude-haiku-4-5" in response.text
     assert "anthropic/claude-sonnet-4-20250514" not in response.text
-    assert 'data-provider="openai"' in _model_option(response.text, "gpt-5.4-mini")
+    assert 'data-provider="openai"' in _model_option(response.text, "gpt-5.4")
+    _assert_selectable(_model_option(response.text, "gpt-5.4"))
     _assert_selectable(_model_option(response.text, "gpt-5.4-mini"))
     _assert_selectable(_model_option(response.text, "gpt-5.5"))
     _assert_not_selectable(_model_option(response.text, "claude-fable-5"))
+    _assert_not_selectable(_model_option(response.text, "claude-sonnet-5"))
     _assert_not_selectable(_model_option(response.text, "claude-opus-4-8"))
     _assert_not_selectable(_model_option(response.text, "claude-sonnet-4-6"))
     _assert_not_selectable(_model_option(response.text, "claude-haiku-4-5"))
@@ -343,12 +349,15 @@ def test_control_plane_settings_page_separates_control_model_from_worker_auth(tm
     assert response.status_code == 200
     html = response.text
     assert "Control plane model" in html
+    assert "claude-sonnet-5" in html
     assert "claude-sonnet-4-6" in html
     assert 'data-provider="anthropic"' in _model_option(html, "claude-sonnet-4-6")
     _assert_selectable(_model_option(html, "claude-fable-5"))
+    _assert_selectable(_model_option(html, "claude-sonnet-5"))
     _assert_selectable(_model_option(html, "claude-opus-4-8"))
     _assert_selectable(_model_option(html, "claude-sonnet-4-6"))
     _assert_selectable(_model_option(html, "claude-haiku-4-5"))
+    _assert_not_selectable(_model_option(html, "gpt-5.4"))
     _assert_not_selectable(_model_option(html, "gpt-5.4-mini"))
     _assert_not_selectable(_model_option(html, "gpt-5.5"))
     assert "TEST_CONTROL_PLANE_KEY" in html
@@ -384,8 +393,10 @@ def test_control_plane_settings_page_preserves_openai_compatible_model_as_custom
     assert '<option value="openai-compatible" selected>openai-compatible</option>' in html
     assert '<option value="__custom__" selected>Custom model…</option>' in html
     assert f'name="custom_control_plane_model" value="{custom_model}"' in html
+    _assert_not_selectable(_model_option(html, "gpt-5.4"))
     _assert_not_selectable(_model_option(html, "gpt-5.4-mini"))
     _assert_not_selectable(_model_option(html, "gpt-5.5"))
+    _assert_not_selectable(_model_option(html, "claude-sonnet-5"))
     _assert_not_selectable(_model_option(html, "claude-sonnet-4-6"))
 
 
@@ -405,7 +416,7 @@ def test_control_plane_settings_page_preserves_provider_incompatible_model_as_cu
     assert '<option value="openai" selected>openai</option>' in html
     assert '<option value="__custom__" selected>Custom model…</option>' in html
     assert f'name="custom_control_plane_model" value="{mismatched_model}"' in html
-    _assert_selectable(_model_option(html, "gpt-5.4-mini"))
+    _assert_selectable(_model_option(html, "gpt-5.4"))
     _assert_not_selectable(_model_option(html, mismatched_model))
 
 
@@ -485,12 +496,12 @@ def test_control_plane_connection_test_does_not_cap_gpt5_smoke_response(tmp_path
         tmp_path,
         llm,
         control_plane_provider="openai",
-        control_plane_model="gpt-5.4-mini",
+        control_plane_model="gpt-5.4",
     ) as client:
         response = client.post("/settings/control-plane/test", headers=_portal_headers())
 
     assert response.status_code == 200
-    assert llm.requests[0]["model"] == "gpt-5.4-mini"
+    assert llm.requests[0]["model"] == "gpt-5.4"
     assert "max_tokens" not in llm.requests[0]
     assert "max_completion_tokens" not in llm.requests[0]
 

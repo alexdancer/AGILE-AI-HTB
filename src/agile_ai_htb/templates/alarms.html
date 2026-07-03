@@ -8,7 +8,7 @@
   <div class="kpi"><div class="label">Open</div><div class="value mono">{{ open_alarms|length }}</div></div>
   <div class="kpi"><div class="label">Critical</div><div class="value mono" style="color:var(--danger)">{{ critical_count }}</div></div>
   <div class="kpi"><div class="label">Warning</div><div class="value mono" style="color:var(--warn)">{{ warning_count }}</div></div>
-  <div class="kpi"><div class="label">Resolved</div><div class="value mono" style="color:var(--accent)">{{ resolved_alarms|length }}</div></div>
+  <div class="kpi"><div class="label">Audit</div><div class="value mono" style="color:var(--accent)">kept</div></div>
 </section>
 
 <section class="panel">
@@ -24,14 +24,4 @@
   </div>
 </section>
 
-<section class="panel">
-  <div class="panel-header"><h3>Recently resolved</h3></div>
-  <div class="panel-body">
-    {% for alarm in resolved_alarms %}
-    {% include "alarm_card.html" %}
-    {% else %}
-    <div class="muted">No resolved alarms yet.</div>
-    {% endfor %}
-  </div>
-</section>
 {% endblock %}

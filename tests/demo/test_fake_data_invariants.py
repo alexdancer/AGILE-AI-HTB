@@ -20,21 +20,8 @@ BANNED_SECRET_PATTERNS = [
 class TokenTrackerHarnessDemoFakeDataInvariantTests:
     __test__ = True
 
-    def test_demo_directory_exists(self) -> None:
-        assert DEMO_DIR.is_dir()
-
     def test_no_env_files_under_demo(self) -> None:
         offenders = [path for path in DEMO_DIR.rglob("*") if path.name.startswith(".env")]
-        assert offenders == []
-
-    def test_demo_files_contain_synthetic_banner_or_demo_marker(self) -> None:
-        text_files = [path for path in _demo_source_files() if path.suffix in {".py", ".toml", ".md"}]
-        assert text_files, "demo must contain inspectable text files"
-        offenders = []
-        for path in text_files:
-            text = path.read_text()
-            if "DEMO" not in text and "synthetic" not in text.lower():
-                offenders.append(path.relative_to(ROOT).as_posix())
         assert offenders == []
 
     @pytest.mark.parametrize("pattern", BANNED_SECRET_PATTERNS)

@@ -33,21 +33,26 @@ def _guardrails(request: Request):
 @router.post("/session/start", dependencies=[Depends(require_portal_auth)])
 def start_session(payload: SessionStartRequest, request: Request) -> dict[str, Any]:
     session_api_key = f"sk_sess_{secrets.token_urlsafe(24)}"
+    database_path = _database_path(request)
     budget = payload.budget or {}
     guardrail_overrides = dict(payload.guardrail_overrides or {})
     if budget:
         guardrail_overrides["budget"] = budget
     session = db.create_session(
-        _database_path(request),
+        database_path,
         task_description=payload.task_description,
         model=payload.model,
         session_key_hash=_hash_key(session_api_key),
         guardrail_overrides=guardrail_overrides,
     )
     config = _guardrails(request)
+    daily_used_tokens = int(budget.get("daily_used_tokens", 0)) + db.budgeted_token_usage(
+        database_path,
+        since=db.effective_daily_budget_window_start(database_path, timezone=request.app.state.settings.timezone),
+    )
     starting_zone = get_budget_zone(
-        int(budget.get("daily_used_tokens", 0)),
-        _daily_cap_tokens(budget, config),
+        daily_used_tokens,
+        _daily_cap_tokens(budget, config, database_path),
         config,
     )
     return {
@@ -119,9 +124,13 @@ def _tool_breakdown(artifact: dict[str, Any]) -> dict[str, dict[str, int]]:
     return breakdown
 
 
-def _daily_cap_tokens(budget: dict[str, Any], config) -> int | None:
+def _daily_cap_tokens(budget: dict[str, Any], config, database_path=None) -> int | None:
     if "daily_cap_tokens" in budget:
         return int(budget["daily_cap_tokens"])
+    if database_path is not None:
+        stored = db.get_token_budget_settings(database_path)
+        if stored.get("daily_cap_tokens") is not None:
+            return int(stored["daily_cap_tokens"])
     if config.daily_cap.enabled:
         return config.daily_cap.tokens
     return None

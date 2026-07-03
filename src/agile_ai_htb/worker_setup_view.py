@@ -18,11 +18,14 @@ def worker_adapter_view_models(database_path: Path | str) -> list[dict[str, Any]
         readiness = evaluate_adapter_readiness(adapter)
         tracking = readiness.tracking_view()
         available_tracking_modes = available_worker_tracking_modes(adapter)
+        verification_evidence = safe_evidence(adapter.get("verification_evidence") or {})
+        verification_diagnostic = verification_evidence.get("diagnostic") if isinstance(verification_evidence, dict) else None
         adapters.append(
             {
                 **adapter,
                 "supported_models": allowed_worker_model_ids(adapter),
-                "verification_evidence": safe_evidence(adapter.get("verification_evidence") or {}),
+                "verification_evidence": verification_evidence,
+                "verification_diagnostic": verification_diagnostic if isinstance(verification_diagnostic, dict) else None,
                 "diagnostics": config.get("_diagnostics") or {},
                 "launchable": readiness.ui_launchable,
                 "discovered_models": discovered_worker_model_ids(adapter),
@@ -48,6 +51,13 @@ def worker_setup_next_action(active_adapter: dict[str, Any] | None, has_projects
     if not active_adapter.get("supported_models"):
         return {"label": "Approve Worker models", "href": f"/settings/workers?adapter_id={active_adapter['id']}", "detail": "Select at least one discovered model for governed launch."}
     if not active_adapter.get("launchable"):
+        diagnostic = active_adapter.get("verification_diagnostic") or {}
+        if diagnostic.get("summary"):
+            return {
+                "label": "Fix CLI setup",
+                "href": str(diagnostic.get("setup_href") or f"/settings/workers?adapter_id={active_adapter['id']}"),
+                "detail": str(diagnostic["summary"]),
+            }
         return {"label": "Verify adapter", "href": f"/settings/workers?adapter_id={active_adapter['id']}", "detail": "Run verification to make this adapter launch-ready."}
     if not has_projects:
         return {"label": "Open local repo", "href": "/projects", "detail": "Connect a project workspace for project-scoped launch."}
@@ -141,4 +151,4 @@ def adapter_can_emit_native_usage(adapter: dict[str, Any]) -> bool:
     config = adapter.get("config") or {}
     if config.get("native_verification_template"):
         return True
-    return adapter.get("kind") in {"claude_code", "opencode"}
+    return adapter.get("kind") in {"claude_code", "codex", "opencode"}

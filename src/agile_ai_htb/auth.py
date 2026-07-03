@@ -16,6 +16,9 @@ PORTAL_COOKIE_MAX_AGE_SECONDS = 12 * 60 * 60
 
 
 def require_portal_auth(request: Request) -> None:
+    if not request.app.state.settings.portal_auth_required:
+        return
+
     token_env = request.app.state.settings.portal_token_env
     expected_token = os.getenv(token_env, "")
     if not expected_token:

@@ -15,4 +15,4 @@ Do not include API keys, portal tokens, bearer tokens, `.htb/secrets.env`, raw c
 - `.htb/config.toml` is non-secret operator config.
 - `.htb/secrets.env` is ignored local secret storage.
 - The Portal writes submitted control-plane API key values only to ignored local secret storage and does not show them again.
-- Native Worker CLIs such as OpenCode, Claude Code, Codex, and Hermes keep their own auth/config unless explicitly routed through the Harness Proxy.
+- Native Worker CLIs such as OpenCode, Claude Code, and Codex keep their own auth/config unless explicitly routed through the Harness Proxy.

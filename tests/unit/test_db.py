@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import UTC, datetime
 
 import pytest
 
@@ -8,6 +9,7 @@ from agile_ai_htb.db import (
     create_session,
     create_task,
     estimation_accuracy,
+    effective_daily_budget_window_start,
     get_session,
     init_db,
     record_alarm,
@@ -15,6 +17,8 @@ from agile_ai_htb.db import (
     record_guardrail_snapshot,
     record_token_turn,
     record_tool_trace,
+    reset_daily_budget_counter,
+    set_token_budget_settings,
     update_session_status,
 )
 
@@ -251,6 +255,71 @@ def test_record_token_turn_persists_explicit_usage_kind(tmp_path):
     artifact = build_session_artifact(db_path, session["id"])
 
     assert artifact["token_log"][0]["usage_kind"] == "estimation"
+
+
+def test_daily_budget_reset_moves_window_without_deleting_token_rows(tmp_path):
+    db_path = tmp_path / "harness.db"
+    init_db(db_path)
+    set_token_budget_settings(db_path, daily_cap_tokens=1000, session_cap_tokens=500)
+    session = create_session(
+        db_path,
+        task_description="Spend before reset",
+        model="claude-haiku",
+        session_key_hash="hash-before-reset",
+        guardrail_overrides={},
+    )
+    record_token_turn(
+        db_path,
+        session_id=session["id"],
+        model="claude-haiku",
+        prompt_tokens=400,
+        completion_tokens=100,
+        cost=0.0,
+        raw_usage={"total_tokens": 500, "spend_category": "worker_execution"},
+    )
+    reset_at = "2099-01-01T12:00:00+00:00"
+    with connect(db_path) as conn:
+        conn.execute("update token_turns set created_at = ?", ("2099-01-01T11:00:00+00:00",))
+
+    saved = reset_daily_budget_counter(db_path, reset_at=reset_at)
+    window_start = effective_daily_budget_window_start(
+        db_path,
+        timezone="UTC",
+        now=datetime(2099, 1, 1, 13, 0, tzinfo=UTC),
+    )
+
+    with connect(db_path) as conn:
+        token_rows = conn.execute("select count(*) from token_turns").fetchone()[0]
+    assert saved["daily_usage_reset_at"] == reset_at
+    assert window_start == reset_at
+    assert token_rows == 1
+    assert build_session_artifact(db_path, session["id"])["token_log"][0]["total_tokens"] == 500
+
+
+def test_daily_budget_reset_from_previous_day_does_not_hide_new_day_usage(tmp_path):
+    db_path = tmp_path / "harness.db"
+    init_db(db_path)
+    reset_daily_budget_counter(db_path, reset_at="2099-01-01T23:00:00+00:00")
+
+    window_start = effective_daily_budget_window_start(
+        db_path,
+        timezone="UTC",
+        now=datetime(2099, 1, 2, 9, 0, tzinfo=UTC),
+    )
+
+    assert window_start == "2099-01-02T00:00:00+00:00"
+
+
+def test_saving_budget_settings_preserves_daily_reset_marker(tmp_path):
+    db_path = tmp_path / "harness.db"
+    init_db(db_path)
+    reset_daily_budget_counter(db_path, reset_at="2099-01-01T12:00:00+00:00")
+
+    saved = set_token_budget_settings(db_path, daily_cap_tokens=2000, session_cap_tokens=800)
+
+    assert saved["daily_cap_tokens"] == 2000
+    assert saved["session_cap_tokens"] == 800
+    assert saved["daily_usage_reset_at"] == "2099-01-01T12:00:00+00:00"
 
 
 def test_init_db_migrates_existing_token_turns_to_worker_usage_kind(tmp_path):

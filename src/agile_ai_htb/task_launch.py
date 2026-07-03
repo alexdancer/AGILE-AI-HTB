@@ -11,11 +11,11 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from agile_ai_htb import db
 from agile_ai_htb.adapter_readiness import evaluate_adapter_readiness
 from agile_ai_htb.launch_guardrails import evaluate_launch_guardrails
+from agile_ai_htb.native_cli_diagnostics import native_cli_diagnostic, redact_native_cli_text
 from agile_ai_htb.native_usage import NativeUsageEvidence, parse_native_usage_evidence
 from agile_ai_htb.project_context import project_task_metadata, resolve_task_project
 from agile_ai_htb.repo_context import build_repo_context_brief, repo_context_prompt
@@ -234,7 +234,7 @@ def _launch_task_unlocked(
         )
         raise TaskLaunchBlocked(blocked, ["Native usage budget override requires acknowledgement that runtime request throttling is not available."])
 
-    before_tree = _git_porcelain(project_root) if project_root else None
+    before_tree = _read_only_tree_snapshot(project_root) if project_root else None
     repo_context = build_repo_context_brief(project_root)
     task_prompt = repo_context_prompt(task["description"], repo_context)
     task_branch = None
@@ -621,14 +621,36 @@ def _classify_worker_run_result(
             returncode=result.returncode,
             allow_failed_returncode=result.returncode != 0,
         )
-    if result.returncode != 0:
+    action_rejections = _worker_action_rejections(result.stdout, result.stderr)
+    if action_rejections:
+        reason = "Worker action was rejected by the adapter sandbox or approval policy; operator approval or adapter sandbox changes are required."
         return WorkerRunOutcome(
             kind="recoverable_failure",
-            error_type="worker_adapter_failure",
-            reason="Worker adapter launch failed.",
+            error_type="worker_action_rejected",
+            reason=reason,
             native_evidence=native_evidence,
             marker_stdout=result.stdout,
             marker_stderr=result.stderr,
+            guardrail_reasons=(reason,),
+            evidence={"action_rejections": action_rejections},
+        )
+
+    if result.returncode != 0:
+        diagnostic = native_cli_diagnostic(
+            adapter_id=str((getattr(plan, "metadata", {}) or {}).get("adapter_id") or ""),
+            adapter_kind=str((getattr(plan, "metadata", {}) or {}).get("kind") or ""),
+            stdout=result.stdout,
+            stderr=result.stderr,
+            returncode=result.returncode,
+        )
+        return WorkerRunOutcome(
+            kind="recoverable_failure",
+            error_type="worker_adapter_failure",
+            reason=diagnostic["summary"] if diagnostic and diagnostic.get("code") != "native_cli_failure" else "Worker adapter launch failed.",
+            native_evidence=native_evidence,
+            marker_stdout=result.stdout,
+            marker_stderr=result.stderr,
+            evidence={"launch_diagnostic": diagnostic} if diagnostic else None,
         )
 
     permission_denials = _permission_denial_tools(result.stdout)
@@ -694,7 +716,7 @@ def _classify_worker_run_result(
     if write_capable:
         return WorkerRunOutcome(kind="write_capable", native_evidence=native_evidence, workdir_evidence=workdir_evidence)
 
-    after_tree = _git_porcelain(project_root) if project_root else before_tree
+    after_tree = _read_only_tree_snapshot(project_root) if project_root else before_tree
     if read_only and before_tree != after_tree:
         return WorkerRunOutcome(
             kind="read_only_mutation",
@@ -703,6 +725,26 @@ def _classify_worker_run_result(
             native_evidence=native_evidence,
             workdir_evidence=workdir_evidence,
             readonly_diff_evidence={"before": before_tree, "after": after_tree},
+        )
+
+    if (
+        tracking_mode == NATIVE_USAGE
+        and (getattr(plan, "metadata", {}) or {}).get("kind") == "codex"
+        and not read_only
+        and project_root
+        and before_tree == after_tree
+    ):
+        reason = "Worker completed but produced no filesystem changes in the connected project."
+        return WorkerRunOutcome(
+            kind="recoverable_failure",
+            error_type="no_workdir_changes",
+            reason=reason,
+            native_evidence=native_evidence,
+            workdir_evidence=workdir_evidence,
+            marker_stdout=result.stdout,
+            marker_stderr=result.stderr,
+            guardrail_reasons=(reason,),
+            evidence={"workdir_evidence": workdir_evidence},
         )
 
     return WorkerRunOutcome(kind="completed", native_evidence=native_evidence, workdir_evidence=workdir_evidence)
@@ -1022,8 +1064,6 @@ def _mark_recoverable_launch_failure(
         failure["stderr"] = _safe_text(stderr)
     if stdout:
         failure["stdout"] = _safe_text(stdout)
-    if evidence:
-        failure.update(evidence)
     metadata = {
         **claimed.get("metadata", {}),
         "last_launch_failure": failure,
@@ -1056,6 +1096,7 @@ def _clear_recoverable_launch_failure_metadata(metadata: dict[str, Any]) -> dict
         "launch_guardrail_reasons",
         "launch_stderr",
         "launch_stdout",
+        "launch_diagnostic",
     ):
         cleared.pop(key, None)
     return cleared
@@ -1098,7 +1139,9 @@ def abort_worker_session(database_path: Path | str, session_id: str, *, reason: 
 def _evaluate_launch_budget(database_path: Path | str, task: dict[str, Any], *, budget_since: str | None = None) -> dict[str, Any]:
     budget = dict(db.get_token_budget_settings(database_path))
     budget.update((task.get("metadata") or {}).get("budget") or {})
-    budget_since = budget_since or str(budget.get("budget_since") or _current_day_start_iso("local"))
+    budget_since = budget_since or str(
+        budget.get("budget_since") or db.effective_daily_budget_window_start(database_path, timezone="local")
+    )
     daily_cap = _optional_int(budget.get("daily_cap_tokens"))
     session_cap = _optional_int(budget.get("session_cap_tokens"))
     daily_used = _optional_int(budget.get("daily_used_tokens")) or 0
@@ -1180,7 +1223,10 @@ def _record_budget_overrun_if_needed(database_path: Path | str, session_id: str)
     session_cap = _optional_int(budget.get("session_cap_tokens"))
     daily_cap = _optional_int(budget.get("daily_cap_tokens"))
     daily_used = _optional_int(budget.get("daily_used_tokens")) or 0
-    budget_since = str(budget.get("budget_since") or _current_day_start_iso("local"))
+    budget_since = _latest_budget_window_start(
+        budget.get("budget_since"),
+        db.effective_daily_budget_window_start(database_path, timezone="local"),
+    )
     daily_budgeted_tokens = db.budgeted_token_usage(database_path, since=budget_since)
     session_used = db.session_token_breakdown(database_path, session_id)["by_category"]["worker_execution"]
     daily_total = daily_used + daily_budgeted_tokens
@@ -1208,14 +1254,24 @@ def _record_budget_overrun_if_needed(database_path: Path | str, session_id: str)
 
 
 def _current_day_start_iso(timezone: str) -> str:
-    if timezone == "local":
-        now = datetime.now().astimezone()
-    else:
+    return db.current_day_start_iso(timezone)
+
+
+def _latest_budget_window_start(*values: Any) -> str:
+    parsed_values: list[datetime] = []
+    for value in values:
+        if not value:
+            continue
         try:
-            now = datetime.now(ZoneInfo(timezone))
-        except Exception:
-            now = datetime.now(UTC)
-    return now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC).isoformat()
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        parsed_values.append(parsed.astimezone(UTC))
+    if not parsed_values:
+        return datetime.now(UTC).isoformat()
+    return max(parsed_values).isoformat()
 
 
 def _optional_int(value: Any) -> int | None:
@@ -1294,6 +1350,25 @@ def _finalize_write_capable_launch(
         "pr_capability": detect_pr_capability(project_root) if project_root else {"available": False, "reason": "No project root."},
     }
     actual_tokens = _worker_execution_token_total(database_path, session["id"])
+    if not diff_summary["has_changes"]:
+        reason = "Worker completed but produced no code changes."
+        db.update_session_status(database_path, session["id"], "failed")
+        failed = db.update_task(
+            database_path,
+            task_id,
+            {
+                "status": "Blocked",
+                "session_id": session["id"],
+                "actual_tokens": actual_tokens,
+                "metadata": {
+                    **base_metadata,
+                    "launch_blocked_reason": reason,
+                    "launch_guardrail_reasons": [reason],
+                    "blocked_reason": reason,
+                },
+            },
+        )
+        raise TaskLaunchBlocked(failed, [reason])
     if not test_command:
         db.update_session_status(database_path, session["id"], "completed")
         return db.update_task(
@@ -1438,6 +1513,54 @@ def _permission_denial_tools(stdout: str) -> list[str]:
     return tools[:20]
 
 
+def _worker_action_rejections(stdout: str, stderr: str) -> list[str]:
+    rejections: list[str] = []
+    seen: set[str] = set()
+    for line in (stdout + "\n" + stderr).splitlines():
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            candidates = [line]
+        else:
+            candidates = _json_string_values(payload)
+        for candidate in candidates:
+            text = " ".join(str(candidate).split())
+            if not text or not _looks_like_action_rejection(text):
+                continue
+            safe = _safe_text(text, limit=500)
+            if safe not in seen:
+                seen.add(safe)
+                rejections.append(safe)
+    return rejections[:10]
+
+
+def _json_string_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        strings: list[str] = []
+        for nested in value.values():
+            strings.extend(_json_string_values(nested))
+        return strings
+    if isinstance(value, list):
+        strings = []
+        for nested in value:
+            strings.extend(_json_string_values(nested))
+        return strings
+    return []
+
+
+def _looks_like_action_rejection(text: str) -> bool:
+    lowered = text.lower()
+    if "createprocess" in lowered and "reject" in lowered:
+        return True
+    if "sandbox" in lowered and any(term in lowered for term in ("reject", "blocked", "denied", "not permitted")):
+        return True
+    if "requires approval" in lowered or "approval required" in lowered:
+        return True
+    return False
+
+
 def _workdir_run_evidence(plan: Any, *, stdout: str, stderr: str) -> dict[str, Any]:
     configured = Path(plan.cwd).resolve() if getattr(plan, "cwd", None) else None
     top_level_entries: list[str] = []
@@ -1472,7 +1595,7 @@ def _outside_workdir_paths(text: str, configured_workdir: Path | None) -> list[s
         return []
     paths: list[str] = []
     seen: set[str] = set()
-    for match in re.finditer(r"/(?:Users|private|tmp|var|Volumes)/[^\s'\"`<>),]+", text):
+    for match in re.finditer(r"/(?:Users|private|tmp|var|Volumes)/[^\s'\"`<>),\\]+", text):
         raw = match.group(0).rstrip(".:;]")
         try:
             candidate = Path(raw).resolve()
@@ -1507,6 +1630,71 @@ def _git_porcelain(root_path: str | None) -> str | None:
     return result.stdout.strip()
 
 
+def _read_only_tree_snapshot(root_path: str | None) -> str | None:
+    if not root_path:
+        return None
+    root = Path(root_path)
+    if not root.exists():
+        return None
+    if (root / ".git").exists():
+        return _git_worktree_snapshot(root)
+
+    entries: list[str] = []
+    for path in sorted(root.rglob("*")):
+        try:
+            relative = path.relative_to(root)
+        except ValueError:
+            continue
+        if ".git" in relative.parts or path.is_dir():
+            continue
+        entries.append(_tree_snapshot_entry(path, relative))
+    return "\n".join(entries)
+
+
+def _git_worktree_snapshot(root: Path) -> str:
+    parts = [
+        "status\n" + (_git_porcelain(str(root)) or ""),
+        "diff\n" + _git_output(root, ["diff", "--no-ext-diff", "--binary"]),
+        "cached\n" + _git_output(root, ["diff", "--cached", "--no-ext-diff", "--binary"]),
+    ]
+    untracked = _git_output(root, ["ls-files", "--others", "--exclude-standard", "-z"])
+    entries = []
+    for name in sorted(path for path in untracked.split("\0") if path):
+        path = root / name
+        if path.is_file():
+            entries.append(_tree_snapshot_entry(path, Path(name)))
+    if entries:
+        parts.append("untracked\n" + "\n".join(entries))
+    return "\n".join(parts)
+
+
+def _git_output(root: Path, args: list[str]) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    return result.stdout if result.returncode == 0 else ""
+
+
+def _tree_snapshot_entry(path: Path, relative: Path) -> str:
+    try:
+        stat = path.stat()
+    except OSError:
+        return f"{relative.as_posix()} <missing>"
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        digest.update(b"<unreadable>")
+    return f"{relative.as_posix()} {stat.st_size} {digest.hexdigest()}"
+
+
 def _read_only_report_metadata(task: dict[str, Any]) -> dict[str, Any]:
     profile = (task.get("metadata") or {}).get("project_profile") or {}
     return {
@@ -1521,7 +1709,7 @@ def _read_only_report_metadata(task: dict[str, Any]) -> dict[str, Any]:
 
 
 def _safe_text(value: str, *, limit: int = 500) -> str:
-    safe = SESSION_KEY_PATTERN.sub("***REDACTED***", value)
+    safe = redact_native_cli_text(SESSION_KEY_PATTERN.sub("***REDACTED***", value))
     for pattern in SECRETISH_PATTERNS:
         safe = pattern.sub("***REDACTED***", safe)
     return safe[:limit]

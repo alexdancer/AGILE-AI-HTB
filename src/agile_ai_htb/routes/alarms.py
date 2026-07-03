@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from agile_ai_htb import db
 from agile_ai_htb.auth import require_portal_auth
@@ -24,6 +25,40 @@ AlarmAction = Literal["continue", "abort_session", "raise_budget", "adjust_guard
 class ResolveAlarmRequest(BaseModel):
     action: AlarmAction
     payload: dict[str, Any] | None = None
+
+
+RESOLVE_ALARM_OPENAPI_EXTRA = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["continue", "abort_session", "raise_budget", "adjust_guardrail"],
+                        },
+                        "payload": {"type": "object", "additionalProperties": True, "nullable": True},
+                    },
+                    "required": ["action"],
+                }
+            },
+            "application/x-www-form-urlencoded": {
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["continue", "abort_session", "raise_budget", "adjust_guardrail"],
+                        }
+                    },
+                    "required": ["action"],
+                }
+            },
+        },
+    }
+}
 
 
 @router.get("/alarms", response_model=None)
@@ -44,7 +79,6 @@ def list_alarms(
     if _wants_html(request):
         require_portal_auth(request)
         open_alarms = [alarm for alarm in alarms if not alarm.get("resolved_at")]
-        resolved_alarms = [alarm for alarm in alarms if alarm.get("resolved_at")]
         critical_count = sum(
             1 for alarm in open_alarms if str(alarm.get("severity", "")).lower() in {"critical", "high"}
         )
@@ -57,7 +91,6 @@ def list_alarms(
             {
                 "active_page": "alarms",
                 "open_alarms": open_alarms,
-                "resolved_alarms": resolved_alarms,
                 "critical_count": critical_count,
                 "warning_count": warning_count,
             },
@@ -65,10 +98,14 @@ def list_alarms(
     return {"alarms": alarms}
 
 
-@router.post("/alarms/{alarm_id}/resolve")
-def resolve_alarm(alarm_id: str, payload: ResolveAlarmRequest, request: Request) -> dict[str, Any]:
+@router.post("/alarms/{alarm_id}/resolve", response_model=None, openapi_extra=RESOLVE_ALARM_OPENAPI_EXTRA)
+async def resolve_alarm(alarm_id: str, request: Request) -> dict[str, Any] | RedirectResponse:
+    wants_html = _wants_html(request)
+    if wants_html:
+        require_portal_auth(request)
+    payload = await _resolve_alarm_request(request)
     try:
-        return db.resolve_alarm(
+        result = db.resolve_alarm(
             request.app.state.settings.database_path,
             alarm_id=alarm_id,
             action=payload.action,
@@ -76,6 +113,24 @@ def resolve_alarm(alarm_id: str, payload: ResolveAlarmRequest, request: Request)
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="alarm not found") from exc
+    if wants_html:
+        return RedirectResponse("/alarms", status_code=status.HTTP_303_SEE_OTHER)
+    return result
+
+
+async def _resolve_alarm_request(request: Request) -> ResolveAlarmRequest:
+    content_type = request.headers.get("content-type", "")
+    try:
+        if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+            form = await request.form()
+            data: dict[str, Any] = {"action": form.get("action")}
+        else:
+            data = await request.json()
+        return ResolveAlarmRequest.model_validate(data)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail="invalid JSON body") from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
 
 
 def _wants_html(request: Request) -> bool:

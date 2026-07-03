@@ -19,7 +19,7 @@ DEFAULT_LOCAL_CONFIG: dict[str, Any] = {
     "port": 8000,
     "portal_token_env": "TOKEN_TRACKER_PORTAL_TOKEN",
     "control_plane_provider": "openai",
-    "control_plane_model": "gpt-5.4-mini",
+    "control_plane_model": "gpt-5.4",
     "control_plane_api_key_env": "AGILE_AI_HTB_CONTROL_API_KEY",
     "local_runner_enabled": True,
 }
@@ -133,7 +133,7 @@ def secret_export_lines(config: dict[str, Any]) -> list[str]:
     portal_token_env, control_key_env = secret_env_names(config)
     portal_token = f"htb-{secrets.token_urlsafe(18)}"
     return [
-        f"# {portal_token_env} is the portal login token value. Replace the generated value if you want your own.",
+        f"# {portal_token_env} is the portal token for shared/non-loopback access. Replace the generated value if you want your own.",
         f"export {portal_token_env}={shlex.quote(portal_token)}",
         f"# {control_key_env} is your provider API key value: OpenAI, Anthropic, or OpenAI-compatible.",
         f"export {control_key_env}={shlex.quote(CONTROL_API_KEY_PLACEHOLDER)}",

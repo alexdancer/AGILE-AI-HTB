@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from typing import Any
 
 
+CODEX_NATIVE_MODELS = {"5.3-codex-spark", "5.4", "5.4-mini", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5"}
+
+
 @dataclass(frozen=True)
 class NativeUsageEvidence:
     prompt_tokens: int
@@ -102,9 +105,11 @@ def token_usage_components(
     reasoning = _first_int(
         usage,
         "reasoning_tokens",
+        "reasoning_output_tokens",
         "reasoning",
         "tokens.reasoning",
         "usage.reasoning_tokens",
+        "usage.reasoning_output_tokens",
         "usage.reasoning",
     )
     reasoning_is_additive = reasoning is not None
@@ -159,41 +164,51 @@ def parse_native_usage_evidence(
 ) -> NativeUsageEvidence | None:
     if returncode != 0 and not allow_failed_returncode:
         return None
-    for item in _walk_json_dicts(_parse_json_stream(stdout)):
+    parsed = _parse_json_stream(stdout)
+    codex_stream_binding = _codex_stream_binding(parsed, selected_model=model)
+    for item in _walk_json_dicts(parsed):
         usage = _usage_payload(item)
         if not usage:
             continue
         explicit_model = _usage_model(item, usage)
-        if explicit_model and explicit_model != model:
+        if explicit_model and not _model_usage_matches(explicit_model, selected_model=model):
             continue
         model_usage_map = item.get("modelUsage") or item.get("model_usage")
+        codex_turn_usage = returncode == 0 and _is_codex_turn_completed_usage(
+            item,
+            usage,
+            selected_model=model,
+            codex_stream_binding=codex_stream_binding,
+        )
         if (
             not explicit_model
             and (not isinstance(model_usage_map, dict) or _matching_model_usage(model_usage_map, model=model) is None)
             and not _selected_model_bound_usage(item, usage)
+            and not codex_turn_usage
         ):
             continue
-        run_binding = _usage_run_binding(item, usage)
+        run_binding = _usage_run_binding(item, usage) or (codex_stream_binding if codex_turn_usage else None)
         if run_binding is None:
             continue
         prompt_tokens = _prompt_token_count(usage)
         completion_tokens = _completion_token_count(usage)
         total_tokens = _int_from_any(usage.get("total_tokens") or usage.get("total"))
         if total_tokens <= 0:
-            total_tokens = prompt_tokens + completion_tokens
+            total_tokens = prompt_tokens + completion_tokens + _reasoning_token_count(usage)
         cost = _native_usage_cost(item, usage, model=model)
-        if total_tokens <= 0 or cost is None:
+        if total_tokens <= 0 or (cost is None and not codex_turn_usage):
             continue
         return NativeUsageEvidence(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
-            cost=cost,
+            cost=cost or 0.0,
             raw_usage={
                 "model": explicit_model or model,
                 "usage": usage,
                 "run_binding": run_binding,
                 "source": item,
+                **({"cost_unavailable": True} if cost is None else {}),
             },
         )
     return None
@@ -216,6 +231,10 @@ def _completion_token_count(usage: dict[str, Any]) -> int:
     return _int_from_any(
         usage.get("completion_tokens") or usage.get("output_tokens") or usage.get("output") or usage.get("tokens_out")
     )
+
+
+def _reasoning_token_count(usage: dict[str, Any]) -> int:
+    return _int_from_any(usage.get("reasoning_tokens") or usage.get("reasoning_output_tokens") or usage.get("reasoning"))
 
 
 def _native_usage_cost(item: dict[str, Any], usage: dict[str, Any], *, model: str) -> float | None:
@@ -304,7 +323,7 @@ def _usage_model(item: dict[str, Any], usage: dict[str, Any]) -> str | None:
 
 def _usage_run_binding(item: dict[str, Any], usage: dict[str, Any]) -> dict[str, str] | None:
     for container in (item, usage):
-        for key in ("session_id", "sessionID", "run_id", "command_id", "conversation_id", "messageID"):
+        for key in ("session_id", "sessionID", "run_id", "command_id", "conversation_id", "thread_id", "messageID"):
             if container.get(key):
                 return {key: str(container[key])}
     return None
@@ -313,6 +332,29 @@ def _usage_run_binding(item: dict[str, Any], usage: dict[str, Any]) -> dict[str,
 def _selected_model_bound_usage(item: dict[str, Any], usage: dict[str, Any]) -> bool:
     # ponytail: OpenCode step-finish stopped repeating model; the command plan already pins the selected model.
     return item.get("type") == "step-finish" and item.get("tokens") is usage and _usage_run_binding(item, usage) is not None
+
+
+def _is_codex_turn_completed_usage(
+    item: dict[str, Any], usage: dict[str, Any], *, selected_model: str, codex_stream_binding: dict[str, str] | None
+) -> bool:
+    if selected_model not in CODEX_NATIVE_MODELS:
+        return False
+    if item.get("type") != "turn.completed" or item.get("usage") is not usage:
+        return False
+    return _usage_run_binding(item, usage) is not None or codex_stream_binding is not None
+
+
+def _codex_stream_binding(values: list[Any], *, selected_model: str) -> dict[str, str] | None:
+    for item in _walk_json_dicts(values):
+        if item.get("type") != "thread.started":
+            continue
+        thread_model = _usage_model(item, item) or _nested_value(item, "thread.model")
+        if thread_model and not _model_usage_matches(str(thread_model), selected_model=selected_model):
+            return None
+        thread_id = item.get("thread_id") or _nested_value(item, "thread.id")
+        if thread_id:
+            return {"thread_id": str(thread_id)}
+    return None
 
 
 def _looks_like_usage_key(key: str) -> bool:
@@ -330,6 +372,7 @@ def _looks_like_usage_key(key: str) -> bool:
         "output",
         "total",
         "reasoning",
+        "reasoning_output_tokens",
         "cache_read_input_tokens",
         "cache_creation_input_tokens",
         "cached_input_tokens",

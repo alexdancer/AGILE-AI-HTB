@@ -39,7 +39,6 @@
     .topbar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 20px; background: var(--bg-1); border-bottom: 1px solid var(--line); }
     .brand { font-family: var(--mono); font-weight: 700; letter-spacing: 0.16em; color: var(--accent); text-transform: uppercase; }
     .brand .dot { color: var(--fg-3); margin: 0 6px; }
-    .topbar .meta { font-family: var(--mono); font-size: 12px; color: var(--fg-2); }
     .sidebar { background: var(--bg-1); border-right: 1px solid var(--line); padding: 20px 0; }
     .sidebar nav { display: flex; flex-direction: column; }
     .sidebar a { padding: 8px 20px; color: var(--fg-1); font-family: var(--mono); font-size: 13px; border-left: 2px solid transparent; }
@@ -81,6 +80,9 @@
     .status-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; padding: 12px 14px; background: var(--bg-1); border: 1px solid var(--line); border-radius: 6px; }
     .status-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .status-item { font-family: var(--mono); font-size: 12px; color: var(--fg-2); }
+    .workspace-nav { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+    .workspace-nav a { display: inline-block; font-family: var(--mono); font-size: 13px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--bg-0); background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 6px; padding: 10px 18px; text-decoration: none; box-shadow: 0 1px 0 rgba(255,255,255,0.08) inset; }
+    .workspace-nav a:hover { background: var(--accent); border-color: var(--accent); color: var(--bg-0); text-decoration: none; }
     .section-label { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-2); margin: 0 0 8px; }
     .empty-state { color: var(--fg-2); border: 1px dashed var(--line-2); border-radius: 4px; padding: 12px; background: rgba(255,255,255,0.02); }
     .notice { border-left: 3px solid var(--info); background: rgba(92,184,242,0.08); padding: 10px 12px; border-radius: 4px; margin: 8px 0; }
@@ -113,6 +115,20 @@
     .mt-12 { margin-top: 12px; }
     .raw-evidence { white-space: pre-wrap; max-height: 260px; overflow: auto; background: rgba(0,0,0,0.18); padding: 10px; border-radius: 4px; overflow-wrap: anywhere; }
     .raw-evidence.tall { max-height: 360px; }
+    .agent-review-card { margin-top: 10px; padding: 12px; border: 1px solid rgba(181,140,242,0.38); border-radius: 8px; background: linear-gradient(135deg, rgba(181,140,242,0.12), rgba(92,242,196,0.05)); }
+    .agent-review-card.compact { padding: 10px; }
+    .agent-review-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+    .agent-review-title { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-1); }
+    .agent-review-status { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .agent-review-summary { margin: 0; color: var(--fg-0); overflow-wrap: anywhere; }
+    .agent-review-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; font-family: var(--mono); font-size: 11px; color: var(--fg-2); }
+    .review-findings { display: grid; gap: 8px; margin-top: 10px; }
+    .review-finding { border: 1px solid var(--line); border-left: 3px solid var(--info); border-radius: 6px; background: rgba(0,0,0,0.14); padding: 9px 10px; }
+    .review-finding.severity-high, .review-finding.severity-critical { border-left-color: var(--danger); }
+    .review-finding.severity-medium { border-left-color: var(--warn); }
+    .review-finding.severity-low { border-left-color: var(--accent-dim); }
+    .review-finding-head { display: flex; gap: 8px; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+    .review-finding-path { font-family: var(--mono); font-size: 11px; color: var(--fg-2); }
     .task-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 8px 0; color: var(--fg-2); overflow-wrap: anywhere; }
     .task-details { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
     .task-details.spaced { margin-bottom: 16px; }
@@ -128,6 +144,8 @@
     .pill.muted { color: var(--fg-2); }
     label { display: block; font-size: 12px; color: var(--fg-2); margin-bottom: 6px; }
     input, select, textarea { width: 100%; background: var(--bg-0); border: 1px solid var(--line-2); border-radius: 4px; color: var(--fg-0); font-family: var(--mono); font-size: 13px; padding: 8px 10px; }
+    input[type="checkbox"], input[type="radio"] { width: auto; padding: 0; margin: 0; flex-shrink: 0; vertical-align: middle; }
+    label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { display: flex; align-items: center; gap: 8px; cursor: pointer; }
     input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
     button, .btn { display: inline-block; background: var(--bg-3); border: 1px solid var(--line-2); color: var(--fg-0); padding: 8px 14px; border-radius: 4px; font-family: var(--mono); font-size: 12px; cursor: pointer; text-transform: uppercase; letter-spacing: 0.06em; }
     button:hover, .btn:hover { background: var(--line); }
@@ -161,7 +179,6 @@
   <div class="shell">
     <header class="topbar">
       <div class="brand">AGILE-AI-HTB<span class="dot">·</span><span style="color:var(--fg-1)">Portal</span></div>
-      <div class="meta">live harness · human-in-loop governance</div>
     </header>
     <aside class="sidebar">
       <div class="group">Projects</div>
@@ -198,7 +215,7 @@
         <a href="/settings/project" class="{% if active_page == 'project' %}active{% endif %}">Projects</a>
         <a href="/settings/workers" class="{% if active_page == 'workers' %}active{% endif %}">Worker adapters</a>
       </nav>
-      <form class="logout" action="/logout" method="post"><button type="submit">Logout</button></form>
+      {% if portal_auth_required %}<form class="logout" action="/logout" method="post"><button type="submit">Logout</button></form>{% endif %}
     </aside>
     <main class="main">
       {% block content %}{% endblock %}

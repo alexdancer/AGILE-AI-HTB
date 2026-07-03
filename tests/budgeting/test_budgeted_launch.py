@@ -328,7 +328,7 @@ def test_default_adapter_selection_skips_observed_only_adapter(tmp_path):
         "codex",
         workdir=str(tmp_path),
         config={"launch_template": ["codex", "--model", "{model}"]},
-        supported_models=["gpt-5.1-codex"],
+        supported_models=["gpt-5.4"],
     )
     db.mark_worker_adapter_verification(db_path, "codex", verified=True, evidence={"ok": True})
     task = db.create_task(
@@ -336,7 +336,7 @@ def test_default_adapter_selection_skips_observed_only_adapter(tmp_path):
         description="Use launchable default fallback",
         status="Estimated",
         estimate_tokens=50,
-        recommended_model="gpt-5.1-codex",
+        recommended_model="gpt-5.4",
         metadata={**project_task_metadata(project), "budget": {"daily_used_tokens": 0, "daily_cap_tokens": 100}},
     )
 
@@ -857,6 +857,62 @@ def test_budget_overrun_records_alarm_without_auto_killing_session(tmp_path):
     assert session["status"] == "completed"
     assert alarms
     assert alarms[0]["type"] == "BUDGET_OVERRUN"
+
+
+def test_budget_overrun_alarm_uses_reset_window_after_launch(tmp_path):
+    db_path = tmp_path / "harness.db"
+    task = _verified_budget_task(
+        db_path,
+        tmp_path,
+        estimate=10,
+        budget={"daily_used_tokens": 0, "daily_cap_tokens": 1_000, "session_cap_tokens": 500},
+    )
+    prior_session = db.create_session(
+        db_path,
+        task_description="Pre-reset DEMO budget spend 2099",
+        model="opencode/gpt-5.1",
+        session_key_hash="c" * 64,
+        guardrail_overrides={},
+    )
+    db.record_token_turn(
+        db_path,
+        session_id=prior_session["id"],
+        usage_kind="task_execution",
+        model="opencode/gpt-5.1",
+        prompt_tokens=950,
+        completion_tokens=0,
+        cost=0,
+        raw_usage={"total_tokens": 950},
+    )
+    started = threading.Event()
+    release = threading.Event()
+
+    def runner(plan):
+        started.set()
+        assert release.wait(timeout=2)
+        db.record_token_turn(
+            db_path,
+            session_id=plan.metadata["session_id"],
+            usage_kind="task_execution",
+            model="opencode/gpt-5.1",
+            prompt_tokens=100,
+            completion_tokens=0,
+            cost=0,
+            raw_usage={"total_tokens": 100},
+        )
+        return {"returncode": 0, "stdout": "done", "stderr": ""}
+
+    result = launch_task(db_path, task["id"], adapter_id="opencode", model=None, proxy_url=None, runner=runner)
+    assert result.task["status"] == "Running"
+    assert started.wait(timeout=2)
+    db.reset_daily_budget_counter(db_path)
+    release.set()
+    _wait_for_worker_run(db_path, task["id"], "completed")
+
+    assert result.session is not None
+    session = db.get_session(db_path, result.session["id"])
+    assert session["status"] == "completed"
+    assert db.list_alarms(db_path, session_id=session["id"], alarm_type="BUDGET_OVERRUN") == []
 
 
 def test_stale_worker_run_recovery_marks_task_retryable(tmp_path):

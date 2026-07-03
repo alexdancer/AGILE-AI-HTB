@@ -7,13 +7,16 @@ Parking lot for ideas I actually want to revisit. This is not a roadmap or a pro
 - [ ] **Portal refresh:** make the project board easier to scan, especially project navigation, worker setup, queue status, review evidence, and empty/error states.
 - [ ] **Revamped Frontend:** change the frontend to have more general quality using React or Svelte
 - [ ] **Full CLI:** turn `htb` into a real terminal product for init, serve, check, projects, board tasks, worker setup, runs, reports, and budget status.
+- [ ] **CLI action sign-off:** let operators approve or deny commands/actions requested by Worker CLIs from the terminal, recording the decision as audit evidence without bypassing Harness guardrails.
 - [ ] **MCP facade:** explore using this project as an MCP server so other agents can list projects, inspect boards, create/estimate tasks, launch guarded runs, and fetch artifacts without bypassing Harness guardrails.
 - [ ] **Tool/token map:** visualize which tools and commands a coding agent used, such as `git status`, `grep`, or `rm`, and show token usage tied to those actions.
 - [ ] **Personal token stats:** show a person's token usage by day, with room for useful rollups later.
 - [ ] **Diff Viewer:** Have a diff viewer included
+- [ ] **Parallel task communication:** provide a way for multiple Tasks running in parallel to exchange status, findings, and handoff notes without bypassing Harness guardrails.
 
 ## Fix the sharp edges
 
+- [ ] Revisit Hermes Worker Adapter support later: define a correct non-interactive command shape, prove selected-model verification, and only restore it after trustworthy run-bound usage evidence is available.
 - [ ] Make budget reporting more useful: estimated vs. actual tokens, orchestration vs. Worker tokens, and native-usage override evidence.
 - [ ] Keep Task Breakdown focused on small vertical slices plus a final Acceptance Verification task for integrated features.
 - [ ] Make Agent Review and Worker Run evidence easier to compare from the Portal and CLI.

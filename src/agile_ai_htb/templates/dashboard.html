@@ -28,7 +28,7 @@
   <article class="kpi">
     <div class="label">Daily governed budget</div>
     <div class="value mono">{{ "{:,}".format(budget_token_total) }}{% if daily_cap %} / {{ "{:,}".format(daily_cap) }}{% endif %}</div>
-    <div class="sub">zone: {{ current_zone }} · normalized governed model spend</div>
+    <div class="sub">zone: {{ current_zone }} · normalized governed model spend since {{ budget_since }}</div>
     {% if daily_cap %}<div class="bar"><span style="width:{{ [100, ((budget_token_total / daily_cap) * 100)|round(1)]|min }}%"></span></div>{% endif %}
   </article>
   <article class="kpi">
@@ -134,7 +134,7 @@
       <div class="reco">→ {{ alarm.recommended_action }}</div>
     </div>
     {% else %}
-    <div class="empty-state">No alarms yet.</div>
+    <div class="empty-state">No open alarms.</div>
     {% endfor %}
   </div>
 </section>
