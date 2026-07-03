@@ -8,6 +8,7 @@ SEEDED_WORKER_ADAPTER_MODELS = {
         "claude-opus-4-8",
         "claude-opus-4-7",
         "claude-opus-4-6",
+        "claude-sonnet-5",
         "claude-sonnet-4-6",
         "claude-haiku-4-5",
     ],
@@ -17,6 +18,7 @@ SEEDED_WORKER_ADAPTER_MODELS = {
 
 LEGACY_SEEDED_WORKER_ADAPTER_MODEL_SETS = {
     "claude_code": [
+        ["claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"],
         ["claude-3-5-sonnet-latest", "claude-3-5-sonnet-20240620", "claude-3-haiku-20240307"],
     ],
     "codex": [["5.3-codex-spark", "5.4", "5.4-mini", "5.5"], ["gpt-5.1-codex", "openai/gpt-4.1-mini"]],

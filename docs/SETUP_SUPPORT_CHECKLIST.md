@@ -31,6 +31,12 @@ Include:
 - Worker tracking status shown in the Portal: verified native usage, diagnostic-only, failed, or unknown
 - Whether you are running local Python or Docker
 
+## Safe screenshots
+
+Screenshots are useful when they show sanitized Portal state and no secrets.
+
+![AGILE-AI-HTB task breakdown recovery UI](assets/screenshots/task-breakdown-manual-recovery.png)
+
 ## Boundary reminder
 
 Installing AGILE-AI-HTB exposes the `htb` operator CLI. It does not install or authenticate OpenCode, Claude Code, Codex, provider API keys, portal tokens, or Worker credentials. Native Worker CLI setup happens separately in those tools and through the Portal Worker Adapter setup flow.

@@ -33,16 +33,14 @@ PORTAL_TOKEN="${!PORTAL_TOKEN_ENV:-${TOKEN_TRACKER_PORTAL_TOKEN:-${PORTAL_TOKEN:
 PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 VERIFY_MODEL="${WORKER_MODEL:-}"
 
-if [[ -z "$PORTAL_TOKEN" ]]; then
-  echo "Set ${PORTAL_TOKEN_ENV} or edit ${SECRETS_ENV} with the portal token before running." >&2
-  exit 2
-fi
-
 if [[ -z "$PYTHON_BIN" ]]; then
   echo "Python 3 is required for JSON parsing; install python3 or set PYTHON_BIN." >&2
   exit 2
 fi
-AUTH_HEADER="Authorization: Bearer $PORTAL_TOKEN"
+AUTH_HEADERS=()
+if [[ -n "$PORTAL_TOKEN" ]]; then
+  AUTH_HEADERS=(-H "Authorization: Bearer $PORTAL_TOKEN")
+fi
 
 api() {
   local method="$1"
@@ -52,12 +50,12 @@ api() {
   response_file="$(mktemp)"
   if [[ -n "$data" ]]; then
     status="$(curl -sS -o "$response_file" -w "%{http_code}" -X "$method" "$BASE_URL$path" \
-      -H "$AUTH_HEADER" \
+      "${AUTH_HEADERS[@]}" \
       -H "Content-Type: application/json" \
       --data "$data")"
   else
     status="$(curl -sS -o "$response_file" -w "%{http_code}" -X "$method" "$BASE_URL$path" \
-      -H "$AUTH_HEADER")"
+      "${AUTH_HEADERS[@]}")"
   fi
   if [[ "$status" -ge 400 ]]; then
     echo "Request $method $path returned HTTP $status:" >&2

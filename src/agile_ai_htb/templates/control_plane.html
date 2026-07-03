@@ -27,15 +27,6 @@
     <div class="panel-header"><h3>Choose model</h3></div>
     <div class="panel-body">
       <form method="post" action="/settings/control-plane">
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-          <button type="button" onclick="setControlPlanePreset('openai','gpt-5.4','')">OpenAI · gpt-5.4</button>
-          <button type="button" onclick="setControlPlanePreset('openai','gpt-5.4-mini','')">OpenAI · gpt-5.4-mini</button>
-          <button type="button" onclick="setControlPlanePreset('openai','gpt-5.5','')">OpenAI · gpt-5.5</button>
-          <button type="button" onclick="setControlPlanePreset('anthropic','claude-sonnet-5','')">Anthropic · Claude Sonnet 5</button>
-          <button type="button" onclick="setControlPlanePreset('anthropic','claude-haiku-4-5','')">Anthropic · Claude Haiku 4.5</button>
-          <button type="button" onclick="setControlPlanePreset('openai-compatible','','')">OpenAI-compatible</button>
-        </div>
-
         <label>Provider
           <select id="control_plane_provider" name="control_plane_provider" onchange="syncControlPlaneModelControls()">
             {% for provider in ['openai', 'anthropic', 'openai-compatible'] %}
@@ -128,21 +119,6 @@
 </section>
 
 <script>
-function setControlPlanePreset(provider, model, baseUrl) {
-  document.getElementById('control_plane_provider').value = provider;
-  const modelSelect = document.getElementById('control_plane_model');
-  const customModel = document.getElementById('custom_control_plane_model');
-  if (model) {
-    modelSelect.value = model;
-    customModel.value = '';
-  } else {
-    modelSelect.value = '__custom__';
-    customModel.focus();
-  }
-  document.getElementById('control_plane_base_url').value = baseUrl;
-  syncControlPlaneModelControls();
-}
-
 function syncControlPlaneModelControls() {
   const provider = document.getElementById('control_plane_provider').value;
   const modelSelect = document.getElementById('control_plane_model');

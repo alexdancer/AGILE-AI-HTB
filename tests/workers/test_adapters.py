@@ -19,6 +19,14 @@ CLAUDE_CODE_CURATED_MODELS = [
     "claude-opus-4-8",
     "claude-opus-4-7",
     "claude-opus-4-6",
+    "claude-sonnet-5",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+]
+PREVIOUS_CLAUDE_CODE_CURATED_MODELS = [
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
     "claude-sonnet-4-6",
     "claude-haiku-4-5",
 ]
@@ -792,6 +800,24 @@ def test_claude_code_curated_discovery_clears_unapproved_legacy_seeded_models(tm
     assert before["supported_models"] == legacy_models
     assert allowed_worker_model_ids(before) == []
     assert get_adapter_builder(before).supports_model("claude-3-5-sonnet-latest") is False
+
+    discover_worker_models(db_path, "claude_code", runner=lambda plan: (_ for _ in ()).throw(AssertionError("must not run")))
+
+    after = db.get_worker_adapter(db_path, "claude_code")
+    assert after["supported_models"] == []
+    assert allowed_worker_model_ids(after) == []
+    assert discovered_worker_model_ids(after) == CLAUDE_CODE_CURATED_MODELS
+
+
+def test_claude_code_curated_discovery_clears_previous_seeded_models_after_inventory_update(tmp_path):
+    db_path = tmp_path / "harness.db"
+    db.init_db(db_path)
+    db.update_worker_adapter(db_path, "claude_code", supported_models=PREVIOUS_CLAUDE_CODE_CURATED_MODELS)
+
+    before = db.get_worker_adapter(db_path, "claude_code")
+    assert before["supported_models"] == PREVIOUS_CLAUDE_CODE_CURATED_MODELS
+    assert allowed_worker_model_ids(before) == []
+    assert get_adapter_builder(before).supports_model("claude-sonnet-4-6") is False
 
     discover_worker_models(db_path, "claude_code", runner=lambda plan: (_ for _ in ()).throw(AssertionError("must not run")))
 

@@ -71,13 +71,20 @@ Docker runs the containerized Control Plane/Portal and persists SQLite state at 
 
 Docker does not automatically receive host-installed OpenCode, Claude Code, Codex, local repo paths, or host credentials. Real Worker launch readiness still depends on Worker Adapter setup and tracking-mode verification.
 
-## Visual proof checklist
+## Portal screenshots
 
 Use synthetic/public-safe data only. Do not capture real secrets, real customer data, or private repo content.
 
-| Proof | Suggested path | Shows |
-|---|---|---|
-| First-run setup | `docs/assets/screenshots/setup-control-plane.png` | `/settings/control-plane` provider/model/API-key form and needs-test/tested state |
-| Project board readiness | `docs/assets/screenshots/project-board-launch-ready.png` | Connected project board, Worker readiness, tiny task ready to launch |
-| Session report/token evidence | `docs/assets/screenshots/session-token-evidence.png` | Token ledger/session report with Worker Run evidence |
-| Optional short recording | `docs/assets/screenshots/first-run-proof.gif` | Local portal open → control-plane test → Worker setup → tiny launch → session report |
+![AGILE-AI-HTB dashboard UI](assets/screenshots/dashboard-overview.png)
+
+![AGILE-AI-HTB project board UI](assets/screenshots/project-board-review-workflow.png)
+
+![AGILE-AI-HTB control-plane model UI](assets/screenshots/control-plane-model-settings.png)
+
+![AGILE-AI-HTB worker adapter setup UI](assets/screenshots/worker-adapter-setup.png)
+
+![AGILE-AI-HTB token budget UI](assets/screenshots/token-budget-soft-reset.png)
+
+![AGILE-AI-HTB sessions and token ledger UI](assets/screenshots/sessions-token-ledger.png)
+
+![AGILE-AI-HTB task breakdown recovery UI](assets/screenshots/task-breakdown-manual-recovery.png)

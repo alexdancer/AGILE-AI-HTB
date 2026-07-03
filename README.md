@@ -92,6 +92,17 @@ For redacted support status:
 htb check
 ```
 
+## Portal UI
+
+Representative local Portal screens using synthetic/public-safe data:
+
+![AGILE-AI-HTB dashboard UI](docs/assets/screenshots/dashboard-overview.png)
+
+![AGILE-AI-HTB project board UI](docs/assets/screenshots/project-board-review-workflow.png)
+
+![AGILE-AI-HTB worker adapter setup UI](docs/assets/screenshots/worker-adapter-setup.png)
+
+![AGILE-AI-HTB sessions and token ledger UI](docs/assets/screenshots/sessions-token-ledger.png)
 
 
 ## How the workflow works

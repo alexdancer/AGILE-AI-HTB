@@ -96,6 +96,7 @@ def test_claude_code_discovery_route_uses_curated_inventory_and_preserves_adapte
     assert "claude-opus-4-8" in page.text
     assert "claude-opus-4-7" in page.text
     assert "claude-opus-4-6" in page.text
+    assert "claude-sonnet-5" in page.text
     assert "claude-sonnet-4-6" in page.text
     assert "claude-haiku-4-5" in page.text
     assert "claude fable" not in page.text

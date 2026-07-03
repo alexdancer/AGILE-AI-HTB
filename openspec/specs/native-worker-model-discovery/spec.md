@@ -95,7 +95,7 @@ The system SHALL use a curated Claude Code Worker model inventory instead of inv
 #### Scenario: Claude Code discovery uses curated inventory
 - **WHEN** an operator runs model discovery for the Claude Code Worker Adapter
 - **THEN** the system SHALL NOT execute `claude models`
-- **AND** the discovered or selectable Claude Code Worker model inventory SHALL contain exactly `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-4-6`, and `claude-haiku-4-5`
+- **AND** the discovered or selectable Claude Code Worker model inventory SHALL contain exactly `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-5`, `claude-sonnet-4-6`, and `claude-haiku-4-5`
 - **AND** the discovery evidence SHALL identify the inventory as curated rather than native CLI output
 
 #### Scenario: Claude Code curated discovery preserves allowed subset

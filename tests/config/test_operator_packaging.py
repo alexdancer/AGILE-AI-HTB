@@ -80,6 +80,10 @@ def test_readme_documents_portal_first_operator_flow():
     assert "Task Breakdown Agent applies the Task Slicing Policy" in readme
     assert "final Acceptance Verification card checks the original source contract" in readme
     assert "compact objective, boundaries, proof command, dependencies, likely entry points, and execution mode" in readme
+    assert "docs/assets/screenshots/dashboard-overview.png" in readme
+    assert "docs/assets/screenshots/project-board-review-workflow.png" in readme
+    assert "docs/assets/screenshots/worker-adapter-setup.png" in readme
+    assert "docs/assets/screenshots/sessions-token-ledger.png" in readme
     assert "environment variables" in readme.lower()
     assert "AGILE_AI_HTB_CONTROL_API_KEY" in readme
     assert "proxy_governed" not in readme
@@ -108,6 +112,13 @@ def test_install_docs_separate_operator_installs_from_contributor_uv_run():
     assert "uv run htb ...` is a contributor convenience" in getting_started
     assert "proxy_governed" not in getting_started
     assert "Harness Proxy" not in getting_started
+    assert "assets/screenshots/dashboard-overview.png" in getting_started
+    assert "assets/screenshots/project-board-review-workflow.png" in getting_started
+    assert "assets/screenshots/control-plane-model-settings.png" in getting_started
+    assert "assets/screenshots/worker-adapter-setup.png" in getting_started
+    assert "assets/screenshots/token-budget-soft-reset.png" in getting_started
+    assert "assets/screenshots/sessions-token-ledger.png" in getting_started
+    assert "assets/screenshots/task-breakdown-manual-recovery.png" in getting_started
 
 
 def test_operator_docs_do_not_advertise_proxy_governed_mode():
@@ -134,3 +145,34 @@ def test_support_checklist_requests_bare_htb_check_and_install_method():
     assert "Install method" in checklist
     assert "Does `command -v htb` succeed?" in setup_issue
     assert "pipx / curl installer / Homebrew / source checkout / Docker / other" in setup_issue
+    assert "assets/screenshots/task-breakdown-manual-recovery.png" in checklist
+
+
+def test_documented_screenshots_exist_and_skip_stale_dashboard_capture():
+    readme = (ROOT / "README.md").read_text()
+    getting_started = (ROOT / "docs" / "GETTING_STARTED.md").read_text()
+    checklist = (ROOT / "docs" / "SETUP_SUPPORT_CHECKLIST.md").read_text()
+
+    for screenshot in [
+        "dashboard-overview.png",
+        "project-board-review-workflow.png",
+        "control-plane-model-settings.png",
+        "worker-adapter-setup.png",
+        "token-budget-soft-reset.png",
+        "sessions-token-ledger.png",
+        "task-breakdown-manual-recovery.png",
+    ]:
+        assert (ROOT / "docs" / "assets" / "screenshots" / screenshot).exists()
+
+    assert not (ROOT / "docs" / "assets" / "screenshots" / "dashboard-stale-recent-alarms.png").exists()
+    assert "dashboard-stale-recent-alarms.png" not in readme
+    assert "dashboard-stale-recent-alarms.png" not in getting_started
+    assert "dashboard-stale-recent-alarms.png" not in checklist
+
+
+def test_local_readonly_demo_script_supports_loopback_without_portal_token():
+    script = (ROOT / "scripts" / "local-opencode-readonly-demo.sh").read_text()
+
+    assert "before running" not in script
+    assert "AUTH_HEADERS=()" in script
+    assert "Authorization: Bearer $PORTAL_TOKEN" in script

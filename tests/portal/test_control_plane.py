@@ -306,8 +306,6 @@ def test_control_plane_settings_page_shows_presets_and_needs_test(tmp_path, monk
         setup = client.get("/setup", headers=_portal_headers())
 
     assert response.status_code == 200
-    assert "setControlPlanePreset('openai','gpt-5.4','')" in response.text
-    assert "setControlPlanePreset('anthropic','claude-sonnet-5','')" in response.text
     assert "gpt-5.4" in response.text
     assert "gpt-5.4-mini" in response.text
     assert "gpt-5.5" in response.text

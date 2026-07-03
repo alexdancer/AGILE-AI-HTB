@@ -185,20 +185,14 @@ WORKER_ADAPTER_PRESETS = [
         "kind": "claude_code",
         "name": "Claude Code",
         "config": {"verification_template": ["claude", "-p", "{prompt}"], "launch_template": ["claude"]},
-        "supported_models": [
-            "claude-opus-4-8",
-            "claude-opus-4-7",
-            "claude-opus-4-6",
-            "claude-sonnet-4-6",
-            "claude-haiku-4-5",
-        ],
+        "supported_models": list(SEEDED_WORKER_ADAPTER_MODELS["claude_code"]),
     },
     {
         "id": "codex",
         "kind": "codex",
         "name": "Codex",
         "config": {"verification_template": ["codex", "--prompt", "{prompt}"], "launch_template": ["codex"]},
-        "supported_models": ["gpt-5.4", "gpt-5.4-mini", "5.3-codex-spark", "gpt-5.5"],
+        "supported_models": list(SEEDED_WORKER_ADAPTER_MODELS["codex"]),
     },
     {
         "id": "opencode",
@@ -209,7 +203,7 @@ WORKER_ADAPTER_PRESETS = [
             "launch_template": ["opencode", "run", "--model", "{model}", "--format", "json", "{prompt}"],
             "launch_timeout_seconds": 600,
         },
-        "supported_models": ["opencode/gpt-5.1", "gpt-5.1-codex"],
+        "supported_models": list(SEEDED_WORKER_ADAPTER_MODELS["opencode"]),
     },
 ]
 
