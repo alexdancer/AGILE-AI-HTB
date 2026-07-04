@@ -1147,6 +1147,41 @@ def test_project_run_queue_stops_on_retryable_worker_failure(tmp_path, monkeypat
     assert body["queue"]["latest_stop_reason"] == "retryable_failure"
 
 
+def test_project_run_queue_does_not_relaunch_retryable_task_without_active_pointer(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    runner_calls = []
+
+    def runner(plan):
+        runner_calls.append(plan)
+        return {"returncode": 0, "stdout": "", "stderr": ""}
+
+    with _client(tmp_path) as client:
+        client.app.state.task_launch_runner = runner
+        project = db.list_connected_projects(tmp_path / "harness.db")[0]
+        db.create_task(
+            tmp_path / "harness.db",
+            description="paused retryable queue task",
+            status="Estimated",
+            estimate_tokens=8000,
+            recommended_model="gpt-5.4",
+            metadata={**project_task_metadata(project), "launch_retryable": True, "active_worker_run_id": "wr_DEMO_999"},
+        )
+        _configure_codex_worker(tmp_path / "harness.db", tmp_path)
+        portal_routes.start_run_automation(
+            tmp_path / "harness.db",
+            project_id=project["id"],
+            source=portal_routes.RUN_QUEUE_SOURCE,
+            active_task_id=None,
+            active_worker_run_id=None,
+        )
+
+        body = client.get(f"/projects/{project['id']}/board/status", headers=_auth_headers()).json()
+
+    assert body["queue"]["status"] == "stopped"
+    assert body["queue"]["latest_stop_reason"] == "retryable_failure"
+    assert runner_calls == []
+
+
 def test_project_run_queue_no_eligible_and_operator_stop_reasons(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     with _client(tmp_path) as client:

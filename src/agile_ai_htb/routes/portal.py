@@ -778,6 +778,32 @@ async def _advance_project_queue(request: Request, project_id: str) -> None:
     if _project_has_running_work(database_path, project_id):
         return
 
+    retryable_task = next(
+        (
+            candidate
+            for candidate in list_eligible_estimated_tasks(database_path, project_id)
+            if candidate.get("metadata", {}).get("launch_retryable")
+        ),
+        None,
+    )
+    if retryable_task:
+        # Retryable failures must pause automation even if the active queue pointer
+        # has not been persisted yet; otherwise a fast failing Worker can be relaunched.
+        worker_run_id = retryable_task.get("metadata", {}).get("active_worker_run_id")
+        if worker_run_id:
+            try:
+                db.get_worker_run(database_path, str(worker_run_id))
+            except KeyError:
+                worker_run_id = None
+        stop_run_automation(
+            database_path,
+            project_id=project_id,
+            reason="retryable_failure",
+            task_id=retryable_task["id"],
+            worker_run_id=str(worker_run_id) if worker_run_id else None,
+        )
+        return
+
     task = _next_eligible_task(database_path, project_id)
     if task is None:
         stop_run_automation(database_path, project_id=project_id, reason="completed_no_eligible_tasks")
