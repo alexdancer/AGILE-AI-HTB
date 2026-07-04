@@ -32,6 +32,8 @@ def _client(tmp_path, *, portal_auth_required: bool = True):
         database_path=tmp_path / "harness.db",
         guardrails_path=ROOT / "guardrails.yaml",
         portal_auth_required=portal_auth_required,
+        local_runner_enabled=True,
+        operator_config={},
     )
     return TestClient(create_app(settings))
 
@@ -51,6 +53,7 @@ def _client_with_control_plane_llm(
         control_plane_model=control_plane_model,
         control_plane_api_key_env="TEST_CONTROL_PLANE_KEY",
         control_plane_base_url=control_plane_base_url,
+        operator_config={},
     )
     app = create_app(settings)
     app.state.llm_client = llm
