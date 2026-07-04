@@ -198,12 +198,13 @@ def record_automation_event(
 
 
 def _append_task_automation_event(database_path: Path | str, task_id: str, event: dict[str, Any]) -> None:
-    task = db.get_task(database_path, task_id)
-    metadata = dict(task.get("metadata") or {})
-    events = list(metadata.get("automation_events") or [])
-    events.append(event)
-    metadata["automation_events"] = events[-25:]
-    db.update_task(database_path, task_id, {"metadata": metadata})
+    def append_event(metadata: dict[str, Any]) -> dict[str, Any]:
+        events = list(metadata.get("automation_events") or [])
+        events.append(event)
+        metadata["automation_events"] = events[-25:]
+        return metadata
+
+    db.update_task_metadata(database_path, task_id, append_event)
 
 
 def _normalize_state(project_id: str, state: dict[str, Any]) -> dict[str, Any]:

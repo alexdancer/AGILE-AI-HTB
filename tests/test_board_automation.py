@@ -158,6 +158,38 @@ def test_task_automation_event_does_not_change_task_status(tmp_path):
     assert updated["metadata"]["automation_events"][-1]["detail"]["reason"] == "no_allowed_model"
 
 
+def test_task_automation_event_preserves_concurrent_launch_metadata(tmp_path, monkeypatch):
+    db_path = _init_db(tmp_path)
+    project = _project(db_path, tmp_path / "repo", "repo")
+    task = _estimated_task(db_path, project, "event task")
+    original_update_task_metadata = db.update_task_metadata
+
+    def concurrent_update(path, task_id, updater):
+        current = db.get_task(path, task_id)
+        db.update_task(
+            path,
+            task_id,
+            {"metadata": {**current["metadata"], "launch_retryable": True, "active_worker_run_id": "wr_DEMO_999"}},
+        )
+        return original_update_task_metadata(path, task_id, updater)
+
+    monkeypatch.setattr("agile_ai_htb.board_automation.db.update_task_metadata", concurrent_update)
+
+    record_automation_event(
+        db_path,
+        project_id=project["id"],
+        kind="automation_launched",
+        title="Run automation launched task",
+        detail={"source": RUN_QUEUE_SOURCE},
+        task_id=task["id"],
+    )
+
+    updated = db.get_task(db_path, task["id"])
+    assert updated["metadata"]["launch_retryable"] is True
+    assert updated["metadata"]["active_worker_run_id"] == "wr_DEMO_999"
+    assert updated["metadata"]["automation_events"][-1]["kind"] == "automation_launched"
+
+
 def test_invalid_automation_source_is_rejected(tmp_path):
     db_path = _init_db(tmp_path)
     project = _project(db_path, tmp_path / "repo", "repo")

@@ -784,6 +784,27 @@ def update_task(path: Path | str, task_id: str, updates: dict[str, Any]) -> dict
     return get_task(path, task_id)
 
 
+def update_task_metadata(
+    path: Path | str,
+    task_id: str,
+    updater: Callable[[dict[str, Any]], dict[str, Any]],
+) -> dict[str, Any]:
+    with connect(path) as conn:
+        # Serialize task metadata read-modify-write updates so background Worker
+        # completion and queue-event recording cannot clobber each other.
+        conn.execute("begin immediate")
+        row = conn.execute("select metadata_json from tasks where id = ?", (task_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"task not found: {task_id}")
+        current = _from_json(row["metadata_json"])
+        updated = updater(dict(current or {}))
+        conn.execute(
+            "update tasks set metadata_json = ? where id = ?",
+            (_to_json(updated), task_id),
+        )
+    return get_task(path, task_id)
+
+
 def task_is_archived(task: dict[str, Any]) -> bool:
     return bool((task.get("metadata") or {}).get("archived_at"))
 

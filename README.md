@@ -202,6 +202,7 @@ The Portal writes submitted API keys only to ignored local secret storage and do
 - [Install options](docs/INSTALL.md)
 - [Worker Adapter setup](docs/WORKER_ADAPTER_SETUP.md)
 - [Setup support checklist](docs/SETUP_SUPPORT_CHECKLIST.md)
+- [Contributing](CONTRIBUTING.md)
 - [Changelog](CHANGELOG.md)
 - [Project TODO](docs/TODO.md)
 
