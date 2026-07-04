@@ -738,6 +738,7 @@ async def _advance_project_queue(request: Request, project_id: str) -> None:
             active_run = db.get_worker_run(database_path, str(active_run_id))
         except KeyError:
             active_run = None
+            active_run_id = None
         if active_run and active_run.get("status") in {"queued", "running"}:
             # One active Worker run owns the queue slot until it leaves flight.
             return
