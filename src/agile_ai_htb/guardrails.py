@@ -155,6 +155,7 @@ def get_budget_zone(
         return "green"
 
     usage_ratio = used_tokens / daily_cap
+    # The yellow threshold is the red-zone trigger; the green threshold starts warning mode.
     if usage_ratio >= config.zones.yellow:
         return "red"
     if usage_ratio >= config.zones.green:

@@ -42,6 +42,7 @@ def detect_budget_alarms(
 ) -> list[Alarm]:
     alarms: list[Alarm] = []
     previous_types = {alarm.get("type") for alarm in previous_alarms if alarm.get("session_id") == session_id}
+    # Suppress duplicate zone/cap alarms; a resolved alarm records the operator action separately.
 
     if zone == "yellow" and "BUDGET_YELLOW" not in previous_types:
         alarms.append(
@@ -102,6 +103,7 @@ def detect_loop(
     if threshold <= 0:
         return None
 
+    # Only consecutive identical tool calls count as a loop; recurring calls with progress in between are allowed.
     previous_key: tuple[str | None, str | None] | None = None
     count = 0
     for call in tool_trace:

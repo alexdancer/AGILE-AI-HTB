@@ -1,4 +1,5 @@
 {% set sev = (alarm.severity or 'info')|lower %}
+<!-- Shared alarm row: severity controls color; unresolved alarms expose dismissal. -->
 <div class="alarm {{ sev }}" id="alarm-{{ alarm.id }}">
   <div class="head">
     <div class="flex">

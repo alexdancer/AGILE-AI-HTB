@@ -23,6 +23,7 @@ def worker_adapter_view_models(database_path: Path | str) -> list[dict[str, Any]
         adapters.append(
             {
                 **adapter,
+                # Show only operator-approved models as supported; discovered models remain separate setup evidence.
                 "supported_models": allowed_worker_model_ids(adapter),
                 "verification_evidence": verification_evidence,
                 "verification_diagnostic": verification_diagnostic if isinstance(verification_diagnostic, dict) else None,
@@ -42,6 +43,7 @@ def worker_adapter_view_models(database_path: Path | str) -> list[dict[str, Any]
 
 
 def worker_setup_next_action(active_adapter: dict[str, Any] | None, has_projects: bool) -> dict[str, str]:
+    # Ordered from earliest setup blocker to launch-ready destination so the UI presents one concrete next step.
     if active_adapter is None:
         return {"label": "Choose active adapter", "href": "/settings/workers", "detail": "No Worker adapter is available."}
     if not active_adapter.get("configured"):
@@ -100,6 +102,7 @@ def available_worker_tracking_modes(adapter: dict[str, Any]) -> list[str]:
     allowed = capability_allowed_tracking_modes(proxy_capable=proxy_capable, native_capable=native_capable)
     if configured:
         modes = [normalize_configured_tracking_mode(mode) for mode in configured]
+        # Stored preferences are advisory; hide modes the current adapter cannot actually support.
         modes = [mode for mode in modes if mode in allowed]
         if modes:
             return dedupe_tracking_modes(modes)

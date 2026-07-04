@@ -15,6 +15,7 @@
       </thead>
       <tbody>
         {% for item in sessions %}
+        <!-- Task previews keep the index compact; report links expose full evidence. -->
         {% set task_text = item.session.task_description or '' %}
         {% set task_preview = task_text[:160] ~ ('…' if task_text|length > 160 else '') %}
         <tr>

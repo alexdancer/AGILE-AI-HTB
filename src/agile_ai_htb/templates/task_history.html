@@ -6,6 +6,7 @@
 
 <section class="status-toolbar">
   <div class="status-group">
+    <!-- Filters are count-bearing links so history remains bookmarkable. -->
     {% for item in history_filters %}
     <a class="btn {% if item.active %}primary{% else %}ghost{% endif %}" href="/projects/{{ project.id }}/task-history?filter={{ item.value }}">{{ item.label }} {{ item.count }}</a>
     {% endfor %}
@@ -64,6 +65,7 @@
             </td>
             <td class="right">
               {% if task.metadata.archived_at %}
+              <!-- Unarchive restores the task to its prior board status. -->
               <form method="post" action="/projects/{{ project.id }}/tasks/{{ task.id }}/unarchive">
                 <button type="submit">Unarchive</button>
               </form>

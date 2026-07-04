@@ -77,6 +77,7 @@ def is_budget_authoritative_tracking(evidence: dict[str, Any] | None) -> bool:
     evidence = evidence or {}
     mode = evidence.get("tracking_mode")
     presentation = tracking_mode_presentation(mode)
+    # Mode alone is insufficient; verification must explicitly mark the evidence authoritative.
     return presentation.budget_authoritative and bool(evidence.get("tracking_authoritative"))
 
 

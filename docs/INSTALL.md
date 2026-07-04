@@ -99,7 +99,7 @@ Maintainer formula scaffolding lives in `packaging/homebrew/agile-ai-htb.rb.exam
 For contributors working inside a repository checkout, keep using the repo-managed environment for tests and local development:
 
 ```bash
-uv run pytest -q
+uv run --extra test pytest -q
 uv run htb --help
 ```
 

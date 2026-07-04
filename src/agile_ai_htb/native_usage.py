@@ -36,6 +36,7 @@ def token_usage_components(
     cost: float | None = None,
 ) -> dict[str, Any]:
     usage = raw_usage or {}
+    # Providers expose cache/accounting fields under different shapes; read all known aliases.
     cache_read = _first_int(
         usage,
         "cache_read_input_tokens",
@@ -128,6 +129,7 @@ def token_usage_components(
     component_sum = sum(value or 0 for value in (fresh_input, cache_read, cache_write, output, additive_reasoning))
     unclassified = total - component_sum if total is not None and component_sum > 0 and total > component_sum else None
     actual_component_sum = sum(value or 0 for value in (fresh_input, cache_write, output, additive_reasoning, unclassified))
+    # Cache reads prove context reuse but are not charged against the normalized task budget.
     normalized_actual = actual_component_sum if actual_component_sum > 0 else total
     components = {
         "fresh_input": fresh_input,
@@ -165,6 +167,7 @@ def parse_native_usage_evidence(
     if returncode != 0 and not allow_failed_returncode:
         return None
     parsed = _parse_json_stream(stdout)
+    # Codex streams can omit model on individual usage events, so bind them to the completed run.
     codex_stream_binding = _codex_stream_binding(parsed, selected_model=model)
     for item in _walk_json_dicts(parsed):
         usage = _usage_payload(item)

@@ -32,6 +32,7 @@ def board_page_context(
     grouped = {column: [] for column in BOARD_COLUMNS}
     for task in active_tasks:
         task = task_view_model(database_path, task)
+        # Normalize legacy/unknown statuses before handing them to the fixed board columns.
         status = "Estimated" if task["status"] == "Ready" else task["status"] if task["status"] in grouped else "Blocked"
         if status == "Blocked" and task["status"] not in grouped:
             task["metadata"] = {
@@ -110,6 +111,7 @@ def refresh_project_board_tasks(database_path: Path | str, project_id: str) -> l
         if task.get("status") != "Running":
             continue
         try:
+            # Refresh only running cards; terminal sessions may move them to Review/Done/Blocked.
             refreshed = refresh_task_from_session(database_path, task["id"])
         except KeyError:
             continue

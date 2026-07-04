@@ -24,6 +24,7 @@
 {% set planning_tokens = categories.get('task_breakdown', 0) + categories.get('control_plane', 0) %}
 {% set setup_tokens = categories.get('adapter_verification', 0) %}
 {% set other_tokens = categories.get('other', 0) %}
+<!-- Derived categories group ledger rows into operator-facing budget buckets. -->
 <section class="grid cols-3" style="margin-bottom:20px">
   <article class="kpi">
     <div class="label">Daily governed budget</div>
@@ -140,6 +141,7 @@
 </section>
 
 {% if estimation_accuracy.completed_count is not none %}
+<!-- Accuracy is shown only after enough completed tasks make the signal meaningful. -->
 <section class="panel">
   <div class="panel-header"><h3>Estimation accuracy</h3></div>
   <div class="panel-body">

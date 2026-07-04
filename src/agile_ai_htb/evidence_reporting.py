@@ -21,6 +21,7 @@ def safe_evidence(value: Any, key_hint: str = "") -> Any:
         safe = {}
         for key, nested in value.items():
             normalized_key = str(key).lower()
+            # Token accounting fields are evidence, not credentials, despite containing "token".
             keeps_token_evidence = normalized_key in TOKEN_EVIDENCE_KEYS or normalized_key in TOKEN_EVIDENCE_CONTAINERS
             if not keeps_token_evidence and (
                 any(term in normalized_key for term in secret_terms) or "token" in normalized_key
@@ -121,6 +122,7 @@ def daily_cap_tokens(budget: dict[str, Any], config: Any) -> int | None:
 def session_evidence_summary(artifact: dict[str, Any]) -> dict[str, Any]:
     session = artifact.get("session") or {}
     guardrail_overrides = session.get("guardrail_overrides") or {}
+    # Agent Review sessions have no Worker Run, so derive their labels from control-plane metadata.
     is_agent_review = guardrail_overrides.get("spend_category") == "agent_review" or str(
         session.get("task_description") or ""
     ).startswith("Agent review for task ")

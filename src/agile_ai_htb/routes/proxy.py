@@ -24,11 +24,13 @@ async def chat_completions(payload: dict[str, Any], request: Request):
     config = request.app.state.guardrails
     budget = session.get("guardrail_overrides", {}).get("budget", {})
 
+    # Budget governance combines persisted daily spend with any per-session override.
     daily_used_before = int(budget.get("daily_used_tokens", 0)) + _current_day_budgeted_token_usage(request)
     zone = get_budget_zone(daily_used_before, _daily_cap_tokens(budget, config, database_path), config)
     decision = apply_governance(payload, zone, config)
 
     if decision.request.get("stream") is True:
+        # Ask providers for usage in the stream tail so streamed turns can be logged.
         decision.request["stream_options"] = {"include_usage": True}
         try:
             stream = await request.app.state.llm_client.acompletion(decision.request)
@@ -76,6 +78,7 @@ async def _stream_chunks(
         chunk_body = response_to_dict(chunk)
         chunk_usage = extract_usage(chunk_body)
         if any(chunk_usage.values()):
+            # Usage may arrive only in the final provider chunk; keep the last non-zero value.
             final_usage = chunk_usage
         yield f"data: {json.dumps(chunk_body, separators=(',', ':'))}\n\n"
     _persist_turn(request, session, decision, final_usage)
@@ -124,6 +127,7 @@ def _persist_budget_alarms(request: Request, session: dict[str, Any], budget: di
         {**alarm, "session_id": session["id"]}
         for alarm in db.build_session_artifact(database_path, session["id"])["alarms"]
     ]
+    # Existing alarms are passed back in so detection can avoid duplicate noise.
     alarms = detect_budget_alarms(
         session_id=session["id"],
         zone=zone,

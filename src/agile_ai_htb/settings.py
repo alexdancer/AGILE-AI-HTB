@@ -46,6 +46,7 @@ class Settings:
         operator_config: dict[str, Any] | None = None,
     ) -> None:
         config = load_operator_config() if operator_config is None else operator_config
+        # The dataclass is frozen; initialization writes through object.__setattr__ after resolving config precedence.
         object.__setattr__(
             self,
             "database_path",
@@ -66,6 +67,7 @@ class Settings:
             "timezone",
             timezone or os.getenv("TOKEN_TRACKER_TIMEZONE") or config.get("timezone") or "local",
         )
+        # Keep the legacy provider env field so older configs still load while control-plane settings take over.
         legacy_provider_env = (
             provider_api_key_env
             or os.getenv("TOKEN_TRACKER_PROVIDER_API_KEY_ENV")

@@ -19,6 +19,7 @@ from agile_ai_htb.evidence_reporting import completion_content as _completion_co
 from agile_ai_htb.evidence_reporting import safe_evidence as _safe_review_value
 from agile_ai_htb.evidence_reporting import token_totals
 from agile_ai_htb.llm import LLMClientError, calculate_cost, extract_usage, response_to_dict
+from agile_ai_htb.model_routing import route_worker_model
 from agile_ai_htb.project_context import project_task_metadata, task_project_board_path
 from agile_ai_htb.repo_context import build_repo_context_brief
 from agile_ai_htb.task_launch import DEFAULT_PROXY_URL, TaskLaunchBlocked, launch_task, refresh_task_from_session
@@ -148,6 +149,7 @@ async def launch_task_endpoint(task_id: str, request: Request):
         if wants_html:
             redirect_path = _board_redirect_for_task(exc.task, payload.project_id)
             if exc.task.get("metadata", {}).get("launch_retryable"):
+                # Retryable launch failures already annotate the card; avoid a noisy banner.
                 return RedirectResponse(redirect_path, status_code=303)
             from urllib.parse import quote
             error_msg = "; ".join(exc.reasons) if exc.reasons else "Launch failed."
@@ -279,12 +281,16 @@ async def _estimate_and_create_task(
         or 0.0,
         raw_usage={**usage, "response": response_to_dict(llm_response)},
     )
-    recommended_model, model_metadata = _constrained_recommended_model(
-        database_path,
-        result.recommended_model,
-        adapter_id=adapter_id,
-        estimate_tokens=result.token_estimate,
+    adapter = _selected_worker_adapter(database_path, adapter_id)
+    # Route Worker model choice after estimation so allowlists and budgets can constrain it.
+    model_routing = route_worker_model(
+        request.app.state.guardrails,
         complexity=result.complexity,
+        estimate_tokens=result.token_estimate,
+        remaining_daily_tokens=remaining_daily_tokens,
+        daily_cap_tokens=daily_cap_tokens,
+        adapter=adapter,
+        allowed_models=allowed_worker_model_ids(adapter) if adapter else [],
     )
     metadata = {
         "estimation_source": result.source,
@@ -293,11 +299,10 @@ async def _estimate_and_create_task(
         "rationale": result.rationale,
         "assumptions": result.assumptions,
         "risk_flags": result.risk_flags,
-        "spike_recommendation": result.spike_recommendation,
         "budget_note": result.budget_note,
         "estimation_session_id": estimation_session["id"],
         **(extra_metadata or {}),
-        **model_metadata,
+        **model_routing.metadata,
     }
     metadata = _with_single_project_default(database_path, metadata)
     task = db.create_task(
@@ -305,78 +310,20 @@ async def _estimate_and_create_task(
         description=description,
         status="Estimated",
         estimate_tokens=result.token_estimate,
-        recommended_model=recommended_model,
+        recommended_model=model_routing.selected_model,
         metadata=metadata,
     )
-    return {**task, **result.as_dict(), "recommended_model": recommended_model}
+    return {**task, **result.as_dict(), "recommended_model": model_routing.selected_model}
 
 
-def _constrained_recommended_model(
-    database_path: Path | str,
-    recommended_model: str,
-    *,
-    adapter_id: str | None,
-    estimate_tokens: int | None = None,
-    complexity: str | None = None,
-) -> tuple[str, dict[str, Any]]:
-    adapter = None
+def _selected_worker_adapter(database_path: Path | str, adapter_id: str | None) -> dict[str, Any] | None:
     if adapter_id:
         try:
-            adapter = db.get_worker_adapter(database_path, adapter_id)
+            return db.get_worker_adapter(database_path, adapter_id)
         except KeyError:
-            adapter = None
-    else:
-        adapters = db.list_worker_adapters(database_path)
-        adapter = next((item for item in adapters if item.get("is_default")), adapters[0] if adapters else None)
-    if not adapter:
-        return recommended_model, {"worker_model_constraint": {"state": "no_adapter", "original_model": recommended_model}}
-    models = allowed_worker_model_ids(adapter)
-    metadata = {
-        "worker_model_constraint": {
-            "state": "constrained_by_allowed_models",
-            "adapter_id": adapter["id"],
-            "available_models": models,
-            "original_model": recommended_model,
-        }
-    }
-    if not models:
-        metadata["worker_model_constraint"]["state"] = "no_allowed_models"
-        return recommended_model, metadata
-    if recommended_model in models:
-        metadata["worker_model_constraint"]["selected_model"] = recommended_model
-        return recommended_model, metadata
-    selected_model = _rank_discovered_worker_model(models, estimate_tokens=estimate_tokens, complexity=complexity)
-    reason = "estimator_model_not_allowed"
-    if selected_model != models[0]:
-        reason = "estimator_model_not_allowed_ranked"
-    metadata["worker_model_constraint"].update({"selected_model": selected_model, "reason": reason})
-    return str(selected_model), metadata
-
-
-def _rank_discovered_worker_model(
-    models: list[str], *, estimate_tokens: int | None, complexity: str | None
-) -> str:
-    if not models:
-        raise ValueError("models must not be empty")
-    normalized_complexity = (complexity or "").strip().lower()
-    simple_task = (estimate_tokens is not None and estimate_tokens <= 10_000) or normalized_complexity in {
-        "simple",
-        "modest",
-        "small",
-        "low",
-    }
-    if not simple_task:
-        return str(models[0])
-
-    def score(model: str, index: int) -> tuple[int, int]:
-        lowered = model.lower()
-        if any(term in lowered for term in ("haiku", "mini", "nano", "flash")):
-            return (0, index)
-        if any(term in lowered for term in ("big-pickle", "opus", "pro", "max")):
-            return (20, index)
-        return (10, index)
-
-    return min(((str(model), index) for index, model in enumerate(models)), key=lambda item: score(item[0], item[1]))[0]
+            return None
+    adapters = db.list_worker_adapters(database_path)
+    return next((item for item in adapters if item.get("is_default")), adapters[0] if adapters else None)
 
 
 @router.post("/tasks/estimate-form", dependencies=[Depends(require_portal_auth)])
@@ -433,6 +380,7 @@ async def _estimate_form_for_project(
     )
 
     if _requires_task_breakdown_review(normalized_description, intake_metadata):
+        # Large or Markdown-shaped intake is reviewed before it becomes board cards.
         breakdown = await _create_task_breakdown_review(request, normalized_description, intake_metadata)
         return RedirectResponse(f"/task-breakdowns/{breakdown['id']}/review", status_code=303)
 
@@ -474,6 +422,7 @@ async def accept_task_breakdown(breakdown_id: str, request: Request) -> Redirect
     accepted_candidates = _accepted_breakdown_candidates(breakdown, form)
     created_task_ids: list[str] = []
     for index, candidate in enumerate(accepted_candidates, start=1):
+        # Each accepted candidate becomes an independently estimated board task.
         description = _breakdown_candidate_description(
             candidate,
             global_contract_summary,
@@ -677,6 +626,7 @@ async def _task_breakdown_agent_updates(
             "failure_message": None,
         }
     except TaskBreakdownError as exc:
+        # Keep the failed breakdown visible so the operator can retry or recover manually.
         reason = str(_safe_review_value(str(exc))).strip()
         failure_message = "Task Breakdown Agent failed; retry or create a manual candidate."
         if reason:
@@ -1138,6 +1088,7 @@ def _agent_review_prompt(task: dict[str, Any], review_prompt: str, database_path
         worker_runs = artifact.get("worker_runs", [])
     else:
         worker_runs = db.list_worker_runs(database_path, task_id=task["id"])
+    # The reviewer sees sanitized, bounded evidence instead of the full raw session log.
     evidence = {
         "task": {
             "id": task.get("id"),
@@ -1400,6 +1351,7 @@ def _initial_task_status_and_metadata(
     metadata = dict(payload.metadata or {})
     has_estimate = payload.estimate_tokens is not None and bool(payload.recommended_model)
     if payload.status is not None:
+        # Direct task writes cannot bypass the estimate/launch/review lifecycle routes.
         normalized_status = "Estimated" if payload.status == "Ready" else payload.status
         if normalized_status in CANONICAL_TASK_STATUSES:
             lifecycle_status = _constrain_direct_lifecycle_status(
@@ -1483,6 +1435,7 @@ def _constrain_direct_lifecycle_status(
     metadata: dict[str, Any],
 ) -> str | None:
     if requested_status == "Running":
+        # Running has launch side effects, so callers must use the launch endpoint.
         metadata.setdefault("blocked_reason", "Use launch endpoint to start tasks.")
         metadata.setdefault("requested_status", requested_status)
         return "Blocked"

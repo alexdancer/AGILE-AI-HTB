@@ -35,6 +35,7 @@
 </section>
 
 {% if automation_summary %}
+<!-- Automation controls reflect queue state; only idle queues expose Run queue. -->
 <section class="panel" style="margin-bottom:16px">
   <div class="panel-header">
     <h3>Run automation</h3>
@@ -102,6 +103,7 @@
         {% if task.actual_tokens is not none %}<span>Actual: {{ "{:,}".format(task.actual_tokens) }}</span>{% endif %}
       </p>
       {% if column == 'Estimated' and adapters %}
+      <!-- Launch form binds the chosen adapter to its allowed Worker model list. -->
       <form method="post" action="/tasks/{{ task.id }}/launch" style="margin-top:8px" data-disable-on-submit>
         <input type="hidden" name="proxy_url" value="{{ default_proxy_url }}">
         {% if active_project %}<input type="hidden" name="project_id" value="{{ active_project.id }}">{% endif %}
@@ -112,7 +114,7 @@
           <option value="{{ a.id }}" {% if a.is_default %}selected{% endif %} data-models="{{ a.supported_models|join(',') }}">{{ a.name }}{% if a.tracking_label %} — {{ a.tracking_label }}{% endif %}</option>
           {% endfor %}
         </select>
-        <label class="mono" style="font-size:11px">Worker model{% if task.recommended_model %} · recommended={{ task.recommended_model }}{% endif %}</label>
+        <label class="mono" style="font-size:11px">Worker model{% if task.recommended_model %} · selected={{ task.recommended_model }}{% endif %}</label>
         <select id="models-{{ task.id }}" name="model" style="width:100%;margin-bottom:6px">
           {% set default_adapter = adapters|selectattr("is_default")|first or adapters[0] %}
           {% for m in default_adapter.supported_models %}
@@ -184,6 +186,7 @@
       {% endif %}
       {% if has_blocked_details %}<p class="muted mono compact-text lines-2">Blocked/manual details recorded · expand Details</p>{% endif %}
       {% if column == 'Review' %}
+      <!-- Review actions are hidden until Worker evidence makes the task reviewable. -->
       <div class="review-actions" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:grid;gap:8px">
         {% if task.metadata.review_actions_available %}
         <form method="post" action="/tasks/{{ task.id }}/review" style="display:grid;gap:6px">
@@ -220,7 +223,7 @@
       <details class="task-details">
         <summary>Details</summary>
         <p class="muted mono">Task: {{ task.id }}</p>
-        {% if launch_model and task.recommended_model and launch_model != task.recommended_model %}<p class="muted mono">Estimate recommendation: {{ task.recommended_model }}</p>{% endif %}
+        {% if launch_model and task.recommended_model and launch_model != task.recommended_model %}<p class="muted mono">Estimated Worker model: {{ task.recommended_model }}</p>{% endif %}
         {% if task.session_id %}<p><a href="/sessions/{{ task.session_id }}">Session report</a></p>{% endif %}
         {% if task.metadata.worker_token_components and task.metadata.worker_token_components.available %}
         <details class="task-details">
@@ -237,6 +240,7 @@
         <pre class="mono raw-evidence">{{ task.description }}</pre>
 
         {% if has_launch_details %}
+        <!-- Launch details preserve adapter diagnostics and guardrail blocks for later triage. -->
         <details class="task-details">
           <summary>Launch</summary>
           {% if task.metadata.active_worker_run_id %}<p class="muted mono">Worker run: {{ task.metadata.active_worker_run_id }}</p>{% endif %}
@@ -359,6 +363,7 @@
   {% endfor %}
 </section>
 
+<!-- Board script updates model choices, prevents double launches, and polls active runs. -->
 <script>
 function updateModels(adapterSelect, modelSelectId) {
   var modelSelect = document.getElementById(modelSelectId);

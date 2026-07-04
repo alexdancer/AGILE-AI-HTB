@@ -70,6 +70,7 @@ class LocalExecutionBackend:
         profile = project.get("profile", {})
         adapter = db.get_worker_adapter(self.database_path, "opencode") or {}
         supported_models = adapter.get("supported_models") or ["opencode/gpt-5.1"]
+        # A proof task validates adapter/project wiring without authorizing file edits.
         return db.create_task(
             self.database_path,
             description=READ_ONLY_PROOF_DESCRIPTION,
@@ -137,6 +138,7 @@ def build_project_capability(
     if not db.has_launchable_worker_adapter(database_path):
         reasons.append("No verified launchable Worker Adapter is available.")
 
+    # Analysis remains available when the path is valid but launch prerequisites are missing.
     if not path_error and backend_online and not reasons:
         state = "launch_ready"
         label = "Launch-ready via Local Runner"
@@ -190,6 +192,7 @@ def _language_hints(root: Path, files: set[str]) -> list[str]:
 def _framework_hints(root: Path, files: set[str]) -> list[str]:
     hints: list[str] = []
     if "pyproject.toml" in files:
+        # Bound manifest reads; hints should never require loading a whole generated file.
         pyproject = (root / "pyproject.toml").read_text(errors="ignore")[:20_000].lower()
         for name in ("fastapi", "django", "flask", "pytest"):
             if name in pyproject:

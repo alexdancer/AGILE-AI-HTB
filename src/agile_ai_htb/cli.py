@@ -37,6 +37,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if command == "init":
         cwd = Path.cwd()
+        # Initialize at the Git root so generated config and local state share one project home.
         init_root, git_exclude_path = _resolve_init_root(cwd)
         config_arg = getattr(args, "config_path", None)
         secrets_arg = getattr(args, "secrets_path", None)
@@ -92,8 +93,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         if os.getenv("TOKEN_TRACKER_PORTAL_AUTH_REQUIRED") is None:
             uses_proxy_headers = getattr(args, "proxy_headers", False)
             local_only_bind = _is_loopback_bind_host(host) and not uses_proxy_headers
+            # Loopback serves default to frictionless access; proxied/non-loopback binds require auth.
             os.environ["TOKEN_TRACKER_PORTAL_AUTH_REQUIRED"] = "0" if local_only_bind else "1"
         if getattr(args, "local_runner", False):
+            # CLI opt-in wins for this process without rewriting operator config.
             os.environ["TOKEN_TRACKER_LOCAL_RUNNER"] = "1"
         elif "TOKEN_TRACKER_LOCAL_RUNNER" not in os.environ and _config_bool(config, "local_runner_enabled"):
             os.environ["TOKEN_TRACKER_LOCAL_RUNNER"] = "1"
@@ -238,6 +241,7 @@ def _check_operator_setup() -> int:
 
     if os.getenv(settings.control_plane_api_key_env):
         try:
+            # Exercise the configured model once so `htb check` reports real reachability.
             asyncio.run(
                 LLMClient(settings).acompletion(
                     {
@@ -296,6 +300,7 @@ def _load_default_operator_state() -> tuple[dict[str, object], dict[str, str], P
     secrets_path = init_root / DEFAULT_SECRETS_PATH
     config = load_operator_config(config_path)
     if config:
+        # Config paths are repo-relative on disk; runtime Settings expects concrete paths.
         config = _resolve_config_paths(config, init_root)
     secrets = load_operator_secrets_env(config, secrets_path)
     return config, secrets, config_path, secrets_path
@@ -343,6 +348,7 @@ def _resolve_local_path(value: object, base_dir: Path) -> Path:
 
 def _protect_local_state(init_root: Path, git_exclude_path: Path | None) -> None:
     if git_exclude_path is None:
+        # Outside Git, protect generated .htb files with a local ignore file.
         gitignore = init_root / ".htb" / ".gitignore"
         existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
         lines = {line.strip() for line in existing.splitlines()}
@@ -355,6 +361,7 @@ def _protect_local_state(init_root: Path, git_exclude_path: Path | None) -> None
     git_exclude_path.parent.mkdir(parents=True, exist_ok=True)
     existing = git_exclude_path.read_text(encoding="utf-8") if git_exclude_path.exists() else ""
     if ".htb/" not in {line.strip() for line in existing.splitlines()}:
+        # In Git repos, keep local state untracked without editing the committed .gitignore.
         suffix = "" if existing.endswith("\n") or not existing else "\n"
         git_exclude_path.write_text(f"{existing}{suffix}.htb/\n", encoding="utf-8")
 

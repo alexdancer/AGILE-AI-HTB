@@ -266,7 +266,7 @@ def test_board_shows_adapter_and_model_selectors(tmp_path, monkeypatch):
     assert 'name="model"' in html
     assert "Worker Adapter" in html
     assert "Worker model" in html
-    assert "recommended=5.4" in html
+    assert "selected=5.4" in html
     assert "refreshed" in html
 
 def test_board_does_not_offer_recommended_model_when_adapter_has_no_allowed_models(tmp_path, monkeypatch):

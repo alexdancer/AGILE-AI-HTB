@@ -48,6 +48,7 @@ class LLMClient:
 
     async def acompletion(self, request: dict[str, Any]) -> Any:
         config = _provider_config(self.settings, request)
+        # Keep the rest of the app on an OpenAI-shaped chat-completion contract.
         if config.provider in {"openai", "openai-compatible"}:
             return await self._openai_compatible_completion(config, request)
         if config.provider == "anthropic":
@@ -90,6 +91,7 @@ class LLMClient:
             payload,
             _request_timeout_seconds(request),
         )
+        # Normalize Anthropic responses so downstream token parsing and validators stay provider-neutral.
         return _anthropic_to_openai_response(response, request.get("model", config.model))
 
 
@@ -131,6 +133,7 @@ def response_to_dict(response: Any) -> dict[str, Any]:
 def _provider_config(settings: Settings, request: dict[str, Any]) -> ProviderConfig:
     provider = settings.control_plane_provider.lower().strip()
     model = str(request.get("model") or settings.control_plane_model)
+    # Fall back to the legacy provider env name while preferring the explicit control-plane key.
     api_key = os.getenv(settings.control_plane_api_key_env) or os.getenv(settings.provider_api_key_env) or ""
     if not api_key:
         raise LLMClientError(f"missing control-plane API key env: {settings.control_plane_api_key_env}")

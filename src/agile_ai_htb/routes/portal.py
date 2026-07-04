@@ -161,6 +161,7 @@ def login(request: Request, token: str = Form(...)):
     expected_token = os.getenv(request.app.state.settings.portal_token_env, "")
     if not expected_token or not token:
         raise HTTPException(status_code=401, detail="invalid portal token")
+    # Constant-time comparison avoids revealing partial token matches.
     if not secrets.compare_digest(token, expected_token):
         raise HTTPException(status_code=401, detail="invalid portal token")
 
@@ -387,6 +388,7 @@ def setup_overview(request: Request):
             "detail": projects[0]["name"] if projects else "Connect a project for local Worker runs",
         },
     ]
+    # Launch readiness is gated by control-plane, budget, and Worker setup.
     ready_to_launch = all(step["state"] == "ready" for step in steps[:3])
     next_step = _next_setup_step(steps, ready_to_launch)
     return templates.TemplateResponse(
@@ -443,6 +445,7 @@ async def reset_budget_counter(request: Request):
 def board(request: Request):
     projects = db.list_connected_projects(request.app.state.settings.database_path)
     if projects:
+        # The global board is a convenience shim onto the first connected project.
         return RedirectResponse(f"/projects/{projects[0]['id']}/board", status_code=status.HTTP_303_SEE_OTHER)
     return RedirectResponse("/projects", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -654,6 +657,7 @@ def _ensure_active_project(database_path: Path | str, project_id: str) -> dict[s
 
 
 def _project_archive_block_reason(database_path: Path | str, project_id: str) -> str:
+    # Archiving is blocked while automation could still mutate project tasks.
     if _project_has_running_work(database_path, project_id):
         return "Project has Running work. Stop or finish active Worker runs before archiving."
     queue_state = get_run_automation_state(database_path, project_id)
@@ -735,6 +739,7 @@ async def _advance_project_queue(request: Request, project_id: str) -> None:
         except KeyError:
             active_run = None
         if active_run and active_run.get("status") in {"queued", "running"}:
+            # One active Worker run owns the queue slot until it leaves flight.
             return
 
     active_task_id = queue_state.get("active_task_id")
@@ -746,6 +751,7 @@ async def _advance_project_queue(request: Request, project_id: str) -> None:
         if active_task and active_task.get("status") == "Running":
             return
         if active_task and active_task.get("status") == "Estimated" and active_task.get("metadata", {}).get("launch_retryable"):
+            # Retryable launch failures pause automation so the operator can choose the retry.
             stop_run_automation(
                 database_path,
                 project_id=project_id,
@@ -768,6 +774,7 @@ async def _advance_project_queue(request: Request, project_id: str) -> None:
 
     if get_run_automation_state(database_path, project_id).get("status") != "running":
         return
+    # Re-check running work after review/stop side effects before launching the next task.
     if _project_has_running_work(database_path, project_id):
         return
 
@@ -991,6 +998,7 @@ async def save_control_plane_settings(request: Request):
         name="Control Plane Model",
         online=False,
         details={
+            # A saved config is not trusted until the explicit connection test passes.
             "status": "needs_test",
             "reason": "configuration changed; test required",
             "provider": new_settings.control_plane_provider,
@@ -1494,6 +1502,7 @@ def _local_backend(request: Request) -> LocalExecutionBackend | None:
         return None
     backend = getattr(request.app.state, "execution_backend", None)
     if backend is None:
+        # Cache the backend on app state so route calls share project capability probes.
         backend = LocalExecutionBackend(request.app.state.settings.database_path)
         request.app.state.execution_backend = backend
     return backend

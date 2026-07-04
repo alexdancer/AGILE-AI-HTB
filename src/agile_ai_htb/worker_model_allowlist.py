@@ -29,6 +29,7 @@ def allowed_worker_model_ids(adapter: dict[str, Any]) -> list[str]:
     config = adapter.get("config") or {}
     models = [str(model) for model in adapter.get("supported_models") or []]
     if not config.get("allowed_models_configured") and _models_match_unapproved_seeded_default(str(adapter.get("id")), models):
+        # Seeded defaults are inventory only; operators must explicitly approve them before Worker launch.
         return []
     return models
 
@@ -44,6 +45,7 @@ def _models_match_unapproved_seeded_default(adapter_id: str, models: list[str]) 
     if any(models == seeded_models for seeded_models in seeded_model_sets if seeded_models):
         return True
     if adapter_id == "codex" and models:
+        # Older Codex seeds used provider-less names, so any all-legacy subset should still require re-approval.
         stale_models = {model for seeded_models in LEGACY_SEEDED_WORKER_ADAPTER_MODEL_SETS.get(adapter_id, []) for model in seeded_models}
         return all(model in stale_models for model in models)
     return False

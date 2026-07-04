@@ -66,12 +66,10 @@ class FakeEstimatorLLM:
         self.content = content or {
             "token_estimate": 12_345,
             "complexity": "modest",
-            "recommended_model": "claude-3-5-sonnet-20240620",
             "confidence": 0.82,
             "rationale": "Endpoint plus tests is a modest task.",
             "assumptions": ["No schema migration needed."],
             "risk_flags": ["Integration tests may expand scope"],
-            "spike_recommendation": "No spike needed.",
             "budget_note": "Within normal daily budget.",
             "source": "llm",
         }
@@ -177,7 +175,7 @@ def _client_with_llm(tmp_path, llm):
 
 @pytest.mark.asyncio
 async def test_eval_estimator_returns_all_required_fields():
-    """Estimator LLM response is parsed into EstimateResult with all 11 fields."""
+    """Estimator LLM response is parsed into EstimateResult with all required fields."""
     config = load_guardrails(ROOT / "guardrails.yaml")
     llm = FakeEstimatorLLM()
     result, response = await estimate_task(
@@ -190,12 +188,10 @@ async def test_eval_estimator_returns_all_required_fields():
     assert isinstance(result, EstimateResult)
     assert result.token_estimate == 12_345
     assert result.complexity == "modest"
-    assert result.recommended_model == "claude-3-5-sonnet-20240620"
     assert result.confidence == 0.82
     assert result.rationale
     assert isinstance(result.assumptions, list)
     assert isinstance(result.risk_flags, list)
-    assert result.spike_recommendation
     assert result.budget_note
     assert result.source == "llm"
 
@@ -209,9 +205,8 @@ async def test_eval_estimator_as_dict_has_expected_keys():
 
     d = result.as_dict()
     assert set(d.keys()) == {
-        "token_estimate", "complexity", "recommended_model", "confidence",
-        "rationale", "assumptions", "risk_flags", "spike_recommendation",
-        "budget_note", "source",
+        "token_estimate", "complexity", "confidence",
+        "rationale", "assumptions", "risk_flags", "budget_note", "source",
     }
 
 
@@ -222,12 +217,10 @@ async def test_eval_estimator_token_estimate_is_positive_integer():
     llm = FakeEstimatorLLM(content={
         "token_estimate": 8_000,
         "complexity": "simple",
-        "recommended_model": "claude-3-haiku-20240307",
         "confidence": 0.95,
         "rationale": "Trivial fix.",
         "assumptions": [],
         "risk_flags": [],
-        "spike_recommendation": "",
         "budget_note": "",
         "source": "llm",
     })

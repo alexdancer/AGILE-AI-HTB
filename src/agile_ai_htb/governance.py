@@ -22,8 +22,10 @@ def apply_governance(
     zone: BudgetZone,
     config: GuardrailConfig,
 ) -> GovernanceDecision:
+    # Rewrite a copy so callers can keep the original provider request for audit/debugging.
     governed_request = deepcopy(request)
     if not config.zones.enabled:
+        # Disabled zones are still reported, but no prompt/tool/token controls are applied.
         return GovernanceDecision(
             request=governed_request,
             zone=zone,
@@ -42,6 +44,7 @@ def apply_governance(
     governed_request["tools"], blocked_tools = _filter_tools(
         governed_request.get("tools", []),
         set(config.zones.blocked_tools.get(zone, [])),
+        # Red zone is an allow-list even if config forgets to block a risky tool explicitly.
         allowed_tool_names=RED_ALLOWED_TOOL_NAMES if zone == "red" else None,
     )
 

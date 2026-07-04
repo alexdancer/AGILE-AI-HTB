@@ -183,6 +183,7 @@
     <aside class="sidebar">
       <div class="group">Projects</div>
       <div class="project-list">
+        <!-- Sidebar projects are populated globally so every page can jump to active boards. -->
         {% for project in sidebar_projects %}
         <a href="/projects/{{ project.id }}" class="project-item {% if active_project and active_project.id == project.id %}active{% endif %}">
           <span class="project-name">{{ project.name }}</span>
@@ -204,6 +205,7 @@
         <a href="/sessions" class="{% if active_page == 'sessions' %}active{% endif %}">Sessions</a>
         <a href="/alarms" class="{% if active_page == 'alarms' %}active{% endif %}">Alarms</a>
       </nav>
+      <!-- If no project exists yet, keep the unscoped planning board reachable for intake. -->
       {% if not sidebar_projects %}
       <div class="group">Planning</div>
       <nav><a href="/board" class="{% if active_page == 'board' %}active{% endif %}">Task board</a></nav>

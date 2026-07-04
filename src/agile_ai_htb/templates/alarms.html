@@ -16,6 +16,7 @@
     <h3>Open</h3>
   </div>
   <div class="panel-body">
+    <!-- alarm_card.html keeps severity and resolve controls identical across pages. -->
     {% for alarm in open_alarms %}
     {% include "alarm_card.html" %}
     {% else %}

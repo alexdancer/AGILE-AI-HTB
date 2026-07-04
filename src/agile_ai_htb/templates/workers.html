@@ -26,6 +26,7 @@
 </section>
 
 {% if active_adapter %}
+<!-- Active adapter setup configures Worker CLI readiness, not control-plane auth. -->
 <section class="panel">
   <div class="panel-header">
     <h3>{{ active_adapter.name }} setup</h3>
@@ -47,6 +48,7 @@
         <button type="submit">Discover models</button>
       </form>
       {% if active_adapter.discovered_models %}
+      <!-- Allowed models constrain Worker model routing and board launch choices. -->
       <form method="post" action="/settings/workers/{{ active_adapter.id }}/allowed-models" style="margin-top:10px">
         <p class="muted">Allowed for estimates and board launch</p>
         <label for="worker-model-filter">Filter discovered models</label>
@@ -79,6 +81,7 @@
         </select>
         <p class="muted"><strong>CLI Worker</strong> means the harness launches a local command and can only trust token usage after the CLI emits native usage evidence. <strong>API / Proxy Worker</strong> means the Worker sends OpenAI-compatible API traffic to the Harness Proxy URL before the provider, enabling live runtime guardrails.</p>
         {% if 'proxy_governed' in active_adapter.tracking_modes %}
+        <!-- Proxy settings are only meaningful when Worker traffic can route through the harness. -->
         <details style="margin:10px 0" open>
           <summary>API / Proxy settings</summary>
           <label>Proxy URL</label>
@@ -160,6 +163,7 @@
     </table>
   </div>
 </section>
+<!-- Model filter script bulk-checks only the currently visible discovered models. -->
 <script>
   document.querySelectorAll('[data-worker-model-filter]').forEach((filter) => {
     const form = filter.closest('form');

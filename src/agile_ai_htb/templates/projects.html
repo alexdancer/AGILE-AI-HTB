@@ -7,13 +7,14 @@
 <section class="panel">
   <div class="panel-header"><h3>Open local repo</h3></div>
   <div class="panel-body">
+    <!-- Repo connect redirects to the workspace after validation succeeds. -->
     {% if not local_runner_enabled %}
       <span class="pill yellow">Local Runner disabled</span>
       <p class="muted mono">Run <code>htb init</code>, enable Local Runner in <code>.htb/config.toml</code> or with <code>htb serve --enable-local-runner</code>, then add the control-plane key in <code>/settings/control-plane</code> if needed.</p>
     {% endif %}
     <form method="post" action="/settings/project/connect?redirect=workspace">
       <label class="mono" for="root-path">Local repository path</label>
-      <input id="root-path" name="root_path" placeholder="/Users/alex/path/to/repo" required>
+      <input id="root-path" name="root_path" placeholder="/path/to/local/repo" required>
       <button type="submit" class="primary" style="margin-top:10px">Open project</button>
     </form>
   </div>
@@ -26,6 +27,7 @@
       {% for project in projects %}
       <article class="card">
         <a href="/projects/{{ project.id }}" style="display:block;color:var(--fg-0)">
+          <!-- Capability pill summarizes whether launch prerequisites are complete. -->
           {% if project.capability.state == 'launch_ready' %}<span class="pill green">{{ project.capability.label }}</span>{% elif project.capability.state == 'analysis_ready' %}<span class="pill blue">{{ project.capability.label }}</span>{% else %}<span class="pill red">{{ project.capability.label or 'Blocked' }}</span>{% endif %}
           <h2 class="mono" style="font-size:16px;margin:10px 0 6px">{{ project.name }}</h2>
           <p class="muted mono" style="margin:0">{{ project.root_path }}</p>

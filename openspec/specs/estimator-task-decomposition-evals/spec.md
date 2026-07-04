@@ -11,7 +11,7 @@ The system SHALL include behavioral evals that feed synthetic repo-aware markdow
 #### Scenario: Repo-aware markdown task produces reviewed estimated work
 - **WHEN** a synthetic markdown task file describes changes against an example repository using DEMO identifiers and 2099 dates
 - **THEN** the system creates a Proposed Task Breakdown review before creating Tasks
-- **AND** accepted candidates produce estimated work with token estimates, model recommendations constrained to available Worker models when applicable, and source metadata identifying markdown intake
+- **AND** accepted candidates produce estimated work with token estimates, adapter-compatible routed Worker models when available, and source metadata identifying markdown intake
 
 ### Requirement: Estimator evals cover decomposition of long and bullet-point tasks
 The system SHALL include behavioral evals and golden decomposition fixtures for longer markdown task descriptions and bullet lists that verify semantic classification into vertical-slice candidates, constraints, verification criteria, non-goals, and rejected-as-task reasons before Task Estimation runs.

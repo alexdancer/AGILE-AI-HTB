@@ -24,7 +24,7 @@ def _case(case_id: str, description: str, **overrides):
         "expected_tokens_max": 2_000,
         "complexity": "modest",
         "task_kind": "implementation",
-        "recommended_model": "claude-3-5-sonnet-20240620",
+        "recommended_model": "claude-sonnet-4-6",
         "project_profile": {"name": "DEMO_REPO_2099", "language": "python"},
         "rationale": "Synthetic DEMO_2099 calibration rationale.",
     }
@@ -48,7 +48,7 @@ def test_strict_catalog_loads_valid_case_with_optional_actual_tokens(tmp_path):
       language: python
     task_kind: implementation
     complexity: modest
-    recommended_model: claude-3-5-sonnet-20240620
+    recommended_model: claude-sonnet-4-6
     expected_tokens_min: 5000
     expected_tokens_max: 12000
     actual_tokens: 9100
@@ -76,7 +76,7 @@ def test_strict_catalog_loads_valid_case_with_optional_actual_tokens(tmp_path):
     project_profile: {}
     task_kind: implementation
     complexity: modest
-    recommended_model: claude-3-5-sonnet-20240620
+    recommended_model: claude-sonnet-4-6
     expected_tokens_min: 5000
     expected_tokens_max: 12000
     rationale: Missing required ID.
@@ -90,7 +90,7 @@ def test_strict_catalog_loads_valid_case_with_optional_actual_tokens(tmp_path):
     project_profile: {}
     task_kind: implementation
     complexity: modest
-    recommended_model: claude-3-5-sonnet-20240620
+    recommended_model: claude-sonnet-4-6
     expected_tokens_min: 12000
     expected_tokens_max: 5000
     rationale: Invalid range.
@@ -104,7 +104,7 @@ def test_strict_catalog_loads_valid_case_with_optional_actual_tokens(tmp_path):
     project_profile: not-a-dict
     task_kind: implementation
     complexity: modest
-    recommended_model: claude-3-5-sonnet-20240620
+    recommended_model: claude-sonnet-4-6
     expected_tokens_min: 5000
     expected_tokens_max: 12000
     rationale: Invalid profile.
@@ -131,7 +131,7 @@ def test_strict_catalog_rejects_duplicate_ids(tmp_path):
     project_profile: {}
     task_kind: implementation
     complexity: simple
-    recommended_model: claude-3-haiku-20240307
+    recommended_model: claude-haiku-4-5
     expected_tokens_min: 1000
     expected_tokens_max: 2000
     rationale: First.
@@ -140,7 +140,7 @@ def test_strict_catalog_rejects_duplicate_ids(tmp_path):
     project_profile: {}
     task_kind: implementation
     complexity: simple
-    recommended_model: claude-3-haiku-20240307
+    recommended_model: claude-haiku-4-5
     expected_tokens_min: 1000
     expected_tokens_max: 2000
     rationale: Duplicate.
@@ -165,7 +165,7 @@ def test_lenient_local_catalog_ignores_malformed_cases_and_keeps_valid(tmp_path)
       name: DEMO_REPO_2099
     task_kind: implementation
     complexity: modest
-    recommended_model: claude-3-5-sonnet-20240620
+    recommended_model: claude-sonnet-4-6
     expected_tokens_min: 5000
     expected_tokens_max: 12000
     rationale: Valid local case.
@@ -174,7 +174,7 @@ def test_lenient_local_catalog_ignores_malformed_cases_and_keeps_valid(tmp_path)
     project_profile: bad-profile
     task_kind: implementation
     complexity: modest
-    recommended_model: claude-3-5-sonnet-20240620
+    recommended_model: claude-sonnet-4-6
     expected_tokens_min: 5000
     expected_tokens_max: 12000
     rationale: Bearer abcdefghijklmnop
@@ -225,7 +225,7 @@ def test_default_and_local_sources_are_combined(tmp_path):
       name: DEMO_REPO_2099
     task_kind: implementation
     complexity: simple
-    recommended_model: claude-3-haiku-20240307
+    recommended_model: claude-haiku-4-5
     expected_tokens_min: 1000
     expected_tokens_max: 3000
     rationale: Local case.
@@ -259,7 +259,7 @@ def test_selection_uses_structured_filters_lexical_overlap_and_stable_tie_breaki
             "DEMO-CAL-2099-999-D",
             "Add board archive filter route tests",
             complexity="complex",
-            recommended_model="claude-3-opus-20240229",
+            recommended_model="claude-opus-4-8",
         ),
     ]
 
@@ -268,7 +268,7 @@ def test_selection_uses_structured_filters_lexical_overlap_and_stable_tie_breaki
         task_description="Add board archive filter tests",
         project_profile={"name": "DEMO_REPO_2099", "language": "python"},
         complexity="modest",
-        recommended_model="claude-3-5-sonnet-20240620",
+        recommended_model="claude-sonnet-4-6",
         limit=2,
     )
 

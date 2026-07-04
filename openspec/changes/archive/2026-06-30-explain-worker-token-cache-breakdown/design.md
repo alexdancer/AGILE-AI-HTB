@@ -49,7 +49,7 @@ The budget contract should remain conservative: if the provider reports cache to
      - Codex/OpenAI defensive aliases: `cached_input_tokens`, `cached_tokens`, `input_token_details.cached_tokens`, `prompt_tokens_details.cached_tokens`, and output/reasoning aliases where present.
 
 6. **Keep raw evidence available behind existing disclosure patterns.**
-   - Rationale: operators need auditability, but raw JSON should not be the first thing needed to understand a budget spike.
+   - Rationale: operators need auditability, but raw JSON should not be the first thing needed to understand a budget jump.
 
 ## Risks / Trade-offs
 

@@ -143,12 +143,10 @@ class FakeEstimatorLLM:
         self.content = content or {
             "token_estimate": 12_345,
             "complexity": "modest",
-            "recommended_model": "claude-3-5-sonnet-20240620",
             "confidence": 0.82,
             "rationale": "Endpoint plus tests is a modest task.",
             "assumptions": ["No schema migration is needed."],
             "risk_flags": ["integration tests may expand scope"],
-            "spike_recommendation": "No spike needed.",
             "budget_note": "Within normal daily budget.",
             "source": "llm",
         }

@@ -77,6 +77,7 @@ def list_alarms(
         resolved=resolved,
     )
     if _wants_html(request):
+        # Browser views are protected; JSON polling stays available to API clients.
         require_portal_auth(request)
         open_alarms = [alarm for alarm in alarms if not alarm.get("resolved_at")]
         critical_count = sum(
@@ -121,6 +122,7 @@ async def resolve_alarm(alarm_id: str, request: Request) -> dict[str, Any] | Red
 async def _resolve_alarm_request(request: Request) -> ResolveAlarmRequest:
     content_type = request.headers.get("content-type", "")
     try:
+        # The resolve action can come from the dashboard form or from JSON automation.
         if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
             form = await request.form()
             data: dict[str, Any] = {"action": form.get("action")}

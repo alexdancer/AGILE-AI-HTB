@@ -75,10 +75,12 @@ def test_readme_documents_portal_first_operator_flow():
     assert f"htb {removed_command}" not in readme
     assert "docker-compose up" not in readme
     assert "Docker path" not in readme
-    assert "uv run pytest" in readme
+    assert "uv run --extra test pytest" in readme
     assert "provider" in readme.lower()
+    assert "### With a Markdown file" in readme
+    assert "upload the file" in readme
     assert "Task Breakdown Agent applies the Task Slicing Policy" in readme
-    assert "final Acceptance Verification card checks the original source contract" in readme
+    assert "final Acceptance Verification checks the original Markdown contract" in readme
     assert "compact objective, boundaries, proof command, dependencies, likely entry points, and execution mode" in readme
     assert "docs/assets/screenshots/dashboard-overview.png" in readme
     assert "docs/assets/screenshots/project-board-review-workflow.png" in readme

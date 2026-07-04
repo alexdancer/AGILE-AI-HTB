@@ -81,6 +81,7 @@ def write_default_secrets_env(
     portal_token_env, control_key_env = secret_env_names(config)
     values = dict(existing)
     values.setdefault(portal_token_env, f"htb-{secrets.token_urlsafe(18)}")
+    # Never invent provider credentials; leave a placeholder for the operator to replace.
     values.setdefault(control_key_env, CONTROL_API_KEY_PLACEHOLDER)
     secrets_path.write_text(_render_secrets_env(values), encoding="utf-8")
     return values
@@ -115,6 +116,7 @@ def load_operator_secrets_env(
         return {}
     values = _parse_env_file(secrets_path)
     for name, value in values.items():
+        # Placeholders stay on disk but are not exported into the live process environment.
         if _is_placeholder_secret(value):
             continue
         os.environ.setdefault(name, value)
@@ -194,6 +196,7 @@ def _is_placeholder_secret(value: str) -> bool:
 def _sanitize_env_name_fields(config: dict[str, Any]) -> None:
     for key in ["portal_token_env", "control_plane_api_key_env"]:
         value = config.get(key)
+        # These config fields are environment variable names, so reject shell fragments or secret values.
         if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
             config[key] = DEFAULT_LOCAL_CONFIG[key]
 

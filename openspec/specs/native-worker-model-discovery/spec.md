@@ -41,13 +41,13 @@ The system SHALL apply Worker Setup bulk allowed-model selection only to model I
 - **WHEN** a request submits an allowed model ID that is not in the adapter's discovered model inventory
 - **THEN** the system rejects the request before changing the adapter's allowed model subset
 
-### Requirement: Worker model recommendation constraints
-The system SHALL recommend Worker execution models only from the selected adapter's operator-approved allowed Worker model subset. When the control-plane estimator recommends a model that is not allowed for the selected adapter, the system SHALL select an allowed model by task estimate, complexity, and model-name suitability rather than by raw discovery order.
+### Requirement: Worker model routing constraints
+The system SHALL route Worker execution models only from the selected or default adapter's operator-approved allowed Worker model subset. Task Estimation SHALL provide token estimate and complexity evidence, and deterministic routing SHALL use that evidence with guardrail model-routing policy, budget clamp, and adapter allowed models to select the stored routed task model. When the guardrail policy candidate is not allowed for the selected or default adapter, the system SHALL select an allowed model by task estimate, complexity, and model-name suitability rather than by raw discovery order.
 
 #### Scenario: Estimate with allowed worker models
 - **WHEN** the control-plane model estimates a task and a verified Worker Harness has allowed models
-- **THEN** the recommendation uses a model from that Worker Harness's allowed model set
-- **AND** the recommendation records metadata explaining whether the estimator model was matched directly or constrained to an allowed substitute
+- **THEN** deterministic routing uses a model from that Worker Harness's allowed model set
+- **AND** routing metadata explains whether the guardrail policy candidate was matched directly or constrained to an allowed substitute
 
 #### Scenario: No allowed worker models
 - **WHEN** no allowed Worker Harness model inventory is available
@@ -61,7 +61,7 @@ The system SHALL recommend Worker execution models only from the selected adapte
 #### Scenario: Large task may use heavyweight model
 - **WHEN** a large or high-complexity estimated task is constrained to an allowed model set that includes heavyweight models
 - **THEN** the system may select a heavyweight allowed model when the estimate and complexity justify it
-- **AND** the constraint metadata records the original estimator recommendation, available allowed models, selected model, and reason
+- **AND** the constraint metadata records the guardrail policy candidate, available allowed models, selected model, and reason
 
 ### Requirement: Discovery is separate from launch verification
 The system SHALL treat model discovery as a prerequisite signal, not proof that the Worker Harness can be launched with token tracking.

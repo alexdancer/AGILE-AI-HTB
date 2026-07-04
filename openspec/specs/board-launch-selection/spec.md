@@ -195,24 +195,24 @@ The board SHALL render task cards with a compact default view that keeps the tas
 - **THEN** the existing board columns remain available
 - **AND** the existing launch, refresh, review, done, and block actions remain available for their current statuses
 
-### Requirement: Board displays actual launched model before recommendation
-When a task has launch evidence for a Worker model, the board SHALL display that launched model as the primary model value. If the launched model differs from the recommended estimate model, the board SHALL preserve and display the recommended model as secondary evidence.
+### Requirement: Board displays actual launched model before routed task model
+When a task has launch evidence for a Worker model, the board SHALL display that launched model as the primary model value. If the launched model differs from the routed task model, the board SHALL preserve and display the routed model as secondary evidence.
 
-#### Scenario: Operator launches with recommended model
+#### Scenario: Operator launches with routed model
 - **WHEN** a task is launched with the same model as `recommended_model`
 - **THEN** the board shows that model as the primary model value
 - **AND** the board does not duplicate the same model as a separate recommendation warning
 
-#### Scenario: Operator overrides recommended model at launch
+#### Scenario: Operator overrides routed model at launch
 - **WHEN** a task has `recommended_model` set to `gpt-5.4-mini`
 - **AND** the operator launches the task with `openai/gpt-5.5 --variant high`
 - **THEN** the board shows `openai/gpt-5.5 --variant high` as the primary launched model value
-- **AND** the board still shows `gpt-5.4-mini` as the recommended estimate model in secondary evidence
+- **AND** the board still shows `gpt-5.4-mini` as the routed task model in secondary evidence
 
 #### Scenario: Task has not launched yet
 - **WHEN** a task has no launch model evidence
 - **AND** it has a `recommended_model`
-- **THEN** the board shows the recommended model as the primary model value
+- **THEN** the board shows the routed task model as the primary model value
 
 ### Requirement: Board live-refreshes active Worker Runs
 The board SHALL keep active Worker Run status current without requiring the operator to click Refresh status manually.
@@ -240,12 +240,12 @@ The board SHALL add automation controls without removing existing per-task Launc
 - **AND** automation controls SHALL NOT be required to launch the task
 
 ### Requirement: Launch controls preserve model-layer clarity
-Board launch controls SHALL keep Worker Adapter selection, Worker model selection, and estimator recommendation provenance visually distinct.
+Board launch controls SHALL keep Worker Adapter selection, Worker model selection, estimator sizing evidence, and deterministic routing provenance visually distinct.
 
-#### Scenario: Launch model differs from recommendation
-- **WHEN** a task has a recommended model and a different selected or launched Worker model
+#### Scenario: Launch model differs from routed model
+- **WHEN** a task has a routed model and a different selected or launched Worker model
 - **THEN** the board SHALL display the selected/launched Worker model as the primary run model
-- **AND** it SHALL keep the estimator recommendation visible as secondary provenance rather than overwriting it
+- **AND** it SHALL keep the routed model visible as secondary provenance rather than overwriting it
 
 #### Scenario: Adapter and tracking label remain visible
 - **WHEN** an Estimated task offers launch controls

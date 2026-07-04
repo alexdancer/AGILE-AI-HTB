@@ -25,6 +25,7 @@ def native_cli_diagnostic(
     evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Return bounded operator-facing diagnostics for known native CLI setup failures."""
+    # Diagnostics are operator-facing, so merge all CLI channels and redact before pattern matching.
     text = redact_native_cli_text(_combined_cli_text(stdout=stdout, stderr=stderr, evidence=evidence))
     lower = text.lower()
     kind = str(adapter_kind or adapter_id or "worker").lower()
@@ -127,6 +128,7 @@ def _json_payload_texts(text: str) -> list[str]:
             payload = json.loads(stripped)
         except json.JSONDecodeError:
             continue
+        # Many native CLIs stream JSONL; pull human-readable text out of nested payloads.
         extracted = _payload_text(payload)
         if extracted:
             texts.append(extracted)

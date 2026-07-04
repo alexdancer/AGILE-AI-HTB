@@ -37,11 +37,13 @@ def start_session(payload: SessionStartRequest, request: Request) -> dict[str, A
     budget = payload.budget or {}
     guardrail_overrides = dict(payload.guardrail_overrides or {})
     if budget:
+        # Persist budget overrides inside guardrails so the proxy can enforce them later.
         guardrail_overrides["budget"] = budget
     session = db.create_session(
         database_path,
         task_description=payload.task_description,
         model=payload.model,
+        # Only the hash is stored; the raw bearer key is returned once to the caller.
         session_key_hash=_hash_key(session_api_key),
         guardrail_overrides=guardrail_overrides,
     )
@@ -70,6 +72,7 @@ def session_report(session_id: str, request: Request) -> dict[str, Any]:
     token_breakdown = db.session_token_breakdown(_database_path(request), session_id)
     config = _guardrails(request)
     budget = artifact["session"].get("guardrail_overrides", {}).get("budget", {})
+    # Reports show the session's own spend plus any daily usage supplied at launch time.
     daily_used_tokens = int(budget.get("daily_used_tokens", 0)) + int(token_breakdown["total_tokens"])
     current_zone = get_budget_zone(daily_used_tokens, _daily_cap_tokens(budget, config), config)
     return {
@@ -96,6 +99,7 @@ def session_artifact(session_id: str, request: Request) -> dict[str, Any]:
 def evaluate_session_checkpoints(session_id: str, request: Request) -> dict[str, Any]:
     artifact = _artifact_or_404(request, session_id)
     results = [result.as_dict() for result in evaluate_checkpoints(artifact, _guardrails(request))]
+    # Store checkpoint results so later reports and alarm views use the same evaluation.
     for result in results:
         db.record_checkpoint_result(_database_path(request), session_id=session_id, checkpoint=result)
     return {"session_id": session_id, "checkpoint_results": results}

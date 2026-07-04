@@ -1,6 +1,6 @@
 ## Why
 
-The task estimator LLM produces token estimates with zero project context (no file tree, no language/framework detection, no test commands) and a self-reported confidence score that is never calibrated against actual Worker token usage. Estimates are blind guesses; confidence is ungrounded. Without project context and accuracy tracking, estimation cannot improve, Spike has no meaningful trigger signal, and operators cannot tell whether estimates are getting better or worse.
+The task estimator LLM produces token estimates with zero project context (no file tree, no language/framework detection, no test commands) and a self-reported confidence score that is never calibrated against actual Worker token usage. Estimates are blind guesses; confidence is ungrounded. Without project context and accuracy tracking, estimation cannot improve, and operators cannot tell whether estimates are getting better or worse.
 
 ## What Changes
 

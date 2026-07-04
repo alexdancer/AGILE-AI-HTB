@@ -1,7 +1,9 @@
-from pathlib import Path
 from dataclasses import replace
+from importlib import resources
+from pathlib import Path
 
 import pytest
+import yaml
 
 from agile_ai_htb.guardrails import get_budget_zone, load_guardrails
 
@@ -27,8 +29,17 @@ def test_load_guardrails_preserves_real_yaml_configuration():
     assert config.tool_category_limit.limit == 0.50
     assert config.tool_categories["delegation"].weight == 1.5
     assert config.notifications.macos_notification is True
-    assert config.model_routing.task_complexity["complex"].recommended_model == "claude-3-opus-20240229"
+    assert config.model_routing.task_complexity["simple"].recommended_model == "claude-haiku-4-5"
+    assert config.model_routing.task_complexity["modest"].recommended_model == "claude-sonnet-4-6"
+    assert config.model_routing.task_complexity["complex"].recommended_model == "claude-opus-4-8"
     assert config.model_routing.budget_aware_clamp.remaining_daily_threshold == 0.15
+
+
+def test_checkout_guardrails_match_packaged_default_values():
+    packaged = resources.files("agile_ai_htb").joinpath("defaults/guardrails.yaml").read_text(encoding="utf-8")
+    checkout = (ROOT / "guardrails.yaml").read_text(encoding="utf-8")
+
+    assert yaml.safe_load(checkout) == yaml.safe_load(packaged)
 
 
 def test_load_guardrails_rejects_invalid_zone_order(tmp_path):

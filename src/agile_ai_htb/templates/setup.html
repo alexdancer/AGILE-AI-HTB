@@ -6,6 +6,7 @@
 
 <section class="status-toolbar">
   <div class="status-group">
+    <!-- next_step points to the first incomplete setup requirement. -->
     <span class="pill {% if ready_to_launch %}green{% else %}yellow{% endif %}">{% if ready_to_launch %}ready{% else %}next missing action{% endif %}</span>
     <span class="status-item">{{ next_step.detail }}</span>
   </div>
@@ -32,6 +33,7 @@
     {% else %}
     <p><span class="pill yellow">setup needed</span> Complete the required setup steps before governed Worker launch.</p>
     <ol>
+      <!-- The first three setup checks gate governed Worker launch. -->
       {% for step in steps[:3] %}
       <li><a href="{{ step.href }}">{{ step.name }}</a>: {{ step.state }}</li>
       {% endfor %}

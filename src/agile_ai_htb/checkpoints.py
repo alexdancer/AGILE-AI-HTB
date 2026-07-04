@@ -17,6 +17,7 @@ class CheckpointResult:
 
 
 def evaluate_checkpoints(artifact: dict[str, Any], config: GuardrailConfig) -> list[CheckpointResult]:
+    # Reports display these in order as the operator checklist.
     return [
         _budget_health(artifact, config),
         _stuck_loop_score(artifact),
@@ -28,6 +29,7 @@ def evaluate_checkpoints(artifact: dict[str, Any], config: GuardrailConfig) -> l
 def _budget_health(artifact: dict[str, Any], config: GuardrailConfig) -> CheckpointResult:
     session_tokens = sum(int(turn.get("total_tokens", 0)) for turn in artifact.get("token_log", []))
     if config.session_cap.enabled:
+        # A hard session cap overrides fair-share math when operators configure an explicit limit.
         budget_limit = config.session_cap.tokens
         limit_source = "session_cap"
     else:
@@ -68,6 +70,7 @@ def _tool_diversity(artifact: dict[str, Any], config: GuardrailConfig) -> Checkp
         snapshot.get("zone") == "red" and snapshot.get("decision", {}).get("blocked_tools")
         for snapshot in artifact.get("guardrail_snapshots", [])
     )
+    # Red-zone restrictions may lower tool variety because governance already narrowed choices.
     passed = distinct_categories >= 3 or red_zone_restricted
     return CheckpointResult(
         name="tool_diversity",

@@ -192,7 +192,7 @@ def render_calibration_summary(
         profile = _profile_label(case.project_profile)
         lines.append(
             f"- {case.id}: expected={case.expected_tokens_min}-{case.expected_tokens_max}{actual}, "
-            f"{case.task_kind}/{case.complexity}, model={case.recommended_model}, "
+            f"{case.task_kind}/{case.complexity}, "
             f"profile={profile}. Rationale: {_one_line(case.rationale)}"
         )
     summary = "\n".join(lines).strip()

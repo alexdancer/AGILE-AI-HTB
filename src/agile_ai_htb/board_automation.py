@@ -26,6 +26,7 @@ DEFAULT_POLICY = {
 
 
 def empty_run_automation_state(project_id: str) -> dict[str, Any]:
+    # Portal state stays small: one active run plus a short event trail.
     return {
         "project_id": project_id,
         "status": QUEUE_STATUS_IDLE,
@@ -63,6 +64,7 @@ def start_run_automation(
         raise ValueError(f"unsupported automation source: {source}")
     def update(state: dict[str, Any]) -> dict[str, Any]:
         state = _normalize_state(project_id, state)
+        # Snapshot policy choices at start so later queue ticks use the operator's original intent.
         policy = {**DEFAULT_POLICY, **dict(state.get("policy") or {})}
         policy["auto_agent_review"] = bool(auto_agent_review)
         state.update(
@@ -99,6 +101,7 @@ def stop_run_automation(
 ) -> dict[str, Any]:
     def update(state: dict[str, Any]) -> dict[str, Any]:
         state = _normalize_state(project_id, state)
+        # Clear ownership so the next queue tick cannot resume a stale task/run pair.
         state.update(
             {
                 "status": QUEUE_STATUS_STOPPED,
@@ -168,6 +171,7 @@ def record_automation_event(
         state = _normalize_state(project_id, state)
         state_events = list(state.get("events") or [])
         state_events.append(event)
+        # Bound portal history because this setting is read on every board refresh.
         state["events"] = state_events[-25:]
         return state
 
@@ -176,6 +180,7 @@ def record_automation_event(
     if task_id:
         _append_task_automation_event(database_path, task_id, event)
     if worker_run_id:
+        # Mirror control-plane events onto worker-run history for post-run diagnostics.
         run = db.get_worker_run(database_path, worker_run_id)
         db.update_worker_run_metadata(database_path, worker_run_id, {"automation": event})
         db.record_worker_run_event(
@@ -202,6 +207,7 @@ def _append_task_automation_event(database_path: Path | str, task_id: str, event
 
 
 def _normalize_state(project_id: str, state: dict[str, Any]) -> dict[str, Any]:
+    # Upgrade old or partial persisted states before callers inspect them.
     normalized = empty_run_automation_state(project_id)
     normalized.update(dict(state or {}))
     normalized["project_id"] = project_id

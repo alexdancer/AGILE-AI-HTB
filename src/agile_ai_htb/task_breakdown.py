@@ -126,6 +126,7 @@ async def breakdown_task_source(
         "structure_hints": structure_hints or [],
     }
     if repo_context:
+        # Repo context is optional evidence; validation still depends on the task source contract.
         user_payload["repo_context"] = repo_context
     request = {
         "model": task_breakdown_model,
@@ -192,6 +193,7 @@ def _provider_failure_message(
 
 def _safe_failure_detail(detail: str, *, source_text: str) -> str:
     safe = SECRET_TEXT_PATTERN.sub("[REDACTED]", detail)
+    # Provider errors may echo the full intake text, so remove exact and normalized variants.
     for variant in _source_text_redaction_variants(source_text):
         safe = safe.replace(variant, "[REDACTED_SOURCE_TEXT]")
     safe = " ".join(safe.split())
@@ -238,6 +240,7 @@ def _task_breakdown_json_text(content: str) -> str:
     if not text.startswith("```"):
         return text
 
+    # Accept fenced JSON because some providers wrap structured output in markdown.
     lines = text.splitlines()
     if len(lines) < 3:
         raise TaskBreakdownValidationError("task breakdown returned invalid JSON")

@@ -224,6 +224,7 @@ def init_db(path: Path | str) -> None:
 
 
 def _migrate_schema(conn: sqlite3.Connection) -> None:
+    # Migrations are additive so existing local harness databases keep their task/session history.
     token_turn_columns = {
         row["name"] for row in conn.execute("pragma table_info(token_turns)").fetchall()
     }
@@ -378,11 +379,13 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     conn.execute("create index if not exists idx_worker_runs_task_status on worker_runs(task_id, status)")
     conn.execute("create index if not exists idx_worker_runs_session on worker_runs(session_id)")
     conn.execute("create index if not exists idx_task_breakdowns_status on task_breakdowns(status, created_at)")
+    # "Ready" was renamed to "Estimated"; normalize old rows at startup instead of branching everywhere.
     conn.execute("update tasks set status = 'Estimated' where status = 'Ready'")
 
 
 def _seed_worker_adapters(conn: sqlite3.Connection) -> None:
     now = _now_iso()
+    # The deprecated Hermes adapter is removed while user edits to supported presets are preserved.
     conn.execute("delete from worker_adapters where id = ?", ("hermes",))
     for preset in WORKER_ADAPTER_PRESETS:
         conn.execute(
@@ -685,6 +688,7 @@ def get_task_breakdown(path: Path | str, breakdown_id: str) -> dict[str, Any]:
 
 
 def update_task_breakdown(path: Path | str, breakdown_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    # Whitelist updateable fields before building SQL column assignments.
     allowed = {
         "status": "status",
         "decision": "decision",
@@ -862,6 +866,7 @@ def mark_stale_worker_runs_interrupted(path: Path | str) -> list[dict[str, Any]]
             run = _worker_run_from_row(row)
             metadata = run.get("metadata", {})
             owner_pid = metadata.get("executor_pid")
+            # A missing/dead owner PID means the previous process died while the UI still showed Running.
             if owner_pid == current_pid or _pid_is_alive(owner_pid):
                 continue
             metadata = {**metadata, "interrupted_reason": "Worker Run was interrupted before completion."}
@@ -1473,6 +1478,7 @@ def update_portal_setting(
 ) -> dict[str, Any]:
     now = _now_iso()
     with connect(path) as conn:
+        # Serialize read-modify-write updates so two UI actions cannot lose each other's setting changes.
         conn.execute("begin immediate")
         row = conn.execute("select value_json from portal_settings where key = ?", (key,)).fetchone()
         current = _from_json(row["value_json"]) if row is not None else dict(default or {})
@@ -1548,6 +1554,7 @@ def effective_daily_budget_window_start(
 ) -> str:
     day_start = _parse_iso_datetime(current_day_start_iso(timezone, now=now))
     reset_at = _parse_iso_datetime(get_token_budget_settings(path).get("daily_usage_reset_at"))
+    # Manual resets later than midnight define the active daily budget window.
     if reset_at is not None and day_start is not None and reset_at >= day_start:
         return reset_at.isoformat()
     if day_start is None:  # defensive fallback; current_day_start_iso should always parse
@@ -1865,6 +1872,7 @@ def _summarize_token_turns(turns: list[dict[str, Any]]) -> dict[str, Any]:
         raw_usage = turn.get("raw_usage") or {}
         category = str(raw_usage.get("spend_category") or _spend_category_for_usage_kind(str(turn.get("usage_kind") or "")))
         source = str(raw_usage.get("usage_source") or _usage_source_for_usage_kind(str(turn.get("usage_kind") or ""), category))
+        # Agent Review used to be its own category; report it with other control-plane summaries.
         if category == "agent_review":
             category = "reporting_summary"
             if source == "unspecified":
@@ -2203,6 +2211,7 @@ def _sanitize_evidence(value: Any, key_hint: str = "") -> Any:
     if isinstance(value, list):
         return [_sanitize_evidence(item, key_hint) for item in value]
     if isinstance(value, str):
+        # Evidence can include raw CLI output, so sanitize by both key hints and token-like values.
         if _is_secret_key_hint(key_hint):
             return "***REDACTED***"
         return _sanitize_secret_string(value)

@@ -34,7 +34,7 @@ Alternative considered: keep expanding the inline `_system_prompt()` string. Rej
 
 Keep `kind` as `implementation` or `acceptance_verification` for compatibility with existing review/launch behavior. Add an orthogonal `execution_mode` field with `AFK` or `HITL` to indicate whether a Worker can complete the task without waiting for operator input.
 
-Alternative considered: add new candidate kinds such as `diagnosis` or `spike`. Rejected for this slice because the board lifecycle already has Spike semantics and candidate kind currently controls Acceptance Verification behavior. Diagnostic work can be represented as an implementation candidate whose objective/proof says “build the repro/feedback loop.”
+Alternative considered: add new candidate kinds such as `diagnosis`. Rejected for this slice because candidate kind currently controls Acceptance Verification behavior. Diagnostic work can be represented as an implementation candidate whose objective/proof says “build the repro/feedback loop.”
 
 ### 3. Require candidate quality evidence
 

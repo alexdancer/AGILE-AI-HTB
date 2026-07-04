@@ -39,4 +39,5 @@ def evaluate_launch_guardrails(
         include_launch_credentials=True,
     )
 
+    # Launch uses the stricter board-readiness path because it includes the credentials needed to start a Worker.
     return LaunchGuardrailResult(readiness.launchable_for_board, readiness.launchable_for_board, readiness.reasons, adapter)

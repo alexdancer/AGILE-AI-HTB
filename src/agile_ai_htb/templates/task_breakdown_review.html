@@ -18,6 +18,7 @@
     </div>
     {% if breakdown.rationale %}<p class="muted">{{ breakdown.rationale }}</p>{% endif %}
     {% if breakdown.status == 'failed' %}
+      <!-- Failed breakdowns can be retried or converted into one manual candidate. -->
       <div class="alarm high">
         <div class="head"><strong>Breakdown failed</strong><span class="id">{{ breakdown.failure_type }}</span></div>
         <div class="body">{{ breakdown.failure_message }}</div>
@@ -40,6 +41,7 @@
 </div>
 
 {% if breakdown.status != 'failed' %}
+<!-- Accepting candidates is what materializes board tasks from this review. -->
 <form method="post" action="/task-breakdowns/{{ breakdown.id }}/accept">
   <div class="grid cols-2">
     <section class="panel">
@@ -53,6 +55,7 @@
             <option value="implementation" {% if candidate.kind|default('implementation') == 'implementation' %}selected{% endif %}>implementation</option>
             <option value="acceptance_verification" {% if candidate.kind|default('implementation') == 'acceptance_verification' %}selected{% endif %}>acceptance_verification</option>
           </select>
+          <!-- Backfill execution mode for older breakdowns that only stored human_in_loop. -->
           {% set candidate_execution_mode = candidate.execution_mode|default('') %}
           {% if not candidate_execution_mode %}
             {% set candidate_execution_mode = 'AFK' if candidate.human_in_loop is defined and not candidate.human_in_loop else 'HITL' %}

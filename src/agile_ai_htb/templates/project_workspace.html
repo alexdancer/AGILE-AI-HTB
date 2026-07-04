@@ -8,6 +8,7 @@
 {% endif %}
 
 {% if project.archived_at %}
+<!-- Archived projects keep evidence visible but suppress active launch entry points. -->
 <section class="notice warning">
   <strong>Archived project</strong>
   <p class="muted mono" style="margin:6px 0 0">Archived {{ project.archived_at }}. History and evidence stay available, but active board launch controls are hidden until restore.</p>
@@ -41,6 +42,7 @@
 </section>
 
 <nav class="workspace-nav" aria-label="Project workflows">
+  <!-- Board link is omitted for archived projects to prevent new launches. -->
   {% if not project.archived_at %}<a href="/projects/{{ project.id }}/board">Task board</a>{% endif %}
   <a href="/sessions">Sessions</a>
   <a href="/projects/{{ project.id }}/task-history">Task history</a>

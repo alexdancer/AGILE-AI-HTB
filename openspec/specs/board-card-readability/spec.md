@@ -23,14 +23,14 @@ Board task cards SHALL place verbose payloads behind native expandable sections 
 - **AND** each expanded region SHALL render long text in bounded/scrollable containers to avoid page breakage.
 
 ### Requirement: Board model provenance is explicit and ordered
-Board task cards SHALL surface the actually launched Worker model as primary evidence when launch metadata exists, and SHALL retain the estimate recommendation as secondary context when it differs.
+Board task cards SHALL surface the actually launched Worker model as primary evidence when launch metadata exists, and SHALL retain the routed task model as secondary context when it differs.
 
-#### Scenario: Launched and recommended models differ
+#### Scenario: Launched and routed models differ
 - **WHEN** `task.metadata.launch_model` exists and differs from `task.recommended_model`
 - **THEN** the card SHALL display the launched model first in the model line
-- **AND** SHALL also display the recommended model as secondary evidence with clear labeling that it is the estimate recommendation.
+- **AND** SHALL also display the routed model as secondary evidence with clear labeling that it is the estimated task's routed Worker model.
 - **WHEN** launch evidence is unavailable
-- **THEN** the card SHALL display the recommended model as the model value.
+- **THEN** the card SHALL display the routed task model as the model value.
 
 ### Requirement: Board cards show actual Worker execution tokens
 Board task cards SHALL surface normalized actual Worker execution token totals when authoritative usage has been recorded for the task. Normalized actuals SHALL exclude cache-read/reused-context tokens and include cache-write/cache-creation, fresh input, output, reasoning, and counted unclassified tokens when available.

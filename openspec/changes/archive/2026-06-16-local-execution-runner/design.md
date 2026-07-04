@@ -95,7 +95,7 @@ Rationale: coding tasks become unreliable if interrupted mid-session. Budget gov
 
 ## Risks / Trade-offs
 
-- **OpenCode CLI behavior may not support the required non-interactive sentinel flow** → Start with a spike/prototype command that proves exact invocation, env vars, exit behavior, and output capture before integrating deeply.
+- **OpenCode CLI behavior may not support the required non-interactive sentinel flow** → Start with a prototype command that proves exact invocation, env vars, exit behavior, and output capture before integrating deeply.
 - **Some Worker Adapters may ignore OpenAI-compatible proxy env vars** → Keep unverified adapters non-launchable and record verification failure reasons.
 - **Provider API key bridging can fail locally or on Render** → Reuse existing LiteLLM provider-key bridging and verify with real proxy token rows.
 - **Read-only task may still cause file writes if the agent disobeys** → Verification/session report prompts must explicitly forbid file changes; runner should inspect git diff after read-only sessions and mark Blocked if files changed.

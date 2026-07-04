@@ -228,6 +228,7 @@ class WorkerAdapterBuilder:
         ]
         env = self._env(proxy_url=proxy_url, session_api_key=session_api_key)
         for key, value in (self.config.get("env") or {}).items():
+            # Session credentials are injected by the harness; adapter config cannot override secrets.
             if not _is_secret_name(key):
                 env[str(key)] = str(value)
         workdir = project_root or self.adapter.get("workdir")
@@ -347,6 +348,7 @@ class CodexAdapterBuilder(WorkerAdapterBuilder):
     def _normalize_template(self, template_key: str, template: list[Any]) -> list[Any]:
         command = [str(part) for part in template]
         if template_key in {"native_launch_template", "native_verification_template"} and len(command) == 1:
+            # A bare configured binary expands to the safe default Codex exec template.
             command = (
                 self._default_native_launch_template()
                 if template_key == "native_launch_template"
@@ -584,6 +586,7 @@ def discover_worker_models(
     adapter = db.get_worker_adapter(database_path, adapter_id)
     curated_source = CURATED_MODEL_DISCOVERY_SOURCES.get(str(adapter.get("kind")))
     if curated_source:
+        # Curated providers avoid shelling out for model lists that are unstable or not exposed by CLI.
         return _discover_curated_worker_models(database_path, adapter, source=curated_source)
 
     plan = _model_discovery_plan(adapter)
@@ -863,6 +866,7 @@ def verify_worker_adapter(
     token_recorded = db.has_adapter_verification_token(database_path, session_id=session["id"], model=model)
     if tracking_mode != OBSERVED_ONLY and not token_recorded:
         reasons.append("No adapter_verification token row was recorded for selected model.")
+    # Without token evidence, a successful sentinel only proves the command ran, not budget tracking.
     resolved_tracking_mode = OBSERVED_ONLY if tracking_mode == OBSERVED_ONLY or not token_recorded else tracking_mode
 
     evidence = {

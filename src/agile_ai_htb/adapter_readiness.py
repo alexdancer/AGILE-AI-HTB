@@ -77,6 +77,8 @@ def evaluate_adapter_readiness(
     elif model is not None and model not in supported_models:
         reasons.append("Selected model is not supported by this adapter.")
 
+    # Launch-time checks include short-lived credentials that should not affect
+    # passive UI readiness badges.
     if include_launch_credentials:
         if tracking.mode == PROXY_GOVERNED and not session_api_key:
             reasons.append("Session API key is required for harness proxy token tracking.")

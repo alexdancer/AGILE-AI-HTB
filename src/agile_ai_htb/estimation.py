@@ -14,12 +14,10 @@ from agile_ai_htb.repo_context import build_repo_context_brief
 class EstimateResult:
     token_estimate: int
     complexity: str
-    recommended_model: str
     confidence: float
     rationale: str
     assumptions: list[str]
     risk_flags: list[str]
-    spike_recommendation: str
     budget_note: str
     source: str
 
@@ -27,12 +25,10 @@ class EstimateResult:
         return {
             "token_estimate": self.token_estimate,
             "complexity": self.complexity,
-            "recommended_model": self.recommended_model,
             "confidence": self.confidence,
             "rationale": self.rationale,
             "assumptions": self.assumptions,
             "risk_flags": self.risk_flags,
-            "spike_recommendation": self.spike_recommendation,
             "budget_note": self.budget_note,
             "source": self.source,
         }
@@ -62,6 +58,7 @@ async def estimate_task(
     project_profile: dict[str, Any] | None = None,
 ) -> tuple[EstimateResult, Any]:
     project_context = _build_project_context(project_root)
+    # Calibration examples nudge estimates without overriding the LLM's final structured response.
     calibration_context = _build_calibration_context(
         description,
         project_root=project_root,
@@ -108,6 +105,7 @@ def _build_project_context(project_root: str | None) -> str:
     except (OSError, ValueError):
         return ""
     text = str(brief.get("text") or "").strip()
+    # Keep estimator prompts bounded even when repository context is large.
     return text[:8_000]
 
 
@@ -132,7 +130,6 @@ def _system_prompt(config: GuardrailConfig, project_context: str = "", calibrati
     routing = {
         name: {
             "description": route.description,
-            "recommended_model": route.recommended_model,
         }
         for name, route in config.model_routing.task_complexity.items()
     }
@@ -140,10 +137,11 @@ def _system_prompt(config: GuardrailConfig, project_context: str = "", calibrati
     prompt = (
         "You estimate software task implementation token budgets. Return ONLY valid JSON "
         "with exactly these fields: token_estimate (positive integer), complexity "
-        "(simple|modest|complex), recommended_model (string), confidence (number 0-1), "
+        "(simple|modest|complex), confidence (number 0-1), "
         "rationale (string), assumptions (array of strings), risk_flags (array of strings), "
-        "spike_recommendation (string), budget_note (string), source (string, use 'llm'). "
-        "Do not include markdown or extra keys. Light routing policy: "
+        "budget_note (string), source (string, use 'llm'). "
+        "Do not choose or recommend a Worker model; deterministic adapter-aware routing handles that after estimation. "
+        "Do not include markdown or extra keys. Complexity policy: "
         f"{json.dumps(routing, sort_keys=True)}. Budget clamp: "
         f"enabled={clamp.enabled}, remaining_daily_threshold={clamp.remaining_daily_threshold}, "
         f"note_template={clamp.note!r}."
@@ -177,6 +175,7 @@ def _estimator_json_text(content: str) -> str:
     if not text.startswith("```"):
         return text
 
+    # Accept a fenced JSON object because some providers wrap json_object responses anyway.
     lines = text.splitlines()
     if len(lines) < 3:
         raise EstimatorValidationError("estimator returned invalid JSON")
@@ -205,12 +204,10 @@ def _validate_result(data: dict[str, Any], config: GuardrailConfig) -> EstimateR
     required = {
         "token_estimate",
         "complexity",
-        "recommended_model",
         "confidence",
         "rationale",
         "assumptions",
         "risk_flags",
-        "spike_recommendation",
         "budget_note",
         "source",
     }
@@ -227,18 +224,10 @@ def _validate_result(data: dict[str, Any], config: GuardrailConfig) -> EstimateR
     if complexity not in config.model_routing.task_complexity:
         allowed_complexities = ", ".join(sorted(config.model_routing.task_complexity))
         raise EstimatorValidationError(f"complexity must be one of: {allowed_complexities}")
-    recommended_model = data["recommended_model"]
-    if not isinstance(recommended_model, str) or not recommended_model.strip():
-        raise EstimatorValidationError("recommended_model must be a non-empty string")
-    allowed_models = {
-        route.recommended_model for route in config.model_routing.task_complexity.values()
-    }
-    if recommended_model not in allowed_models:
-        raise EstimatorValidationError("recommended_model must be configured for task routing")
     confidence = data["confidence"]
     if isinstance(confidence, bool) or not isinstance(confidence, int | float) or not 0 <= float(confidence) <= 1:
         raise EstimatorValidationError("confidence must be a number between 0 and 1")
-    for key in ["rationale", "spike_recommendation", "budget_note", "source"]:
+    for key in ["rationale", "budget_note", "source"]:
         if not isinstance(data[key], str):
             raise EstimatorValidationError(f"{key} must be a string")
     for key in ["assumptions", "risk_flags"]:
@@ -249,12 +238,10 @@ def _validate_result(data: dict[str, Any], config: GuardrailConfig) -> EstimateR
     return EstimateResult(
         token_estimate=token_estimate,
         complexity=complexity,
-        recommended_model=recommended_model,
         confidence=float(confidence),
         rationale=data["rationale"],
         assumptions=data["assumptions"],
         risk_flags=data["risk_flags"],
-        spike_recommendation=data["spike_recommendation"],
         budget_note=data["budget_note"],
         source=data["source"],
     )

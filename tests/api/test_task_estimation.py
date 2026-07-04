@@ -183,12 +183,10 @@ class FakeEstimatorLLM:
         self.content = content or {
             "token_estimate": 12_345,
             "complexity": "modest",
-            "recommended_model": "claude-3-5-sonnet-20240620",
             "confidence": 0.82,
             "rationale": "Endpoint plus tests is a modest task.",
             "assumptions": ["No schema migration is needed."],
             "risk_flags": ["integration tests may expand scope"],
-            "spike_recommendation": "No spike needed.",
             "budget_note": "Within normal daily budget.",
             "source": "llm",
         }
@@ -292,7 +290,7 @@ cases:
       test_command: pytest
     task_kind: implementation
     complexity: modest
-    recommended_model: claude-3-5-sonnet-20240620
+    recommended_model: claude-sonnet-4-6
     expected_tokens_min: 7000
     expected_tokens_max: 15000
     actual_tokens: 11200
@@ -392,7 +390,7 @@ def test_manual_calibration_cases_do_not_inflate_completed_accuracy_or_control_p
         description="Estimated but not Done DEMO_TASK_2099",
         status="Estimated",
         estimate_tokens=8_000,
-        recommended_model="claude-3-5-sonnet-20240620",
+        recommended_model="claude-sonnet-4-6",
         actual_tokens=12_000,
     )
 
@@ -407,7 +405,7 @@ def test_manual_calibration_cases_do_not_inflate_completed_accuracy_or_control_p
         description="Done DEMO_TASK_2099 Worker task",
         status="Done",
         estimate_tokens=10_000,
-        recommended_model="claude-3-5-sonnet-20240620",
+        recommended_model="claude-sonnet-4-6",
         actual_tokens=15_000,
     )
 
@@ -554,14 +552,15 @@ def test_estimate_uses_llm_structured_json_creates_estimated_task_and_tracks_usa
     assert response.status_code == 200
     assert task["status"] == "Estimated"
     assert task["estimate_tokens"] == 12_345
-    assert task["recommended_model"] == "claude-3-5-sonnet-20240620"
+    assert task["recommended_model"] is None
     assert task["actual_tokens"] is None
     assert task["metadata"]["estimation_source"] == "llm"
     assert task["metadata"]["confidence"] == 0.82
     assert task["metadata"]["assumptions"] == ["No schema migration is needed."]
     assert task["metadata"]["risk_flags"] == ["integration tests may expand scope"]
-    assert task["metadata"]["spike_recommendation"] == "No spike needed."
     assert task["metadata"]["budget_note"] == "Within normal daily budget."
+    assert task["metadata"]["worker_model_constraint"]["state"] == "no_allowed_models"
+    assert task["metadata"]["worker_model_constraint"]["selected_model"] is None
     assert llm.requests[0]["model"] == "openai/gpt-4.1-mini"
     assert "Return ONLY valid JSON" in llm.requests[0]["messages"][0]["content"]
     assert "Add an endpoint and tests for sessions" in llm.requests[0]["messages"][1]["content"]
@@ -574,6 +573,28 @@ def test_estimate_uses_llm_structured_json_creates_estimated_task_and_tracks_usa
     assert len(estimation_session["session_key_hash"]) == 64
     assert all(char in "0123456789abcdef" for char in estimation_session["session_key_hash"])
     assert "133" in dashboard.text
+
+
+def test_estimate_without_allowed_worker_models_blocks_launch_with_setup_reason(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM()
+    with _client_with_llm(tmp_path, llm) as client:
+        estimated = client.post(
+            "/estimate",
+            headers=_auth_headers(),
+            json={"description": "Add model routing setup reason"},
+        ).json()
+        launch = client.post(f"/tasks/{estimated['id']}/launch", headers=_auth_headers(), json={})
+
+    body = launch.json()
+    assert estimated["recommended_model"] is None
+    assert estimated["metadata"]["worker_model_constraint"]["state"] == "no_allowed_models"
+    assert launch.status_code == 409
+    assert body["launch_guardrails"]["reasons"] == [
+        "Approve at least one allowed Worker model before launch."
+    ]
+    assert body["task"]["metadata"]["launch_blocked_reason"] == "Approve at least one allowed Worker model before launch."
+
 
 def test_estimate_uses_configured_estimator_model_when_distinct_from_control_plane(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
@@ -602,7 +623,7 @@ def test_estimate_uses_configured_estimator_model_when_distinct_from_control_pla
     assert estimation_session["model"] == "openai/gpt-4.1-estimator"
     assert token_turn["model"] == "openai/gpt-4.1-estimator"
 
-def test_estimate_constrains_recommended_model_to_selected_adapter_allowed_models(tmp_path, monkeypatch):
+def test_estimate_routes_model_to_selected_adapter_allowed_models(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     llm = FakeEstimatorLLM()
     with _client_with_llm(tmp_path, llm) as client:
@@ -623,23 +644,32 @@ def test_estimate_constrains_recommended_model_to_selected_adapter_allowed_model
     task = response.json()
     assert response.status_code == 200
     assert task["recommended_model"] == "opencode/gpt-5.1"
-    assert task["metadata"]["worker_model_constraint"] == {
-        "state": "constrained_by_allowed_models",
-        "adapter_id": "opencode",
-        "available_models": ["opencode/gpt-5.1", "opencode/other"],
-        "original_model": "claude-3-5-sonnet-20240620",
+    constraint = task["metadata"]["worker_model_constraint"]
+    assert constraint["state"] == "constrained_by_allowed_models"
+    assert constraint["adapter_id"] == "opencode"
+    assert constraint["available_models"] == ["opencode/gpt-5.1", "opencode/other"]
+    assert constraint["guardrail_policy_model"] == "claude-sonnet-4-6"
+    assert constraint["original_model"] == "claude-sonnet-4-6"
+    assert constraint["selected_model"] == "opencode/gpt-5.1"
+    assert constraint["reason"] == "guardrail_policy_model_not_allowed"
+    assert task["metadata"]["model_routing"] == {
+        "selected_adapter_id": "opencode",
         "selected_model": "opencode/gpt-5.1",
-        "reason": "estimator_model_not_allowed",
+        "original_complexity": "modest",
+        "routing_tier": "modest",
+        "guardrail_policy_model": "claude-sonnet-4-6",
+        "state": "constrained_by_allowed_models",
+        "reason": "guardrail_policy_model_not_allowed",
+        "budget_clamped": False,
     }
 
-def test_estimate_constrained_model_avoids_heavy_first_discovered_model_for_simple_task(tmp_path, monkeypatch):
+def test_estimate_routed_model_avoids_heavy_first_discovered_model_for_simple_task(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     llm = FakeEstimatorLLM(
         content={
             **FakeEstimatorLLM().content,
             "token_estimate": 2_000,
             "complexity": "simple",
-            "recommended_model": "claude-3-haiku-20240307",
         }
     )
     with _client_with_llm(tmp_path, llm) as client:
@@ -661,7 +691,7 @@ def test_estimate_constrained_model_avoids_heavy_first_discovered_model_for_simp
     assert response.status_code == 200
     assert task["recommended_model"] == "opencode/claude-haiku-4-5"
     assert task["metadata"]["worker_model_constraint"]["selected_model"] == "opencode/claude-haiku-4-5"
-    assert task["metadata"]["worker_model_constraint"]["reason"] == "estimator_model_not_allowed_ranked"
+    assert task["metadata"]["worker_model_constraint"]["reason"] == "guardrail_policy_model_not_allowed_ranked"
 
 def test_estimate_requires_portal_auth_before_llm_call(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
@@ -1300,7 +1330,7 @@ def test_estimate_rejects_non_llm_source(tmp_path, monkeypatch):
     assert task["status"] == "Blocked"
     assert task["metadata"]["estimator_failure_type"] == "EstimatorValidationError"
 
-def test_estimate_rejects_unapproved_recommended_model(tmp_path, monkeypatch):
+def test_estimate_rejects_worker_model_fields_from_estimator(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     llm = FakeEstimatorLLM(
         content={**FakeEstimatorLLM().content, "recommended_model": "unapproved-frontier-model"}
@@ -1309,7 +1339,7 @@ def test_estimate_rejects_unapproved_recommended_model(tmp_path, monkeypatch):
         response = client.post(
             "/estimate",
             headers=_auth_headers(),
-            json={"description": "Reject arbitrary model recommendation"},
+            json={"description": "Reject estimator-owned Worker model recommendation"},
         )
 
     task = response.json()

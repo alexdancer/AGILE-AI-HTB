@@ -48,6 +48,7 @@ def build_repo_context_brief(project_root: str | Path) -> dict[str, Any]:
     documents = [doc for doc in documents if doc is not None]
     manifests = [relative for relative in MANIFEST_CANDIDATES if (root / relative).is_file()]
     entrypoints = [relative for relative in ENTRYPOINT_CANDIDATES if (root / relative).exists()]
+    # The brief is intentionally sampled and redacted so it can be sent to model prompts safely.
     tracked_files = _tracked_files(root)
     brief = {
         "project_root": str(root),
@@ -116,6 +117,7 @@ def _tracked_files(root: Path) -> list[str]:
         if not path.is_file():
             continue
         relative = path.relative_to(root)
+        # Skip bulky/generated directories to keep context stable and cheap.
         if any(part in SKIP_DIRS for part in relative.parts):
             continue
         if path.name in SECRET_NAMES:

@@ -33,6 +33,7 @@ def require_portal_auth(request: Request) -> None:
         raise HTTPException(status_code=401, detail="invalid portal bearer token")
 
     cookie_value = request.cookies.get(PORTAL_COOKIE_NAME)
+    # Browser sessions use the signed cookie path after the initial bearer-token login.
     if cookie_value and verify_portal_cookie(cookie_value, expected_token):
         return
 
@@ -52,6 +53,7 @@ def verify_portal_cookie(cookie_value: str, secret: str) -> bool:
     except ValueError:
         return False
 
+    # The payload is readable JSON; integrity comes from the HMAC, not encryption.
     expected = hmac.new(secret.encode("utf-8"), payload.encode("ascii"), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(signature, expected):
         return False

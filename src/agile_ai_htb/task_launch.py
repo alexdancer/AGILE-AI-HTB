@@ -100,6 +100,7 @@ def launch_task(
     budget_since: str | None = None,
     runner: Runner | None = None,
 ) -> TaskLaunchResult:
+    # Claiming a task and creating its Worker Run must be single-threaded inside this process.
     with _LAUNCH_START_LOCK:
         return _launch_task_unlocked(
             database_path,
@@ -142,6 +143,7 @@ def _launch_task_unlocked(
 
     active_run = db.get_active_worker_run_for_task(database_path, task_id)
     if active_run is not None:
+        # Rehydrate the existing run instead of starting a duplicate worker for repeated clicks/API calls.
         session = db.get_session(database_path, active_run["session_id"])
         running_task = db.update_task(
             database_path,
@@ -189,8 +191,13 @@ def _launch_task_unlocked(
     session_api_key = f"sk_sess_{secrets.token_urlsafe(24)}"
 
     if not selected_model:
-        blocked = _mark_launch_blocked(database_path, task, ["Estimated model is required before launch."])
-        raise TaskLaunchBlocked(blocked, ["Estimated model is required before launch."])
+        routing_constraint = metadata.get("worker_model_constraint") if isinstance(metadata, dict) else None
+        setup_required = ""
+        if isinstance(routing_constraint, dict):
+            setup_required = str(routing_constraint.get("setup_required") or "").strip()
+        reason = setup_required or "Selected Worker model is required before launch."
+        blocked = _mark_launch_blocked(database_path, task, [reason])
+        raise TaskLaunchBlocked(blocked, [reason])
     if not task.get("estimate_tokens"):
         blocked = _mark_launch_blocked(database_path, task, ["Token estimate is required before launch."])
         raise TaskLaunchBlocked(blocked, ["Token estimate is required before launch."])
@@ -225,6 +232,7 @@ def _launch_task_unlocked(
         blocked = _mark_budget_launch_blocked(database_path, task, budget_check, tracking_mode=tracking_mode)
         raise TaskLaunchBlocked(blocked, [budget_check["reason"]])
     if not budget_check["passed"] and budget_override and tracking_mode == NATIVE_USAGE and not native_budget_acknowledged:
+        # Native CLI runs cannot be throttled mid-request, so budget overrides need explicit acknowledgement.
         blocked = _mark_budget_launch_blocked(
             database_path,
             task,
@@ -234,6 +242,7 @@ def _launch_task_unlocked(
         )
         raise TaskLaunchBlocked(blocked, ["Native usage budget override requires acknowledgement that runtime request throttling is not available."])
 
+    # Read-only launches get a cheap before/after snapshot to prove the worker did not mutate files.
     before_tree = _read_only_tree_snapshot(project_root) if project_root else None
     repo_context = build_repo_context_brief(project_root)
     task_prompt = repo_context_prompt(task["description"], repo_context)
@@ -676,6 +685,7 @@ def _classify_worker_run_result(
             )
 
     if tracking_mode == PROXY_GOVERNED and not _session_has_worker_token_usage(database_path, session["id"]):
+        # Proxy-governed runs are only valid if the worker actually called through the harness proxy.
         reason = "No Worker model call was observed through the Harness Proxy."
         return WorkerRunOutcome(
             kind="recoverable_failure",
@@ -718,6 +728,7 @@ def _classify_worker_run_result(
 
     after_tree = _read_only_tree_snapshot(project_root) if project_root else before_tree
     if read_only and before_tree != after_tree:
+        # A successful command can still fail launch if it violates the read-only contract.
         return WorkerRunOutcome(
             kind="read_only_mutation",
             error_type="read_only_mutation",
@@ -734,6 +745,7 @@ def _classify_worker_run_result(
         and project_root
         and before_tree == after_tree
     ):
+        # Native Codex can report success without touching the requested repo; treat that as retryable.
         reason = "Worker completed but produced no filesystem changes in the connected project."
         return WorkerRunOutcome(
             kind="recoverable_failure",
@@ -1239,6 +1251,7 @@ def _record_budget_overrun_if_needed(database_path: Path | str, session_id: str)
         return
     existing = db.list_alarms(database_path, session_id=session_id, alarm_type="BUDGET_OVERRUN")
     if existing:
+        # One budget-overrun alarm per session is enough; later reports use the same session artifact.
         return
     db.record_alarm(
         database_path,
@@ -1637,6 +1650,7 @@ def _read_only_tree_snapshot(root_path: str | None) -> str | None:
     if not root.exists():
         return None
     if (root / ".git").exists():
+        # Git metadata provides a compact mutation proof without hashing every tracked file.
         return _git_worktree_snapshot(root)
 
     entries: list[str] = []

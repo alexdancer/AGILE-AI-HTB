@@ -121,6 +121,21 @@ Estimated -> Running -> Review -> Done
                          -> Blocked
 ```
 
+### With a Markdown file
+
+For a larger `.md` plan, paste the Markdown into the board or upload the file instead of turning every bullet into a task yourself:
+
+```text
+.md plan
+  -> Task Breakdown Agent applies the Task Slicing Policy
+  -> you review the proposed AFK/HITL cards, proof, dependencies, and rejected non-tasks
+  -> accepted cards are estimated and added to the board
+  -> each card launches as its own scoped Worker run
+  -> final Acceptance Verification checks the original Markdown contract
+```
+
+The Harness keeps the full source Markdown in the review record. Each Worker gets only the compact objective, boundaries, proof command, dependencies, likely entry points, and execution mode for its slice.
+
 ## Basic architecture
 
 AGILE-AI-HTB has four main pieces:
@@ -144,18 +159,6 @@ There are two model layers:
 
 
 Pasting a control-plane API key does not configure OpenCode, Claude Code, Codex, or another Worker CLI.
-
-For large Markdown plans, the task-slicing architecture stays in the Control Plane:
-
-```text
-Markdown / oversized intake
-  -> Task Breakdown Agent applies the Task Slicing Policy
-  -> operator reviews AFK/HITL candidates, proof, dependencies, and rejected non-tasks
-  -> accepted implementation cards launch as scoped Worker runs
-  -> final Acceptance Verification card checks the original source contract
-```
-
-This keeps the full source contract in the Harness review record and final verification step, while each Worker receives only the compact objective, boundaries, proof command, dependencies, likely entry points, and execution mode for its slice.
 
 ## Local files and configuration
 
@@ -199,21 +202,21 @@ The Portal writes submitted API keys only to ignored local secret storage and do
 - [Install options](docs/INSTALL.md)
 - [Worker Adapter setup](docs/WORKER_ADAPTER_SETUP.md)
 - [Setup support checklist](docs/SETUP_SUPPORT_CHECKLIST.md)
+- [Changelog](CHANGELOG.md)
 - [Project TODO](docs/TODO.md)
 
 ## Tests
 
 ```bash
-uv run pytest -q
+uv run --extra test pytest -q
 ```
 
 Focused contributor checks:
 
 ```bash
 uv run htb --help
-uv run pytest tests/portal tests/api tests/workers -q
-uv run pytest tests/evals -v
-uv run pytest tests/smoke -q
+uv run --extra test pytest tests/portal tests/api tests/workers -q
+uv run --extra test pytest tests/evals -v
 ```
 
 Tests use fake LLM clients. They do not make provider calls.

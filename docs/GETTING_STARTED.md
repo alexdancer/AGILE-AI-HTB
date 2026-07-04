@@ -28,7 +28,7 @@ This is the first-run guide for operators evaluating AGILE-AI-HTB in their own w
 If you are developing inside this repository rather than installing the operator CLI, use the repo-managed uv environment:
 
 ```bash
-uv run pytest -q
+uv run --extra test pytest -q
 uv run htb --help
 ```
 
@@ -40,7 +40,7 @@ AGILE-AI-HTB has two model layers:
 
 | Layer | What it powers | Auth source |
 |---|---|---|
-| Control Plane / orchestrator model | Estimates, planning, task breakdown, model recommendations, summaries, reports | `/settings/control-plane`, ignored `.htb/secrets.env`, or env vars |
+| Control Plane / orchestrator model | Estimates, planning, task breakdown, summaries, reports; deterministic routing uses estimator evidence plus Worker Adapter allowed models | `/settings/control-plane`, ignored `.htb/secrets.env`, or env vars |
 | Worker / coding harness models | The actual coding task launched through OpenCode, Claude Code, Codex, or another adapter | The native CLI's own auth/config |
 
 Pasting a control-plane API key does not configure native Worker CLIs.

@@ -5,6 +5,7 @@
 <p class="page-sub">tokens · guardrails · alarms · checkpoints</p>
 
 <section class="panel {% if requires_review %}review{% endif %}">
+  <!-- Previews keep large prompts readable while details below preserve full evidence. -->
   {% set task_text = session.task_description or '' %}
   {% set task_preview = task_text[:220] ~ ('…' if task_text|length > 220 else '') %}
   {% set launch_target = evidence_summary.launch_target or '' %}
@@ -36,6 +37,7 @@
       <pre class="mono raw-evidence">{{ launch_target }}</pre>
     </details>
     {% if related_agent_review %}
+    <!-- Agent Review is control-plane spend linked back to this Worker session. -->
     <section class="panel">
       <div class="panel-header"><h3>Agent Review results</h3><span class="mono muted">review/control-plane usage</span></div>
       <div class="panel-body">
@@ -119,6 +121,7 @@
   </div>
 </section>
 
+<!-- Raw Worker timeline remains collapsible because it can contain verbose event details. -->
 <details class="panel">
   <summary class="panel-header"><h3>Worker Run timeline</h3><span class="mono muted">raw timeline evidence</span></summary>
   <div class="panel-body tight table-wrap">
@@ -141,6 +144,7 @@
   </div>
 </details>
 
+<!-- Repo context brief shows the exact prompt context passed into the Worker run. -->
 <details class="panel">
   <summary class="panel-header"><h3>Repo Context Brief</h3><span class="mono muted">raw prompt context evidence</span></summary>
   <div class="panel-body">

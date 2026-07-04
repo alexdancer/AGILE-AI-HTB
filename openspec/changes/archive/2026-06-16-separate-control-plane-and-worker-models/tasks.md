@@ -18,7 +18,7 @@
 
 - [x] 3.1 Add tracking-mode fields to adapter verification/session metadata for `proxy_governed`, `native_usage`, and `observed_only`.
 - [x] 3.2 Preserve existing proxy-governed verification behavior as one valid tracking mode.
-- [x] 3.3 Spike and capture exact OpenCode output for `opencode run --format json`, `opencode stats`, and/or `opencode export` before marking native usage authoritative.
+- [x] 3.3 Capture exact OpenCode output for `opencode run --format json`, `opencode stats`, and/or `opencode export` before marking native usage authoritative.
 - [x] 3.4 Implement OpenCode native usage verification only after trustworthy usage evidence can be parsed for a launched session.
 - [x] 3.5 Block normal governed launch for observed-only adapters while preserving diagnostics/proof-run evidence.
 - [x] 3.6 Add tests for proxy-governed, native-usage, and observed-only verification outcomes.

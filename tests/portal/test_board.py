@@ -148,10 +148,10 @@ def test_board_shows_launched_model_before_recommendation(tmp_path, monkeypatch)
     assert response.status_code == 200
     card = _task_card(response.text, task["id"])
     assert "Run: openai/gpt-5.5 --variant high" in card
-    assert "Estimate recommendation: gpt-5.4-mini" in card
+    assert "Estimated Worker model: gpt-5.4-mini" in card
     assert f'action="/tasks/{task["id"]}/refresh"' in card
     assert "Refresh status" in card
-    assert card.index("Run: openai/gpt-5.5 --variant high") < card.index("Estimate recommendation: gpt-5.4-mini")
+    assert card.index("Run: openai/gpt-5.5 --variant high") < card.index("Estimated Worker model: gpt-5.4-mini")
     assert task["id"] in card
 
 

@@ -15,12 +15,14 @@ from agile_ai_htb.settings import Settings
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
+    # Startup owns process-wide resources so tests can inject state before serving requests.
     db.init_db(settings.database_path)
     app.state.guardrails = load_guardrails(settings.guardrails_path)
     if not hasattr(app.state, "llm_client"):
         app.state.llm_client = LLMClient(settings)
     if settings.local_runner_enabled:
         app.state.execution_backend = LocalExecutionBackend(settings.database_path)
+        # Touch the backend so startup fails early if the local runner cannot inspect its state.
         app.state.execution_backend.status()
     yield
 

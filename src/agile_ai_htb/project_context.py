@@ -13,6 +13,7 @@ def canonical_project_root(root_path: str) -> str:
 def project_task_metadata(project: dict[str, Any]) -> dict[str, Any]:
     root_path = canonical_project_root(str(project["root_path"]))
     profile = project.get("profile") or {}
+    # Board tasks carry a snapshot of the project binding so launches can reject stale or moved roots later.
     return {
         "connected_project_id": project["id"],
         "project_root_path": root_path,
@@ -60,6 +61,7 @@ def resolve_task_project(
         return None, ["Task is bound to a project that is no longer connected."]
     task_root = canonical_project_root(str(project_root))
     connected_root = canonical_project_root(str(project["root_path"]))
+    # Compare canonical paths to catch stale task metadata without treating relative-path spelling as a mismatch.
     if task_root != connected_root:
         return None, ["Task project root does not match the connected project root."]
     return {**project, "root_path": connected_root}, []

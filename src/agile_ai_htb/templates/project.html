@@ -14,6 +14,7 @@
 <section class="panel">
   <div class="panel-header"><h3>Local Runner</h3></div>
   <div class="panel-body">
+    <!-- Local Runner gates repo analysis and launch proof without storing Worker credentials. -->
     {% if local_runner_enabled %}
       <span class="pill green">enabled</span>
       {% if backend_status and backend_status.online %}<span class="pill green">online</span>{% endif %}
@@ -29,7 +30,7 @@
   <div class="panel-body">
     <form method="post" action="/settings/project/connect">
       <label class="mono" for="root-path">Local repository path</label>
-      <input id="root-path" name="root_path" placeholder="/Users/alex/path/to/repo" required>
+      <input id="root-path" name="root_path" placeholder="/path/to/local/repo" required>
       <button type="submit" class="primary" style="margin-top:10px">Open project</button>
     </form>
   </div>
@@ -42,6 +43,7 @@
     <article class="card">
       <div class="flex" style="justify-content:space-between;align-items:flex-start">
         <h2 class="mono" style="font-size:16px;margin:0 0 10px">{{ project.name }}</h2>
+        <!-- Capability state decides whether this repo can launch Workers or only be analyzed. -->
         {% if project.capability.state == 'launch_ready' %}<span class="pill green">{{ project.capability.label }}</span>{% elif project.capability.state == 'analysis_ready' %}<span class="pill blue">{{ project.capability.label }}</span>{% else %}<span class="pill red">{{ project.capability.label }}</span>{% endif %}
       </div>
       <div class="kv">

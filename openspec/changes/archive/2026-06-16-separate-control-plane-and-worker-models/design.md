@@ -61,7 +61,7 @@ Each adapter verification result should declare a tracking mode:
 - `native_usage`: Worker uses native harness config, and AGILE-AI-HTB imports trustworthy usage from harness output, stats, export, or logs.
 - `observed_only`: Worker can be launched, but usage is unavailable or insufficient for authoritative budget tracking.
 
-Only `proxy_governed` and `native_usage` should be budget-authoritative and launch-ready for normal governed tasks. `observed_only` may be allowed for manual proof/spike flows but should not be presented as fully governed execution.
+Only `proxy_governed` and `native_usage` should be budget-authoritative and launch-ready for normal governed tasks. `observed_only` may be allowed for manual proof flows but should not be presented as fully governed execution.
 
 ### Decision: OpenCode native discovery is the first concrete native adapter path
 
@@ -73,7 +73,7 @@ The OpenCode adapter should use installed CLI capabilities to discover models an
 - `opencode run --model <provider/model> --format json ...` for non-interactive launch;
 - `opencode stats` and/or `opencode export <sessionID>` for usage import.
 
-The implementation should spike exact output formats before treating imported usage as budget-authoritative.
+The implementation should capture exact output formats before treating imported usage as budget-authoritative.
 
 ### Decision: Model recommendation must target discovered Worker models
 
@@ -96,7 +96,7 @@ Rationale: the user needs to know whether budget is being spent by the board, by
 
 ## Risks / Trade-offs
 
-- Native OpenCode output may not expose stable per-session token usage → Start with a spike that captures real `opencode run --format json`, `opencode stats`, and `opencode export` output before marking `native_usage` verified.
+- Native OpenCode output may not expose stable per-session token usage → Start with a prototype that captures real `opencode run --format json`, `opencode stats`, and `opencode export` output before marking `native_usage` verified.
 - Native mode may not allow mid-request enforcement → Budget native Worker sessions at launch and reconcile actuals afterward; reserve mid-request enforcement for proxy-governed mode.
 - Multiple adapters expose models/usage differently → Define a small adapter capability interface and let each adapter implement discovery and usage import separately.
 - Backward compatibility with `PROVIDER_API_KEY` can keep confusing users → Preserve it only as a compatibility alias, while UI/docs present control-plane model settings as the primary setup.
@@ -118,5 +118,5 @@ Rollback is straightforward because this is additive at the spec level: existing
 
 - Which OpenCode command provides the most reliable per-session usage evidence: JSON run events, `stats`, `export`, or a combination?
 - Should control-plane model setup support local OpenAI-compatible endpoints in the first implementation pass?
-- Should observed-only Worker launch be exposed in the UI, or reserved for tests/spikes only?
+- Should observed-only Worker launch be exposed in the UI, or reserved for tests/prototypes only?
 - How should model recommendation behave when multiple verified Worker Harnesses are available?
