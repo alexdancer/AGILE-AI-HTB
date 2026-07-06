@@ -1,54 +1,40 @@
 # Contributing
 
-Thanks for helping improve AGILE-AI-HTB. This project is a local,
-portal-first governance harness for AI coding agents, so contribution hygiene
-matters: changes should be small, reviewable, verified, and aligned with the
-Harness vocabulary in `CONTEXT.md`.
+AGILE-AI-HTB is a local, Portal-first Harness for governed coding agents. Keep changes small, reviewable, and easy to verify. If you touch product wording, workflow, architecture, tests, or demos, read `CONTEXT.md` first and use its vocabulary.
 
-## Development principles
+## Ground rules
 
-- Keep `main` releasable. Do not leave half-finished work on the main branch.
-- Prefer small vertical slices over broad rewrites.
-- Keep product behavior, demo behavior, and internal architecture clearly
-  separated.
-- Preserve the distinction between the Control Plane model and Worker Adapter
-  model/auth configuration.
-- Do not add speculative abstractions or unproven modes to public operator docs.
-- Treat test, OpenSpec, and documentation warnings as actionable.
+- Keep `main` releasable. Do not park half-built work there.
+- Ship narrow vertical slices. Avoid broad rewrites.
+- Keep product behavior, demo behavior, and internal architecture separate.
+- Do not blur Control Plane model config with Worker Adapter model/auth config.
+- Do not document unproven governance modes as operator-ready.
+- Treat test, OpenSpec, and docs warnings as work to fix, not noise.
 
 ## Issues, branches, and labels
 
-Use GitHub Issues for planned work in
-`alexdancer/AI-Harness-Token-Tracker`. Keep issue titles and acceptance
-criteria specific enough that a human or agent can verify completion.
+Planned work belongs in GitHub Issues for `alexdancer/AI-Harness-Token-Tracker`. Write issues with enough acceptance criteria that a human or agent can prove the work is done.
 
 Default triage labels:
 
-- `needs-triage` — maintainer needs to evaluate.
-- `needs-info` — waiting on reporter.
-- `ready-for-agent` — fully specified and ready for an AFK agent.
-- `ready-for-human` — needs human implementation or decision.
-- `wontfix` — will not be actioned.
+- `needs-triage`: maintainer review needed
+- `needs-info`: waiting on the reporter
+- `ready-for-agent`: specified enough for an AFK agent
+- `ready-for-human`: needs a human decision or implementation
+- `wontfix`: will not be done
 
-For implementation work, use a short-lived branch with a focused name. Avoid
-mixing feature work, refactors, formatting, and release prep in one change.
+Use a short-lived branch with a focused name. Do not mix feature work, refactors, formatting, and release prep in one change.
 
 ## Before changing code or product docs
 
-1. Read `CONTEXT.md` before changing Harness behavior, Portal copy, workflow,
-   OpenSpec artifacts, tests, demo data, or docs that use product terminology.
-2. Check whether the change should have an OpenSpec proposal. Behavior,
-   workflow, architecture, and terminology changes usually should.
-3. Inspect nearby code and tests before editing. Follow existing naming,
-   structure, and verification patterns.
-4. Confirm any new dependency is necessary and belongs in `pyproject.toml`.
+1. Read `CONTEXT.md` before changing Harness behavior, Portal copy, workflow, OpenSpec artifacts, tests, demo data, or product docs.
+2. Check whether the change needs an OpenSpec proposal. Behavior, workflow, architecture, and terminology changes usually do.
+3. Read nearby code and tests before editing. Follow the local style.
+4. Add a dependency only when it is needed and belongs in `pyproject.toml`.
 
-## OpenSpec workflow
+## OpenSpec
 
-This repo uses OpenSpec under `openspec/` for spec-driven changes. Prefer the
-OpenSpec CLI instead of guessing artifact paths.
-
-Useful commands:
+This repo uses OpenSpec under `openspec/`. Use the CLI instead of guessing paths.
 
 ```bash
 openspec list --json
@@ -59,13 +45,11 @@ openspec validate <change-name> --strict
 openspec validate --all --strict
 ```
 
-When implementing an OpenSpec change, mark tasks complete only after the code
-and relevant verification have passed.
+When implementing an OpenSpec change, mark a task complete only after the code and relevant checks pass.
 
-## Local setup for contributors
+## Local setup
 
-Install dependencies and run commands through the repo-managed `uv`
-environment:
+Use the repo-managed `uv` environment:
 
 ```bash
 uv sync --extra test
@@ -79,19 +63,11 @@ uv run htb init
 uv run htb serve
 ```
 
-More setup detail lives in `docs/GETTING_STARTED.md`, `docs/INSTALL.md`, and
-`docs/SETUP_SUPPORT_CHECKLIST.md`.
+See `docs/GETTING_STARTED.md`, `docs/INSTALL.md`, and `docs/SETUP_SUPPORT_CHECKLIST.md`.
 
-## Required checks
+## Checks
 
-The canonical contributor test command is the same command CI runs:
-
-```bash
-uv run --extra test pytest -q
-```
-
-Run focused checks first when they are faster or more relevant, then run the
-full suite before calling a code change complete:
+Run focused checks first when they save time, then run CI's full suite before calling a code change done:
 
 ```bash
 uv run htb --help
@@ -100,7 +76,7 @@ uv run --extra test pytest tests/evals -v
 uv run --extra test pytest -q
 ```
 
-For package/release-facing changes, also run the build checks used by CI:
+For packaging, release, installer, or entrypoint changes, also run:
 
 ```bash
 uv build
@@ -108,53 +84,31 @@ uvx twine check dist/*
 sh scripts/pipx-install-smoke.sh
 ```
 
-The disposable `pipx` smoke matches CI's install-path check and is most useful
-for release, packaging, installer, and entrypoint changes.
+The `pipx` smoke matches CI's install check. It is mainly for release and packaging work.
 
-If a full check cannot run, document the exact command attempted, the failure,
-and the narrower verification that did pass.
+If a check cannot run, record the exact command, the failure, and the narrower check that did pass.
 
-## Definition of Done
+## Docs
 
-A change is done only when:
-
-- The issue or OpenSpec goal is satisfied.
-- The diff is focused and easy to review.
-- Behavior changes have tests or an explicit reason tests are not practical.
-- Relevant targeted checks pass.
-- `uv run --extra test pytest -q` passes, or any failure is clearly documented
-  as blocked/pre-existing.
-- Docs are updated when user-facing behavior, setup, terminology, or release
-  behavior changes.
-- Generated artifacts, caches, logs, and local state are not accidentally
-  committed.
-- `git status --short` shows only intentional changes.
-
-## Documentation rules
-
-- Keep `README.md` operator-focused: what the project is and how to use it.
-- Keep `CONTEXT.md` as the source of truth for domain vocabulary and product
-  architecture terms.
-- Keep this file focused on contributor workflow.
-- Keep release notes or `CHANGELOG.md` focused on user-visible changes.
-- Verify README commands and links when editing public setup docs.
-- Do not advertise unproven advanced governance modes in README, getting
-  started, demo, or support docs.
+- Keep `README.md` for operators: what this is, how to install it, and how to run it.
+- Keep `CONTEXT.md` as the product glossary and architecture reference.
+- Keep this file about contributor workflow.
+- Keep release notes and `CHANGELOG.md` about user-visible changes.
+- Verify README commands and links when editing setup docs.
+- Do not advertise advanced governance paths until they are proven.
 
 ## Demo data and public evidence
 
-Demo artifacts must be obviously synthetic end-to-end. Use:
+Demo artifacts must look fake all the way through. Use:
 
-- DEMO banners or labels.
-- 2099 dates.
-- 999-style IDs.
-- `.invalid` emails/domains.
-- fake addresses clearly marked as DEMO.
-- invariant tests for demo sources where practical.
+- DEMO banners or labels
+- 2099 dates
+- 999-style IDs
+- `.invalid` emails/domains
+- fake addresses marked as DEMO
+- invariant tests for demo sources where practical
 
-Do not use real customer data, private repo data, real email addresses, real
-tokens, or production-looking identifiers in demo fixtures, screenshots, or
-support examples.
+Do not use customer data, private repo data, real email addresses, real tokens, or production-looking IDs in fixtures, screenshots, or support examples.
 
 ## Secrets and local state
 
@@ -166,21 +120,17 @@ Never commit secrets or local runtime state, including:
 - bearer tokens
 - raw credential files
 - private repository contents
-- local databases, caches, logs, or build outputs unless intentionally tracked
-  as fixtures/evidence
+- local databases, caches, logs, or build outputs unless they are intentional fixtures or evidence
 
-Use redacted `htb check` output for support. If working from a source checkout
-without installing the CLI, use:
+Use redacted `htb check` output for support. From a source checkout, run:
 
 ```bash
 uv run htb check
 ```
 
-## Generated artifacts and cleanup
+## Generated files and cleanup
 
-Generated files should stay ignored unless they are intentional fixtures,
-evidence, or release artifacts. Before deleting artifact directories, separate
-tracked files from ignored/untracked files:
+Generated files should stay ignored unless they are intentional fixtures, evidence, or release artifacts. Before deleting artifact directories, separate tracked files from ignored or untracked files:
 
 ```bash
 git status --short --ignored -- <path>
@@ -188,25 +138,11 @@ git ls-files <path>
 git clean -fdX <path>
 ```
 
-Prefer uppercase `-X` for ignored-only cleanup. Do not use broad `rm -rf` or
-`git clean -fdx` unless the scope and consequences are explicit.
+Prefer `git clean -fdX <path>` for ignored-only cleanup. Do not use broad `rm -rf` or `git clean -fdx` unless the scope and consequences are explicit.
 
-## Agent-assisted development
+## Agent-assisted work
 
-This project is designed for governed agent workflows. Agent-ready work should
-have:
-
-- a clear task objective;
-- acceptance criteria;
-- relevant files or likely entry points;
-- a smallest proof command;
-- known constraints and non-goals;
-- whether the task is AFK-safe or requires human-in-the-loop judgment.
-
-Do not ask agents to run broad, ambiguous tasks such as "improve the app"
-without slicing the work into independently verifiable changes. Preserve the
-global Harness contract and require final acceptance verification for integrated
-multi-slice work.
+For agent-ready tasks, put the objective, acceptance criteria, constraints, proof command, and AFK-safety in the GitHub issue; `AGENTS.md` carries the repo-local agent workflow.
 
 ## Pull request checklist
 
@@ -216,8 +152,9 @@ Before opening or merging a PR, confirm:
 - [ ] `CONTEXT.md` terminology is followed.
 - [ ] The diff is focused.
 - [ ] Tests were added or updated for behavior changes.
-- [ ] `uv run --extra test pytest -q` passed or the blocker is documented.
+- [ ] Targeted checks passed.
+- [ ] `uv run --extra test pytest -q` passed, or the blocker is documented.
 - [ ] Relevant OpenSpec validation passed for spec-driven changes.
-- [ ] README/docs/changelog were updated if user-facing behavior changed.
+- [ ] README, docs, or changelog were updated if user-facing behavior changed.
 - [ ] No secrets or local `.htb/` state are included.
 - [ ] Generated files are intentional.

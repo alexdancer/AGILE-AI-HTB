@@ -8,3 +8,6 @@ build/
 dist/
 .demo/
 .htb/
+.hermes/
+.cursor/
+.codegraph/
