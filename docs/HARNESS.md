@@ -13,6 +13,39 @@ The harness does **not** replace the coding agent. It wraps agents such as OpenC
 
 The Control Plane coordinates work. The Execution Plane does the work. Keeping those separate prevents the hosted product from claiming it can launch a user's local coding agent without a verified execution backend.
 
+## Harness architecture
+
+```mermaid
+flowchart LR
+    user[Operator] --> portal[Portal]
+
+    subgraph control[Control Plane]
+        portal --> board[AGILE Board]
+        board --> breakdown[Task Breakdown Agent]
+        board --> estimation[Task Estimation]
+        breakdown -->|accepted candidates| estimation
+        estimation --> routing[Deterministic Model Routing]
+        routing --> launch[Launch Guardrails]
+        budget[Token Budget] --> launch
+        launch --> evidence[Session Artifact Store]
+        evidence --> review[Review Disposition]
+        evidence --> alarms[Alarms]
+    end
+
+    subgraph execution[Execution Plane]
+        backend[Execution Backend]
+        runner[Local Runner or Hosted Workspace/Sandbox]
+        adapter[Worker Adapter]
+        worker[Worker CLI]
+        backend --> runner --> adapter --> worker
+    end
+
+    launch -->|verified project, adapter, model, and tracking| backend
+    worker -->|proxy_governed or native_usage evidence| evidence
+    review -->|Done or Blocked| board
+    alarms --> operatorAction[Operator action]
+```
+
 ## Core flow
 
 ```text
