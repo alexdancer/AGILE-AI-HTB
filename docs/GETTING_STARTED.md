@@ -6,7 +6,7 @@ This is the first-run guide for operators evaluating AGILE-AI-HTB in their own w
 
 1. Install the operator CLI:
    ```bash
-   pipx install "git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git"
+   pipx install "git+https://github.com/alexdancer/AGILE-AI-HTB.git"
    ```
    After PyPI release, use `pipx install agile-ai-htb`. See [Install options](INSTALL.md) for the curl installer and Homebrew status.
 2. Initialize and start:

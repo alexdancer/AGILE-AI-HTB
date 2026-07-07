@@ -7,7 +7,7 @@ AGILE-AI-HTB is distributed as a Python CLI package. The package exposes the `ht
 Until the package is published to PyPI, install from the GitHub source URL:
 
 ```bash
-pipx install "git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git"
+pipx install "git+https://github.com/alexdancer/AGILE-AI-HTB.git"
 cd /path/to/your/repo
 htb init
 htb serve
@@ -37,14 +37,14 @@ htb init
 The installer is a small bootstrapper. It prefers `uv tool install`, falls back to `pipx install`, verifies that `htb` is visible on `PATH`, and prints the next operator command.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/alexdancer/AI-Harness-Token-Tracker/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/alexdancer/AGILE-AI-HTB/main/install.sh | sh
 htb init
 ```
 
 For development or pre-release testing, override the source:
 
 ```bash
-AGILE_AI_HTB_INSTALL_SOURCE="git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git" \
+AGILE_AI_HTB_INSTALL_SOURCE="git+https://github.com/alexdancer/AGILE-AI-HTB.git" \
   sh install.sh
 ```
 
@@ -57,17 +57,17 @@ Updating replaces the global `htb` CLI package. It does not delete or recreate r
 Before the PyPI release, rerun the curl installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/alexdancer/AI-Harness-Token-Tracker/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/alexdancer/AGILE-AI-HTB/main/install.sh | sh
 ```
 
 Or update the package directly with the installer you used:
 
 ```bash
-pipx install --force "git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git"
+pipx install --force "git+https://github.com/alexdancer/AGILE-AI-HTB.git"
 ```
 
 ```bash
-uv tool install --force "git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git"
+uv tool install --force "git+https://github.com/alexdancer/AGILE-AI-HTB.git"
 ```
 
 After the PyPI release, use the package upgrade command for your installer:

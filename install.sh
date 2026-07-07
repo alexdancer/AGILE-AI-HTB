@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-PACKAGE_SOURCE="${AGILE_AI_HTB_INSTALL_SOURCE:-git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git}"
+PACKAGE_SOURCE="${AGILE_AI_HTB_INSTALL_SOURCE:-git+https://github.com/alexdancer/AGILE-AI-HTB.git}"
 
 say() {
   printf '%s\n' "$1"

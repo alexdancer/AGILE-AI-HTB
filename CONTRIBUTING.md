@@ -13,7 +13,7 @@ AGILE-AI-HTB is a local, Portal-first Harness for governed coding agents. Keep c
 
 ## Issues, branches, and labels
 
-Planned work belongs in GitHub Issues for `alexdancer/AI-Harness-Token-Tracker`. Write issues with enough acceptance criteria that a human or agent can prove the work is done.
+Planned work belongs in GitHub Issues for `alexdancer/AGILE-AI-HTB`. Write issues with enough acceptance criteria that a human or agent can prove the work is done.
 
 Default triage labels:
 

@@ -34,7 +34,7 @@ AGILE-AI-HTB only governs work launched through its own board and a verified Wor
 Recommended source install before PyPI release:
 
 ```bash
-pipx install "git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git"
+pipx install "git+https://github.com/alexdancer/AGILE-AI-HTB.git"
 cd /path/to/your/repo
 htb init
 htb serve
@@ -43,7 +43,7 @@ htb serve
 One-line bootstrap alternative:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/alexdancer/AI-Harness-Token-Tracker/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/alexdancer/AGILE-AI-HTB/main/install.sh | sh
 htb init
 htb serve
 ```
@@ -66,7 +66,7 @@ uv run htb serve
 More install detail: [docs/INSTALL.md](docs/INSTALL.md).
 
 To update an existing install before PyPI release, rerun the curl installer or
-`pipx install --force "git+https://github.com/alexdancer/AI-Harness-Token-Tracker.git"`.
+`pipx install --force "git+https://github.com/alexdancer/AGILE-AI-HTB.git"`.
 This updates the global `htb` CLI and preserves repo-local `.htb/` state. See
 [docs/INSTALL.md](docs/INSTALL.md#updating-agile-ai-htb).
 

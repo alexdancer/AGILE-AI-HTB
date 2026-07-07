@@ -42,10 +42,10 @@ test = [
 htb = "agile_ai_htb.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/alexdancer/AI-Harness-Token-Tracker"
-Repository = "https://github.com/alexdancer/AI-Harness-Token-Tracker"
-Issues = "https://github.com/alexdancer/AI-Harness-Token-Tracker/issues"
-Changelog = "https://github.com/alexdancer/AI-Harness-Token-Tracker/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/alexdancer/AGILE-AI-HTB"
+Repository = "https://github.com/alexdancer/AGILE-AI-HTB"
+Issues = "https://github.com/alexdancer/AGILE-AI-HTB/issues"
+Changelog = "https://github.com/alexdancer/AGILE-AI-HTB/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]
