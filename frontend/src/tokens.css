@@ -55,13 +55,19 @@ code,
   font-family: var(--mono);
 }
 
-/* Layout */
+/* Layout — mirrors templates/base.html so the React shell reads as the same product. */
+.shell {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  grid-template-rows: auto 1fr auto;
+  min-height: 100vh;
+}
 .topbar {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  flex-wrap: wrap;
   padding: 12px 20px;
   background: var(--bg-1);
   border-bottom: 1px solid var(--line);
@@ -77,29 +83,169 @@ code,
   color: var(--fg-3);
   margin: 0 6px;
 }
-.topbar-nav {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
+.brand-portal {
+  color: var(--fg-1);
 }
-.topbar-nav a {
-  padding: 6px 12px;
+.sidebar {
+  grid-column: 1;
+  grid-row: 2;
+  background: var(--bg-1);
+  border-right: 1px solid var(--line);
+  padding: 20px 0;
+}
+.sidebar nav {
+  display: flex;
+  flex-direction: column;
+}
+.sidebar a {
+  padding: 8px 20px;
   color: var(--fg-1);
   font-family: var(--mono);
-  font-size: 12px;
-  border: 1px solid transparent;
-  border-radius: 4px;
+  font-size: 13px;
+  border-left: 2px solid transparent;
 }
-.topbar-nav a:hover {
+.sidebar a:hover {
   background: var(--bg-2);
-  color: var(--fg-0);
   text-decoration: none;
 }
+.sidebar a.active {
+  color: var(--accent);
+  background: var(--bg-2);
+  border-left-color: var(--accent);
+}
+.sidebar .group {
+  padding: 16px 20px 6px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--fg-3);
+}
+.project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sidebar .project-item {
+  display: block;
+  padding: 7px 12px 8px 20px;
+  color: var(--fg-1);
+  border-left: 2px solid transparent;
+  font-family: var(--mono);
+}
+.sidebar .project-item:hover {
+  background: var(--bg-2);
+  text-decoration: none;
+}
+.sidebar .project-item.active {
+  background: var(--bg-2);
+  border-left-color: var(--accent);
+}
+.project-name {
+  display: block;
+  color: var(--fg-0);
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.project-item.active .project-name {
+  color: var(--accent);
+  font-weight: 600;
+}
+.project-sub {
+  display: block;
+  margin-top: 3px;
+  color: var(--fg-3);
+  font-size: 12px;
+}
+.sidebar .project-board {
+  display: block;
+  padding: 2px 12px 7px 34px;
+  color: var(--fg-3);
+  font-family: var(--mono);
+  font-size: 12px;
+  border-left: 2px solid transparent;
+}
+.sidebar .project-board:hover,
+.sidebar .sidebar-action:hover {
+  background: var(--bg-2);
+  color: var(--fg-1);
+  text-decoration: none;
+}
+.sidebar .sidebar-action,
+.sidebar-empty {
+  display: block;
+  padding: 7px 20px;
+  color: var(--fg-2);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.sidebar .sidebar-action.active {
+  color: var(--accent);
+  background: var(--bg-2);
+  border-left-color: var(--accent);
+}
+.logout {
+  margin: 16px 20px 0;
+}
+.logout button {
+  width: 100%;
+  display: inline-block;
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  color: var(--fg-0);
+  padding: 8px 14px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.logout button:hover {
+  background: var(--line);
+}
+.main {
+  grid-column: 2;
+  grid-row: 2;
+  padding: 24px 28px;
+  max-width: none;
+  width: 100%;
+  min-width: 0;
+}
+.shell-footer {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-3);
+  text-align: center;
+}
 
-.content {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 24px 20px 48px;
+@media (max-width: 900px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+  .sidebar {
+    grid-column: 1;
+    grid-row: 2;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .main {
+    grid-column: 1;
+    grid-row: 3;
+  }
+  .shell-footer {
+    grid-row: 4;
+  }
+  .kpi-row {
+    grid-template-columns: 1fr;
+  }
+  .board {
+    grid-template-columns: 1fr;
+  }
 }
 
 .page-title {
@@ -288,6 +434,15 @@ code,
 }
 .toolbar form {
   margin: 0;
+}
+.checkbox-label {
+  align-items: center;
+  color: var(--fg-1);
+  display: inline-flex;
+  font-family: var(--mono);
+  font-size: 11px;
+  gap: 6px;
+  margin-right: 8px;
 }
 
 .pill {

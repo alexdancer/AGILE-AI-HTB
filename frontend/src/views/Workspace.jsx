@@ -1,6 +1,6 @@
 import React from "react";
 
-import Shell from "../components/Shell.jsx";
+import { AppLink } from "../nav.jsx";
 import { useResource } from "../useResource.js";
 
 const COLUMN_ORDER = ["Estimated", "Running", "Review", "Done", "Blocked"];
@@ -11,22 +11,20 @@ export default function Workspace({ projectId }) {
   );
 
   if (loading) {
-    return (
-      <Shell>
-        <p className="spinner">Loading project workspace…</p>
-      </Shell>
-    );
+    return <p className="spinner">Loading project workspace…</p>;
   }
   if (error) {
     return (
-      <Shell>
+      <>
         <div className="notice danger">
           Could not load project workspace: {error.message}
         </div>
         <p>
-          <a href={`/projects/${projectId}`}>Open the server-rendered workspace</a>
+          <a href={`/projects/${projectId}`}>
+            Open the server-rendered workspace
+          </a>
         </p>
-      </Shell>
+      </>
     );
   }
 
@@ -34,7 +32,7 @@ export default function Workspace({ projectId }) {
   const counts = summary.counts || {};
 
   return (
-    <Shell>
+    <>
       <h1 className="page-title">{project.name}</h1>
       <p className="page-sub">
         {project.root_path} · capability: {summary.capability_state}
@@ -58,9 +56,13 @@ export default function Workspace({ projectId }) {
       </div>
 
       <div className="toolbar">
-        <a className="btn" href={`/app/projects/${projectId}/board`}>
+        <AppLink className="btn" to={`/app/projects/${projectId}/board`}>
           Open board
-        </a>
+        </AppLink>
+        <AppLink className="btn secondary" to="/app">
+          All projects
+        </AppLink>
+        {/* Task history stays server-rendered; ordinary full navigation. */}
         <a
           className="btn secondary"
           href={`/projects/${projectId}/task-history`}
@@ -83,7 +85,7 @@ export default function Workspace({ projectId }) {
           </div>
         </div>
       )}
-    </Shell>
+    </>
   );
 }
 

@@ -15,6 +15,7 @@ budget, review disposition) are unchanged and remain the source of truth.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -22,8 +23,13 @@ from fastapi.responses import FileResponse, HTMLResponse
 
 from agile_ai_htb import db
 from agile_ai_htb.auth import require_portal_auth
-from agile_ai_htb.board_workspace import board_page_context, project_workspace_summary
+from agile_ai_htb.board_workspace import (
+    board_page_context,
+    project_board_counts,
+    project_workspace_summary,
+)
 from agile_ai_htb.task_launch import DEFAULT_PROXY_URL
+from agile_ai_htb.template_context import portal_template_context
 
 router = APIRouter()
 
@@ -54,7 +60,30 @@ def react_build_dir() -> Path:
 
 def _react_index() -> Path | None:
     index = react_build_dir() / "index.html"
-    return index if index.is_file() else None
+    if not index.is_file():
+        return None
+    return index if _referenced_assets_available(index) else None
+
+
+def _referenced_assets_available(index: Path) -> bool:
+    build_dir = react_build_dir().resolve()
+    try:
+        html = index.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    asset_paths = re.findall(r'(?:src|href)="(/static/react/[^"]+)"', html)
+    if not asset_paths:
+        return False
+    for asset_path in asset_paths:
+        relative = asset_path.removeprefix("/static/react/")
+        relative = relative.split("?", 1)[0].split("#", 1)[0]
+        target = (build_dir / relative).resolve()
+        if (
+            (target != build_dir and build_dir not in target.parents)
+            or not target.is_file()
+        ):
+            return False
+    return True
 
 
 @router.get("/static/react/{asset_path:path}")
@@ -73,12 +102,17 @@ def react_asset(asset_path: str):
 
 @router.get("/app", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 @router.get(
-    "/app/{shell_path:path}",
+    "/app/projects/{project_id}",
     response_class=HTMLResponse,
     dependencies=[Depends(require_portal_auth)],
 )
-def react_shell(request: Request, shell_path: str = ""):
-    """Serve the React shell index for any React-owned route.
+@router.get(
+    "/app/projects/{project_id}/board",
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_portal_auth)],
+)
+def react_shell(request: Request, project_id: str | None = None):
+    """Serve the React shell index for an explicitly owned route.
 
     Client-side routing renders the workspace/board from the same ``index.html``.
     When assets are missing we return a clear response, never a blank shell.
@@ -91,6 +125,46 @@ def react_shell(request: Request, shell_path: str = ""):
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
     return FileResponse(index)
+
+
+@router.get("/api/portal/nav", dependencies=[Depends(require_portal_auth)])
+def react_portal_nav(request: Request):
+    """Authenticated sidebar navigation context for the React shell.
+
+    Reuses the same ``portal_template_context`` helper that feeds the Jinja
+    sidebar in ``base.html`` so the React sidebar and the Jinja sidebar draw
+    from a single source of truth. Returns only the fields the sidebar needs.
+    """
+
+    context = portal_template_context(request)
+    return {
+        "portal_auth_required": bool(context.get("portal_auth_required")),
+        "sidebar_projects": [
+            {
+                "id": str(project["id"]),
+                "name": project.get("name", ""),
+                "task_count": project.get("task_count", 0),
+            }
+            for project in context.get("sidebar_projects", [])
+        ],
+    }
+
+
+@router.get("/api/projects", dependencies=[Depends(require_portal_auth)])
+def react_projects_state(request: Request):
+    """JSON connected-project list for the shell home / project picker.
+
+    Reuses the same project-list and task-count helpers that feed the Jinja
+    projects page; no new schema and no parallel API semantics.
+    """
+
+    database_path = request.app.state.settings.database_path
+    projects = []
+    for project in db.list_connected_projects(database_path):
+        view = _project_view_model(request, project)
+        counts = project_board_counts(database_path, str(project["id"]))
+        projects.append({**view, "counts": counts, "total_tasks": sum(counts.values())})
+    return {"projects": projects}
 
 
 @router.get(

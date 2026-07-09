@@ -1,6 +1,6 @@
 import React from "react";
 
-import Shell from "../components/Shell.jsx";
+import { AppLink } from "../nav.jsx";
 import { useResource } from "../useResource.js";
 
 export default function Board({ projectId }) {
@@ -9,15 +9,11 @@ export default function Board({ projectId }) {
   );
 
   if (loading) {
-    return (
-      <Shell>
-        <p className="spinner">Loading board…</p>
-      </Shell>
-    );
+    return <p className="spinner">Loading board…</p>;
   }
   if (error) {
     return (
-      <Shell>
+      <>
         <div className="notice danger">
           Could not load board: {error.message}
         </div>
@@ -26,7 +22,7 @@ export default function Board({ projectId }) {
             Open the server-rendered board
           </a>
         </p>
-      </Shell>
+      </>
     );
   }
 
@@ -43,7 +39,7 @@ export default function Board({ projectId }) {
     : false;
 
   return (
-    <Shell>
+    <>
       <h1 className="page-title">{project.name} · Board</h1>
       <p className="page-sub">
         Project-scoped task board. Launch, queue, and review actions run through
@@ -74,11 +70,22 @@ export default function Board({ projectId }) {
           </form>
         ) : (
           <form method="post" action={`/projects/${projectId}/queue/start`}>
+            <label className="checkbox-label">
+              <input type="checkbox" name="auto_agent_review" value="1" />
+              Auto Agent Review
+            </label>
             <button className="btn small" type="submit">
               Start queue
             </button>
           </form>
         )}
+        <AppLink
+          className="btn small secondary"
+          to={`/app/projects/${projectId}`}
+        >
+          Workspace
+        </AppLink>
+        {/* Launch/review actions stay server-rendered; full navigation. */}
         <a className="btn small secondary" href={`/projects/${projectId}/board`}>
           Full board (launch / review)
         </a>
@@ -110,7 +117,7 @@ export default function Board({ projectId }) {
           );
         })}
       </div>
-    </Shell>
+    </>
   );
 }
 
@@ -118,12 +125,12 @@ function TaskCard({ task, projectId }) {
   const tokens =
     task.actual_tokens != null
       ? `${task.actual_tokens.toLocaleString()} tok`
-      : task.estimated_tokens != null
-        ? `~${task.estimated_tokens.toLocaleString()} tok`
+      : task.estimate_tokens != null
+        ? `~${task.estimate_tokens.toLocaleString()} tok`
         : null;
   return (
     <article className="task">
-      <p className="task-title">{task.title || task.id}</p>
+      <p className="task-title">{task.description || task.id}</p>
       <div className="task-meta">
         <span>{task.id}</span>
         {tokens && <span>{tokens}</span>}

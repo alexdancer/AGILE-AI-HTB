@@ -141,9 +141,12 @@ class ControlPlaneSettingsRequest(BaseModel):
 
 @router.get("/")
 def root(request: Request) -> RedirectResponse:
-    if not request.app.state.settings.portal_auth_required:
-        return RedirectResponse(_default_portal_landing(request.app.state.settings.database_path))
-    return RedirectResponse("/login")
+    if request.app.state.settings.portal_auth_required:
+        try:
+            require_portal_auth(request)
+        except HTTPException:
+            return RedirectResponse("/login")
+    return RedirectResponse(_default_portal_landing(request.app.state.settings.database_path))
 
 
 @router.get("/login", response_class=HTMLResponse)
@@ -1536,6 +1539,10 @@ def _local_backend(request: Request) -> LocalExecutionBackend | None:
 
 
 def _default_portal_landing(database_path: Path | str) -> str:
+    # The existing server-rendered Portal is the default landing. The React
+    # shell at `/app` remains reachable as an experimental/migrated surface
+    # but is not the default until it reaches Portal chrome, dashboard, and
+    # AGILE Board parity (see docs/REACT_PORTAL_PARITY_PLAN.md).
     projects = db.list_connected_projects(database_path)
     if projects:
         return f"/projects/{projects[0]['id']}"

@@ -1,56 +1,67 @@
 import React from "react";
 
+import { NavContext } from "./nav.jsx";
 import Shell from "./components/Shell.jsx";
+import Home from "./views/Home.jsx";
 import Workspace from "./views/Workspace.jsx";
 import Board from "./views/Board.jsx";
 
 // The shell is served under /app. Client routes mirror the Jinja URLs so the
 // two surfaces stay legible during migration:
-//   /app/projects/:id        -> React project workspace
-//   /app/projects/:id/board  -> React project board shell
+//   /app                      -> React home / project picker
+//   /app/projects/:id         -> React project workspace
+//   /app/projects/:id/board   -> React project board shell
 export function parseRoute(pathname) {
-  const parts = pathname
-    .replace(/^\/app\/?/, "")
-    .split("/")
-    .filter(Boolean);
-  if (parts[0] === "projects" && parts[1]) {
-    if (parts[2] === "board") {
-      return { view: "board", projectId: parts[1] };
-    }
-    return { view: "workspace", projectId: parts[1] };
-  }
-  return { view: "home" };
-}
+  const normalized = pathname.replace(/\/$/, "");
+  if (normalized === "/app") return { view: "home" };
 
-function Home() {
-  return (
-    <Shell>
-      <h1 className="page-title">React Portal shell</h1>
-      <p className="page-sub">
-        This is the first migrated Portal surface. Open a project workspace or
-        board to use it.
-      </p>
-      <div className="panel">
-        <div className="panel-body">
-          <p className="muted">
-            Pick a connected project from the{" "}
-            <a href="/projects">projects list</a>, then open its React workspace
-            at <code>/app/projects/&lt;id&gt;</code> or its board at{" "}
-            <code>/app/projects/&lt;id&gt;/board</code>.
-          </p>
-        </div>
-      </div>
-    </Shell>
-  );
+  const board = normalized.match(/^\/app\/projects\/([^/]+)\/board$/);
+  if (board) return { view: "board", projectId: board[1] };
+
+  const workspace = normalized.match(/^\/app\/projects\/([^/]+)$/);
+  if (workspace) return { view: "workspace", projectId: workspace[1] };
+
+  return { view: "notFound" };
 }
 
 export default function App() {
-  const route = parseRoute(window.location.pathname);
+  // History API routing: pushState on in-shell links, popstate for back and
+  // forward. Deep links to the three declared React routes still work because
+  // FastAPI serves this same index for each route on a full load.
+  const [path, setPath] = React.useState(window.location.pathname);
+
+  React.useEffect(() => {
+    const onPopState = () => setPath(window.location.pathname);
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  const navigate = React.useCallback((to) => {
+    window.history.pushState(null, "", to);
+    setPath(to);
+  }, []);
+
+  const route = parseRoute(path);
+  const activeProjectId = route.projectId || null;
+  let content;
   if (route.view === "workspace") {
-    return <Workspace projectId={route.projectId} />;
+    content = <Workspace projectId={route.projectId} />;
+  } else if (route.view === "board") {
+    content = <Board projectId={route.projectId} />;
+  } else if (route.view === "home") {
+    content = <Home />;
+  } else {
+    content = (
+      <div className="notice danger">
+        This React Portal route does not exist. <a href="/app">Open projects</a>.
+      </div>
+    );
   }
-  if (route.view === "board") {
-    return <Board projectId={route.projectId} />;
-  }
-  return <Home />;
+  return (
+    <NavContext.Provider value={navigate}>
+      <Shell activeView={route.view} activeProjectId={activeProjectId}>
+        {content}
+      </Shell>
+    </NavContext.Provider>
+  );
 }

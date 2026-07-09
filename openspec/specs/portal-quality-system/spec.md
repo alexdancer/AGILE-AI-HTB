@@ -3,20 +3,18 @@
 ## Purpose
 
 Define the durable server-rendered Portal quality contract for consistent visual primitives, useful empty/blocked states, and responsive operator workflows without introducing a frontend build pipeline.
-
 ## Requirements
-
 ### Requirement: Portal uses shared visual primitives
-The Portal SHALL use shared server-rendered visual primitives for common page structure, cards, buttons, alerts, empty states, metadata rows, and status/toolbars instead of duplicating page-specific inline presentation for those common patterns.
+The Portal SHALL use shared visual primitives for common page structure, cards, buttons, alerts, empty states, metadata rows, and status/toolbars instead of duplicating page-specific inline presentation for those common patterns. Server-rendered pages SHALL continue using shared classes; React-migrated surfaces SHALL use shared React components or shared CSS tokens for equivalent patterns.
 
 #### Scenario: Common UI patterns render consistently
 - **WHEN** an authenticated operator views dashboard, project workspace, project board, setup, sessions, or alarms pages
 - **THEN** common cards, action links, buttons, alert banners, empty states, and metadata rows SHALL use consistent visual treatment
-- **AND** the implementation SHALL NOT require a frontend build step
+- **AND** pages that remain server-rendered SHALL NOT require a frontend build step
 
 #### Scenario: Inline styles are not the primary pattern
-- **WHEN** a touched template renders a common visual pattern
-- **THEN** the common pattern SHALL be represented by shared classes rather than newly duplicated inline style blocks
+- **WHEN** a touched template or React component renders a common visual pattern
+- **THEN** the common pattern SHALL be represented by shared classes, shared CSS tokens, or shared components rather than newly duplicated inline style blocks
 
 ### Requirement: Portal supports compact text utilities
 The Portal SHALL provide shared server-rendered styling utilities for compact previews of long operator-facing text while preserving access to the full text where the page owns the evidence.
@@ -34,14 +32,19 @@ The Portal SHALL provide shared server-rendered styling utilities for compact pr
 - **THEN** the Portal SHALL remain renderable through the existing FastAPI/Jinja server-rendered stack without React, Vite, SPA routing, or a Node-based frontend build pipeline
 
 ### Requirement: Portal remains server-rendered
-The Portal quality pass SHALL preserve FastAPI/Jinja server-rendered pages as the source of truth for workflow state.
+The Portal quality baseline SHALL preserve FastAPI/Jinja server-rendered pages for non-migrated surfaces while allowing explicitly scoped React/Vite Portal surfaces to own their client-side rendering during frontend migration.
 
-#### Scenario: No frontend framework is required
+#### Scenario: No frontend framework is required for non-migrated pages
 - **WHEN** the Portal is installed and served after this change
-- **THEN** it SHALL NOT require React, Vite, a SPA router, or a Node-based frontend build pipeline to render the improved pages
+- **THEN** dashboard, setup, settings, sessions, alarms, login, and other non-migrated pages SHALL remain renderable through the existing FastAPI/Jinja stack without requiring React, Vite, SPA routing, or a Node-based frontend build pipeline
 
-#### Scenario: Vanilla JavaScript is local and optional
-- **WHEN** a page uses JavaScript for local polish such as form feedback, filtering, or refresh hints
+#### Scenario: React-migrated pages may own route rendering
+- **WHEN** a page is explicitly migrated into the React Portal shell by an accepted OpenSpec change
+- **THEN** that migrated page MAY use React, Vite-built assets, and client-side route rendering for its presentation layer
+- **AND** FastAPI SHALL remain authoritative for auth, persistence, workflow actions, launch guardrails, budget governance, Worker Run evidence, and review disposition
+
+#### Scenario: Vanilla JavaScript remains local and optional on server-rendered pages
+- **WHEN** a server-rendered page uses JavaScript for local polish such as form feedback, filtering, or refresh hints
 - **THEN** the JavaScript SHALL enhance the server-rendered page without owning route navigation or workflow state
 
 ### Requirement: Empty and blocked states explain the next action
