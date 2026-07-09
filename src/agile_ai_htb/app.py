@@ -9,7 +9,7 @@ from agile_ai_htb import db
 from agile_ai_htb.guardrails import load_guardrails
 from agile_ai_htb.llm import LLMClient
 from agile_ai_htb.execution_backend import LocalExecutionBackend
-from agile_ai_htb.routes import alarms, portal, proxy, sessions, tasks
+from agile_ai_htb.routes import alarms, portal, proxy, react_shell, sessions, tasks
 from agile_ai_htb.settings import Settings
 
 @asynccontextmanager
@@ -40,4 +40,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(alarms.router)
     app.include_router(proxy.router)
     app.include_router(portal.router)
+    app.include_router(react_shell.router)
     return app

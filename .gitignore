@@ -11,3 +11,5 @@ dist/
 .hermes/
 .cursor/
 .codegraph/
+frontend/node_modules/
+src/agile_ai_htb/static/react/

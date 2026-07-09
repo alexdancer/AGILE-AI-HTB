@@ -52,9 +52,13 @@ def test_pyproject_has_public_cli_package_metadata():
 def test_pyproject_packages_server_rendered_templates_and_defaults():
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
 
+    # Server-rendered templates/defaults ship alongside the built React Portal
+    # shell assets so a packaged install can serve the migrated surface.
     assert pyproject["tool"]["setuptools"]["package-data"]["agile_ai_htb"] == [
         "templates/*.html",
         "defaults/*.yaml",
+        "static/react/*",
+        "static/react/assets/*",
     ]
 
 
