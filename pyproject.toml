@@ -51,7 +51,12 @@ Changelog = "https://github.com/alexdancer/AGILE-AI-HTB/blob/main/CHANGELOG.md"
 where = ["src"]
 
 [tool.setuptools.package-data]
-agile_ai_htb = ["templates/*.html", "defaults/*.yaml"]
+agile_ai_htb = [
+    "templates/*.html",
+    "defaults/*.yaml",
+    "static/react/*",
+    "static/react/assets/*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
