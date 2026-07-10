@@ -56,7 +56,7 @@ from agile_ai_htb.operator_config import (
 from agile_ai_htb.project_context import task_project_id
 from agile_ai_htb.settings import Settings
 from agile_ai_htb.task_launch import DEFAULT_PROXY_URL, TaskLaunchBlocked, launch_task, refresh_task_from_session
-from agile_ai_htb.routes.tasks import _ensure_review_task, _run_agent_review
+from agile_ai_htb.routes.tasks import _ensure_review_task, _run_agent_review, _wants_react_json
 from agile_ai_htb.template_context import portal_template_context
 from agile_ai_htb.worker_setup_view import (
     active_adapter_for_request as _active_adapter_for_request,
@@ -78,6 +78,67 @@ templates = Jinja2Templates(
     directory=Path(__file__).resolve().parents[1] / "templates",
     context_processors=[portal_template_context],
 )
+
+
+def _react_action_outcome(
+    request: Request,
+    *,
+    ok: bool,
+    error: str | None = None,
+    next_href: str | None = None,
+    setup_href: str | None = None,
+    task: dict[str, Any] | None = None,
+    automation: dict[str, Any] | None = None,
+    status_code: int = 200,
+) -> JSONResponse:
+    content = {
+        "ok": ok,
+        "error": str(_safe_worker_evidence(error)) if error else None,
+        "setup_href": setup_href,
+        "next_href": next_href,
+        "task": {"id": task.get("id"), "status": task.get("status")} if task else None,
+    }
+    if automation is not None:
+        content["automation"] = automation
+    return JSONResponse(status_code=status_code, content=content)
+
+
+def _react_restore_outcome(
+    *,
+    ok: bool,
+    project: dict[str, Any] | None = None,
+    error: str | None = None,
+    status_code: int = 200,
+) -> JSONResponse:
+    project_id = str(_safe_worker_evidence(project["id"]))[:128] if project else None
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "ok": ok,
+            "error": str(_safe_worker_evidence(error))[:1000] if error else None,
+            "next_href": f"/app/projects/{project_id}" if project else None,
+            "retry_href": None if project else "/projects",
+            "project": {"id": project_id, "archived": False} if project else None,
+        },
+    )
+
+
+def _react_automation_state(database_path: Path | str, project_id: str) -> dict[str, Any]:
+    state = get_run_automation_state(database_path, project_id)
+    return {
+        "status": state.get("status"),
+        "auto_agent_review": bool(state.get("auto_agent_review")),
+        "latest_stop_reason": state.get("latest_stop_reason"),
+    }
+
+
+def _task_setup_href(task: dict[str, Any] | None) -> str | None:
+    metadata = task.get("metadata") if isinstance(task, dict) else None
+    diagnostic = metadata.get("launch_diagnostic") if isinstance(metadata, dict) else None
+    setup_href = diagnostic.get("setup_href") if isinstance(diagnostic, dict) else None
+    if isinstance(setup_href, str) and setup_href.startswith("/") and not setup_href.startswith("//"):
+        return setup_href
+    return None
 
 class WorkerVerifyRequest(BaseModel):
     model: str = Field(min_length=1)
@@ -197,6 +258,12 @@ def logout(request: Request):
 
 @router.get("/dashboard", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def dashboard(request: Request):
+    return templates.TemplateResponse(request, "dashboard.html", _dashboard_context(request))
+
+
+def _dashboard_context(request: Request) -> dict[str, Any]:
+    """Shared dashboard state for Jinja and the bounded React JSON view."""
+
     database_path = request.app.state.settings.database_path
     config = request.app.state.guardrails
     budget_since = db.effective_daily_budget_window_start(database_path, timezone=request.app.state.settings.timezone)
@@ -226,29 +293,25 @@ def dashboard(request: Request):
         critical_alarm_count=len(critical_alarms),
     )
     accuracy = db.estimation_accuracy(database_path)
-    return templates.TemplateResponse(
-        request,
-        "dashboard.html",
-        {
-            "active_page": "dashboard",
-            "next_actions": next_actions,
-            "token_total": budget_token_total,
-            "budget_token_total": budget_token_total,
-            "worker_token_total": token_breakdown["by_category"]["worker_execution"],
-            "worker_token_summary": worker_token_summary,
-            "token_breakdown": token_breakdown,
-            "budget_since": budget_since,
-            "daily_cap": daily_cap,
-            "current_zone": get_budget_zone(budget_token_total, daily_cap, config),
-            "alarm_count": len(alarms),
-            "open_alarm_count": len(open_alarms),
-            "critical_alarm_count": len(critical_alarms),
-            "active_sessions": list(reversed(active_sessions[-5:])),
-            "recent_sessions": list(reversed(sessions[-5:])),
-            "recent_alarms": list(reversed(open_alarms[-5:])),
-            "estimation_accuracy": accuracy,
-        },
-    )
+    return {
+        "active_page": "dashboard",
+        "next_actions": next_actions,
+        "token_total": budget_token_total,
+        "budget_token_total": budget_token_total,
+        "worker_token_total": token_breakdown["by_category"]["worker_execution"],
+        "worker_token_summary": worker_token_summary,
+        "token_breakdown": token_breakdown,
+        "budget_since": budget_since,
+        "daily_cap": daily_cap,
+        "current_zone": get_budget_zone(budget_token_total, daily_cap, config),
+        "alarm_count": len(alarms),
+        "open_alarm_count": len(open_alarms),
+        "critical_alarm_count": len(critical_alarms),
+        "active_sessions": list(reversed(active_sessions[-5:])),
+        "recent_sessions": list(reversed(sessions[-5:])),
+        "recent_alarms": list(reversed(open_alarms[-5:])),
+        "estimation_accuracy": accuracy,
+    }
 
 
 def _dashboard_next_actions(
@@ -485,8 +548,19 @@ def archive_project(project_id: str, request: Request):
 @router.post("/projects/{project_id}/restore", dependencies=[Depends(require_portal_auth)])
 def restore_project(project_id: str, request: Request):
     database_path = request.app.state.settings.database_path
-    _ensure_project(database_path, project_id)
-    db.restore_connected_project(database_path, project_id)
+    try:
+        _ensure_project(database_path, project_id)
+    except HTTPException as exc:
+        if _wants_react_json(request):
+            return _react_restore_outcome(
+                ok=False,
+                error=str(exc.detail),
+                status_code=exc.status_code,
+            )
+        raise
+    restored = db.restore_connected_project(database_path, project_id)
+    if _wants_react_json(request):
+        return _react_restore_outcome(ok=True, project=restored)
     return RedirectResponse(f"/projects/{project_id}", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -514,22 +588,40 @@ def project_task_history(project_id: str, request: Request):
 @router.post("/projects/{project_id}/tasks/{task_id}/archive", dependencies=[Depends(require_portal_auth)])
 def project_archive_task(project_id: str, task_id: str, request: Request):
     database_path = request.app.state.settings.database_path
-    _ensure_project_task(database_path, project_id, task_id)
+    try:
+        _ensure_project_task(database_path, project_id, task_id)
+    except HTTPException as exc:
+        if _wants_react_json(request):
+            return _react_action_outcome(
+                request,
+                ok=False,
+                error=str(exc.detail),
+                status_code=exc.status_code,
+            )
+        raise
     try:
         db.archive_task(database_path, task_id)
     except ValueError as exc:
+        if _wants_react_json(request):
+            return _react_action_outcome(request, ok=False, error=str(exc), status_code=409)
         return RedirectResponse(
             f"/projects/{project_id}/board?error={quote(str(exc))}",
             status_code=status.HTTP_303_SEE_OTHER,
         )
+    if _wants_react_json(request):
+        return _react_action_outcome(request, ok=True, task=db.get_task(database_path, task_id))
     return RedirectResponse(f"/projects/{project_id}/board", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/projects/{project_id}/tasks/archive-done", dependencies=[Depends(require_portal_auth)])
 def project_archive_done_tasks(project_id: str, request: Request):
     database_path = request.app.state.settings.database_path
-    _ensure_project(database_path, project_id)
+    project_error = _active_project_action_error(request, database_path, project_id)
+    if project_error is not None:
+        return project_error
     db.archive_done_tasks_for_project(database_path, project_id)
+    if _wants_react_json(request):
+        return _react_action_outcome(request, ok=True)
     return RedirectResponse(f"/projects/{project_id}/board", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -544,7 +636,9 @@ def project_unarchive_task(project_id: str, task_id: str, request: Request):
 @router.post("/projects/{project_id}/run-next", dependencies=[Depends(require_portal_auth)])
 def project_run_next(project_id: str, request: Request):
     database_path = request.app.state.settings.database_path
-    _ensure_active_project(database_path, project_id)
+    project_error = _active_project_action_error(request, database_path, project_id)
+    if project_error is not None:
+        return project_error
     task = _next_eligible_task(database_path, project_id)
     if task is None:
         record_automation_event(
@@ -554,9 +648,17 @@ def project_run_next(project_id: str, request: Request):
             title="Run next found no eligible task",
             detail={"reason": "no_eligible_tasks", "source": RUN_NEXT_SOURCE},
         )
+        if _wants_react_json(request):
+            return _react_action_outcome(
+                request,
+                ok=False,
+                error="No eligible Estimated tasks",
+                automation=_react_automation_state(database_path, project_id),
+                status_code=409,
+            )
         return RedirectResponse(f"/projects/{project_id}/board?error=No%20eligible%20Estimated%20tasks", status_code=303)
     try:
-        _launch_project_automation_task(request, project_id=project_id, task=task, source=RUN_NEXT_SOURCE)
+        result = _launch_project_automation_task(request, project_id=project_id, task=task, source=RUN_NEXT_SOURCE)
     except TaskLaunchBlocked as exc:
         record_automation_event(
             database_path,
@@ -567,14 +669,32 @@ def project_run_next(project_id: str, request: Request):
             task_id=exc.task["id"],
             level="warning",
         )
+        if _wants_react_json(request):
+            return _react_action_outcome(
+                request,
+                ok=False,
+                error="; ".join(exc.reasons),
+                setup_href=_task_setup_href(exc.task),
+                automation=_react_automation_state(database_path, project_id),
+                status_code=exc.status_code,
+            )
         return RedirectResponse(f"/projects/{project_id}/board?error={';%20'.join(exc.reasons)}", status_code=303)
+    if _wants_react_json(request):
+        return _react_action_outcome(
+            request,
+            ok=True,
+            task=result.task,
+            automation=_react_automation_state(database_path, project_id),
+        )
     return RedirectResponse(f"/projects/{project_id}/board", status_code=303)
 
 
 @router.post("/projects/{project_id}/queue/start", dependencies=[Depends(require_portal_auth)])
 async def project_queue_start(project_id: str, request: Request):
     database_path = request.app.state.settings.database_path
-    _ensure_active_project(database_path, project_id)
+    project_error = _active_project_action_error(request, database_path, project_id)
+    if project_error is not None:
+        return project_error
     form = await request.form()
     start_run_automation(
         database_path,
@@ -583,14 +703,42 @@ async def project_queue_start(project_id: str, request: Request):
         auto_agent_review="auto_agent_review" in form,
     )
     await _advance_project_queue(request, project_id)
+    if _wants_react_json(request):
+        automation = _react_automation_state(database_path, project_id)
+        stop_reason = automation.get("latest_stop_reason")
+        if automation.get("status") == "stopped" and stop_reason not in {
+            None,
+            "completed_no_eligible_tasks",
+        }:
+            task = _next_eligible_task(database_path, project_id)
+            setup_href = _task_setup_href(task)
+            if setup_href is None and stop_reason == "launch_guardrail_blocked":
+                setup_href = "/settings/workers"
+            return _react_action_outcome(
+                request,
+                ok=False,
+                error=f"Queue stopped: {str(stop_reason).replace('_', ' ')}",
+                setup_href=setup_href,
+                automation=automation,
+                status_code=409,
+            )
+        return _react_action_outcome(request, ok=True, automation=automation)
     return RedirectResponse(f"/projects/{project_id}/board", status_code=303)
 
 
 @router.post("/projects/{project_id}/queue/stop", dependencies=[Depends(require_portal_auth)])
 def project_queue_stop(project_id: str, request: Request):
     database_path = request.app.state.settings.database_path
-    _ensure_active_project(database_path, project_id)
+    project_error = _active_project_action_error(request, database_path, project_id)
+    if project_error is not None:
+        return project_error
     stop_run_automation(database_path, project_id=project_id, reason="operator_stop")
+    if _wants_react_json(request):
+        return _react_action_outcome(
+            request,
+            ok=True,
+            automation=_react_automation_state(database_path, project_id),
+        )
     return RedirectResponse(f"/projects/{project_id}/board", status_code=303)
 
 
@@ -657,6 +805,23 @@ def _ensure_active_project(database_path: Path | str, project_id: str) -> dict[s
     if db.project_is_archived(project):
         raise HTTPException(status_code=409, detail="restore archived project before launching active work")
     return project
+
+
+def _active_project_action_error(
+    request: Request, database_path: Path | str, project_id: str
+) -> JSONResponse | None:
+    try:
+        _ensure_active_project(database_path, project_id)
+    except HTTPException as exc:
+        if _wants_react_json(request):
+            return _react_action_outcome(
+                request,
+                ok=False,
+                error=str(exc.detail),
+                status_code=exc.status_code,
+            )
+        raise
+    return None
 
 
 def _project_archive_block_reason(database_path: Path | str, project_id: str) -> str:

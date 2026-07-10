@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from agile_ai_htb import db
 from agile_ai_htb.app import create_app
 from agile_ai_htb.project_context import project_task_metadata
+from agile_ai_htb.routes import tasks as task_routes
 from agile_ai_htb.settings import Settings
 from agile_ai_htb.task_launch import refresh_task_from_session
 
@@ -239,7 +240,13 @@ def test_create_task_with_estimate_defaults_to_estimated(tmp_path):
     assert created.status_code == 200
     assert created.json()["status"] == "Estimated"
 
-def test_project_estimate_form_stamps_connected_project_metadata(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("accept", "react_json"),
+    [("text/html", False), (None, False), ("application/json", True)],
+)
+def test_project_estimate_form_stamps_connected_project_metadata(
+    tmp_path, monkeypatch, accept, react_json
+):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     llm = FakeEstimatorLLM()
     database_path = tmp_path / "harness.db"
@@ -255,16 +262,29 @@ def test_project_estimate_form_stamps_connected_project_metadata(tmp_path, monke
     )
 
     with _client_with_llm(tmp_path, llm) as client:
+        headers = _auth_headers()
+        if accept:
+            headers["accept"] = accept
         response = client.post(
             f"/projects/{project['id']}/tasks/estimate-form",
             data={"description": "Add project-scoped task"},
-            headers={**_auth_headers(), "accept": "text/html"},
+            headers=headers,
             follow_redirects=False,
         )
 
     tasks = db.list_tasks(database_path)
-    assert response.status_code == 303
-    assert response.headers["location"] == f"/projects/{project['id']}/board"
+    if react_json:
+        assert response.status_code == 200
+        assert response.json() == {
+            "ok": True,
+            "error": None,
+            "setup_href": None,
+            "next_href": None,
+            "task": {"id": tasks[0]["id"], "status": "Estimated"},
+        }
+    else:
+        assert response.status_code == 303
+        assert response.headers["location"] == f"/projects/{project['id']}/board"
     assert len(tasks) == 1
     assert tasks[0]["metadata"]["connected_project_id"] == project["id"]
     assert tasks[0]["metadata"]["project_root_path"] == project_task_metadata(project)["project_root_path"]
@@ -1122,26 +1142,114 @@ def test_estimate_form_markdown_file_overrides_pasted_text(tmp_path, monkeypatch
     assert "ignored pasted task" not in breakdown["source_text"]
     assert [candidate["title"] for candidate in breakdown["candidates"]] == ["Use file contents", "Ignore pasted contents"]
 
-def test_estimate_form_single_task_markdown_still_routes_to_breakdown_review(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("accept", "react_json"),
+    [("text/html", False), (None, False), ("application/json", True)],
+)
+def test_estimate_form_single_task_markdown_still_routes_to_breakdown_review(
+    tmp_path, monkeypatch, accept, react_json
+):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     llm = FakeSequentialLLM([_breakdown_content("Fix DEMO_TASK_2099 login copy")])
     markdown = "# DEMO_TASK_2099 small task\n\nFix the login copy and run pytest."
 
     with _client_with_llm(tmp_path, llm) as client:
+        headers = _auth_headers()
+        if accept:
+            headers["accept"] = accept
         response = client.post(
             "/tasks/estimate-form",
-            headers={**_auth_headers(), "accept": "text/html"},
+            headers=headers,
             data={"description": markdown},
             follow_redirects=False,
         )
-        breakdown_id = response.headers["location"].split("/")[2]
+        next_href = response.json()["next_href"] if react_json else response.headers["location"]
+        breakdown_id = next_href.split("/")[2]
         breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
 
-    assert response.status_code == 303
-    assert response.headers["location"].startswith("/task-breakdowns/")
+    if react_json:
+        assert response.status_code == 200
+        assert response.json() == {
+            "ok": True,
+            "error": None,
+            "setup_href": None,
+            "next_href": next_href,
+            "task": None,
+        }
+    else:
+        assert response.status_code == 303
+    assert next_href.startswith("/task-breakdowns/")
+    assert next_href.endswith("/review")
     assert db.list_tasks(tmp_path / "harness.db") == []
     assert breakdown["decision"] == "single_task"
     assert breakdown["candidates"][0]["title"] == "Fix DEMO_TASK_2099 login copy"
+
+
+@pytest.mark.parametrize(
+    "markdown",
+    [
+        "**DEMO_TASK_2099 Markdown task**",
+        "> DEMO_TASK_2099 quoted requirement",
+        "DEMO field | DEMO value\n--- | ---\nID | 999",
+        "[DEMO_TASK_2099 requirements](https://example.invalid/spec)",
+        "+ DEMO_TASK_2099 plus-list item",
+        "1) DEMO_TASK_2099 ordered item",
+        "~~~text\nDEMO_TASK_2099\n~~~",
+        "*DEMO_TASK_2099 emphasized task*",
+        "_DEMO_TASK_2099 emphasized task_",
+        "`DEMO_TASK_2099 inline code task`",
+        "~~DEMO_TASK_2099 removed task~~",
+        "<https://example.invalid/DEMO_TASK_2099>",
+    ],
+)
+def test_markdown_detector_routes_common_markdown_constructs_to_breakdown(markdown):
+    assert task_routes._looks_like_markdown(markdown) is True
+
+
+def test_react_project_intake_missing_project_uses_stable_outcome(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/projects/proj_DEMO_999_MISSING/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "application/json"},
+            data={"description": "Estimate DEMO intake task 2099"},
+        )
+
+    assert response.status_code == 404
+    body = response.json()
+    assert set(body) == {"ok", "error", "setup_href", "next_href", "task"}
+    assert body["ok"] is False
+    assert body["error"] == "connected project not found"
+
+
+@pytest.mark.parametrize("react_json", [False, True])
+def test_project_intake_rejects_archived_project(tmp_path, monkeypatch, react_json):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = db.list_connected_projects(database_path)[0]
+        db.archive_connected_project(database_path, project["id"])
+        headers = _auth_headers()
+        if react_json:
+            headers["accept"] = "application/json"
+        response = client.post(
+            f"/projects/{project['id']}/tasks/estimate-form",
+            headers=headers,
+            data={"description": "Estimate archived DEMO task 2099"},
+            follow_redirects=False,
+        )
+
+    assert response.status_code == (409 if react_json else 303)
+    if react_json:
+        body = response.json()
+        assert body["ok"] is False
+        assert body["error"] == "restore archived project before adding tasks"
+    else:
+        assert response.headers["location"].startswith(f"/projects/{project['id']}/board?error=")
+    assert not any(
+        task["description"] == "Estimate archived DEMO task 2099"
+        for task in db.list_tasks(database_path)
+    )
 
 def test_estimate_form_invalid_breakdown_output_creates_manual_recovery_review(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)

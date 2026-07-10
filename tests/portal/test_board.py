@@ -494,6 +494,65 @@ def test_archive_done_task_hides_from_board_and_preserves_history_evidence(tmp_p
     assert "Unarchive" in history.text
 
 
+def test_react_archive_actions_return_stable_json_and_preserve_project_binding(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "react-archive-project")
+        other = _connect_project(database_path, tmp_path / "react-archive-other")
+        individual = db.create_task(
+            database_path,
+            description="Archive one DEMO task",
+            status="Done",
+            metadata=project_task_metadata(project),
+        )
+        bulk = db.create_task(
+            database_path,
+            description="Archive remaining DEMO task",
+            status="Done",
+            metadata=project_task_metadata(project),
+        )
+
+        archived = client.post(
+            f"/projects/{project['id']}/tasks/{individual['id']}/archive",
+            headers={**_portal_headers(), "accept": "application/json"},
+        )
+        wrong_project = client.post(
+            f"/projects/{other['id']}/tasks/{bulk['id']}/archive",
+            headers={**_portal_headers(), "accept": "application/json"},
+        )
+        archived_all = client.post(
+            f"/projects/{project['id']}/tasks/archive-done",
+            headers={**_portal_headers(), "accept": "application/json"},
+        )
+
+    assert archived.status_code == 200
+    assert archived.json() == {
+        "ok": True,
+        "error": None,
+        "setup_href": None,
+        "next_href": None,
+        "task": {"id": individual["id"], "status": "Done"},
+    }
+    assert wrong_project.status_code == 404
+    assert wrong_project.json() == {
+        "ok": False,
+        "error": "task not found for selected project",
+        "setup_href": None,
+        "next_href": None,
+        "task": None,
+    }
+    assert archived_all.status_code == 200
+    assert archived_all.json() == {
+        "ok": True,
+        "error": None,
+        "setup_href": None,
+        "next_href": None,
+        "task": None,
+    }
+    assert db.get_task(database_path, bulk["id"])["metadata"]["archived_at"]
+
+
 def test_archive_blocked_task_hides_from_board_and_preserves_history_evidence(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"

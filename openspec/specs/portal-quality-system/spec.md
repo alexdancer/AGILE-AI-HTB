@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the durable server-rendered Portal quality contract for consistent visual primitives, useful empty/blocked states, and responsive operator workflows without introducing a frontend build pipeline.
+Define the durable Portal quality contract for consistent visual primitives, useful empty/blocked states, and responsive operator workflows across FastAPI/Jinja non-migrated pages and explicitly accepted React/Vite migrated surfaces.
 ## Requirements
 ### Requirement: Portal uses shared visual primitives
 The Portal SHALL use shared visual primitives for common page structure, cards, buttons, alerts, empty states, metadata rows, and status/toolbars instead of duplicating page-specific inline presentation for those common patterns. Server-rendered pages SHALL continue using shared classes; React-migrated surfaces SHALL use shared React components or shared CSS tokens for equivalent patterns.
@@ -17,7 +17,7 @@ The Portal SHALL use shared visual primitives for common page structure, cards, 
 - **THEN** the common pattern SHALL be represented by shared classes, shared CSS tokens, or shared components rather than newly duplicated inline style blocks
 
 ### Requirement: Portal supports compact text utilities
-The Portal SHALL provide shared server-rendered styling utilities for compact previews of long operator-facing text while preserving access to the full text where the page owns the evidence.
+The Portal SHALL provide shared styling utilities for compact previews of long operator-facing text while preserving access to the full text where the page owns the evidence.
 
 #### Scenario: Touched templates reuse compact text classes
 - **WHEN** a touched Portal template needs to display long task, report, command, project, result, or evidence text as a preview
@@ -27,16 +27,17 @@ The Portal SHALL provide shared server-rendered styling utilities for compact pr
 - **WHEN** compact text utilities hide overflow in a session or report surface
 - **THEN** the same page SHALL provide access to the full text through existing content, native disclosure, or a bounded raw evidence section
 
-#### Scenario: No frontend build step is introduced
+#### Scenario: Non-migrated pages require no frontend build step
 - **WHEN** the compact session report change is implemented
-- **THEN** the Portal SHALL remain renderable through the existing FastAPI/Jinja server-rendered stack without React, Vite, SPA routing, or a Node-based frontend build pipeline
+- **THEN** its non-migrated FastAPI/Jinja pages SHALL remain renderable without requiring React, Vite, SPA routing, or a Node-based frontend build pipeline
+- **AND** explicitly migrated Portal surfaces MAY use React/Vite assets only when an accepted OpenSpec change scopes that client-side rendering
 
 ### Requirement: Portal remains server-rendered
-The Portal quality baseline SHALL preserve FastAPI/Jinja server-rendered pages for non-migrated surfaces while allowing explicitly scoped React/Vite Portal surfaces to own their client-side rendering during frontend migration.
+The Portal quality baseline SHALL preserve FastAPI/Jinja server-rendered pages for non-migrated surfaces and as fallback for explicitly migrated React/Vite Portal surfaces.
 
-#### Scenario: No frontend framework is required for non-migrated pages
+#### Scenario: No frontend framework is required for Jinja fallback and non-migrated pages
 - **WHEN** the Portal is installed and served after this change
-- **THEN** dashboard, setup, settings, sessions, alarms, login, and other non-migrated pages SHALL remain renderable through the existing FastAPI/Jinja stack without requiring React, Vite, SPA routing, or a Node-based frontend build pipeline
+- **THEN** the Jinja dashboard fallback, setup, settings, sessions, alarms, login, and other non-migrated pages SHALL remain renderable through the existing FastAPI/Jinja stack without requiring React, Vite, SPA routing, or a Node-based frontend build pipeline
 
 #### Scenario: React-migrated pages may own route rendering
 - **WHEN** a page is explicitly migrated into the React Portal shell by an accepted OpenSpec change

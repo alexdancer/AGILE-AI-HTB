@@ -15,7 +15,7 @@ SECRET_TEXT_PATTERN = re.compile(
 )
 
 
-def safe_evidence(value: Any, key_hint: str = "") -> Any:
+def safe_evidence(value: Any, key_hint: str = "", *, max_length: int = 1000) -> Any:
     secret_terms = {"api_key", "key", "secret", "password", "authorization"}
     if isinstance(value, dict):
         safe = {}
@@ -27,15 +27,15 @@ def safe_evidence(value: Any, key_hint: str = "") -> Any:
                 any(term in normalized_key for term in secret_terms) or "token" in normalized_key
             ):
                 continue
-            safe[key] = safe_evidence(nested, str(key))
+            safe[key] = safe_evidence(nested, str(key), max_length=max_length)
         return safe
     if isinstance(value, list):
-        return [safe_evidence(item, key_hint) for item in value]
+        return [safe_evidence(item, key_hint, max_length=max_length) for item in value]
     if isinstance(value, str):
         redacted = redact_native_cli_text(SECRET_TEXT_PATTERN.sub("***REDACTED***", value))
         if redacted != value or value.startswith("sk_") or "secret" in value.lower():
-            return "***REDACTED***" if redacted == value else redacted[:1000]
-        return value[:1000]
+            return "***REDACTED***" if redacted == value else redacted[:max_length]
+        return value[:max_length]
     return value
 
 

@@ -15,10 +15,10 @@ import { useResource } from "../useResource.js";
 // full-page anchors so the browser loads the server-rendered page.
 //
 // Props:
-//   activeView: "home" | "workspace" | "board"
+//   activeView: "dashboard" | "workspace" | "board"
 //   activeProjectId: string | null
-export default function Shell({ children, activeView, activeProjectId }) {
-  const { data, error, loading } = useResource("/api/portal/nav");
+export default function Shell({ children, activeView, activeProjectId, refreshKey = 0 }) {
+  const { data, error, loading } = useResource("/api/portal/nav", refreshKey);
 
   return (
     <div className="shell">
@@ -87,10 +87,7 @@ export function Sidebar({ activeView, activeProjectId, data, error, loading }) {
               </React.Fragment>
             );
           })}
-          <a
-            href="/projects"
-            className={`sidebar-action${activeView === "home" && !activeProjectId ? " active" : ""}`}
-          >
+          <a href="/projects" className="sidebar-action">
             + Open local repo
           </a>
         </div>
@@ -102,7 +99,12 @@ export function Sidebar({ activeView, activeProjectId, data, error, loading }) {
 
         <div className="group">Governance</div>
         <nav>
-          <a href="/dashboard">Dashboard</a>
+          <AppLink
+            to="/app"
+            className={activeView === "dashboard" ? "active" : ""}
+          >
+            Dashboard
+          </AppLink>
           <a href="/sessions">Sessions</a>
           <a href="/alarms">Alarms</a>
         </nav>

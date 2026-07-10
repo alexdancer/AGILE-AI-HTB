@@ -2,18 +2,18 @@ import React from "react";
 
 import { NavContext } from "./nav.jsx";
 import Shell from "./components/Shell.jsx";
-import Home from "./views/Home.jsx";
+import Dashboard from "./views/Dashboard.jsx";
 import Workspace from "./views/Workspace.jsx";
 import Board from "./views/Board.jsx";
 
 // The shell is served under /app. Client routes mirror the Jinja URLs so the
 // two surfaces stay legible during migration:
-//   /app                      -> React home / project picker
+//   /app                      -> React dashboard
 //   /app/projects/:id         -> React project workspace
 //   /app/projects/:id/board   -> React project board shell
 export function parseRoute(pathname) {
   const normalized = pathname.replace(/\/$/, "");
-  if (normalized === "/app") return { view: "home" };
+  if (normalized === "/app") return { view: "dashboard" };
 
   const board = normalized.match(/^\/app\/projects\/([^/]+)\/board$/);
   if (board) return { view: "board", projectId: board[1] };
@@ -29,6 +29,7 @@ export default function App() {
   // forward. Deep links to the three declared React routes still work because
   // FastAPI serves this same index for each route on a full load.
   const [path, setPath] = React.useState(window.location.pathname);
+  const [navRefreshKey, setNavRefreshKey] = React.useState(0);
 
   React.useEffect(() => {
     const onPopState = () => setPath(window.location.pathname);
@@ -45,21 +46,31 @@ export default function App() {
   const activeProjectId = route.projectId || null;
   let content;
   if (route.view === "workspace") {
-    content = <Workspace projectId={route.projectId} />;
+    content = (
+      <Workspace
+        key={route.projectId}
+        projectId={route.projectId}
+        onProjectRestored={() => setNavRefreshKey((current) => current + 1)}
+      />
+    );
   } else if (route.view === "board") {
     content = <Board projectId={route.projectId} />;
-  } else if (route.view === "home") {
-    content = <Home />;
+  } else if (route.view === "dashboard") {
+    content = <Dashboard />;
   } else {
     content = (
       <div className="notice danger">
-        This React Portal route does not exist. <a href="/app">Open projects</a>.
+        This React Portal route does not exist. <a href="/app">Open dashboard</a>.
       </div>
     );
   }
   return (
     <NavContext.Provider value={navigate}>
-      <Shell activeView={route.view} activeProjectId={activeProjectId}>
+      <Shell
+        activeView={route.view}
+        activeProjectId={activeProjectId}
+        refreshKey={navRefreshKey}
+      >
         {content}
       </Shell>
     </NavContext.Provider>

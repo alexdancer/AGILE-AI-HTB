@@ -6,6 +6,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -123,7 +124,16 @@ def update_task(task_id: str, payload: TaskUpdateRequest, request: Request) -> d
 
 @router.post("/tasks/{task_id}/launch", dependencies=[Depends(require_portal_auth)])
 async def launch_task_endpoint(task_id: str, request: Request):
-    payload, wants_html = await _launch_payload_from_request(request)
+    try:
+        payload, wants_html = await _launch_payload_from_request(request)
+    except HTTPException as exc:
+        if _wants_react_json(request):
+            return _react_action_outcome(
+                ok=False,
+                error=_http_exception_message(exc),
+                status_code=exc.status_code,
+            )
+        raise
     database_path = request.app.state.settings.database_path
     runner = getattr(request.app.state, "task_launch_runner", None)
     try:
@@ -144,16 +154,27 @@ async def launch_task_endpoint(task_id: str, request: Request):
             runner=runner,
         )
     except KeyError as exc:
+        if _wants_react_json(request):
+            return _react_action_outcome(ok=False, error="task not found", status_code=404)
         raise HTTPException(status_code=404, detail="task not found") from exc
     except TaskLaunchBlocked as exc:
+        diagnostic = (exc.task.get("metadata") or {}).get("launch_diagnostic")
+        diagnostic = diagnostic if isinstance(diagnostic, dict) else {}
         if wants_html:
             redirect_path = _board_redirect_for_task(exc.task, payload.project_id)
             if exc.task.get("metadata", {}).get("launch_retryable"):
                 # Retryable launch failures already annotate the card; avoid a noisy banner.
                 return RedirectResponse(redirect_path, status_code=303)
-            from urllib.parse import quote
             error_msg = "; ".join(exc.reasons) if exc.reasons else "Launch failed."
             return RedirectResponse(f"{redirect_path}?error={quote(error_msg)}", status_code=303)
+        if _wants_react_json(request):
+            return _react_action_outcome(
+                ok=False,
+                error="; ".join(exc.reasons) or "Launch failed.",
+                setup_href=diagnostic.get("setup_href")
+                or (f"/settings/workers?adapter_id={quote(payload.adapter_id)}" if payload.adapter_id else "/settings/workers"),
+                status_code=exc.status_code,
+            )
         return JSONResponse(
             status_code=exc.status_code,
             content={
@@ -164,29 +185,60 @@ async def launch_task_endpoint(task_id: str, request: Request):
         )
     if wants_html:
         return RedirectResponse(_board_redirect_for_task(result.task, payload.project_id), status_code=303)
+    if _wants_react_json(request):
+        return _react_action_outcome(ok=True, task=result.task)
     return result.as_response()
 
 
 @router.post("/tasks/{task_id}/refresh", dependencies=[Depends(require_portal_auth)])
 async def refresh_task_endpoint(task_id: str, request: Request):
+    content_type = request.headers.get("content-type", "")
+    is_form = "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type
+    form = await request.form() if is_form else None
+    project_id = _form_project_id(form) if form is not None else None
+    wants_html = _wants_html(request) or (is_form and not _wants_react_json(request))
     try:
         database_path = request.app.state.settings.database_path
         db.mark_stale_worker_runs_interrupted(database_path)
+        current = db.get_task(database_path, task_id)
+        _ensure_task_project_binding(current, project_id)
         task = refresh_task_from_session(database_path, task_id)
-        if "text/html" in request.headers.get("accept", ""):
-            form = await request.form()
-            return RedirectResponse(_board_redirect_for_task(task, _form_project_id(form)), status_code=303)
+        if wants_html:
+            return RedirectResponse(_board_redirect_for_task(task, project_id), status_code=303)
+        if _wants_react_json(request):
+            return _react_action_outcome(ok=True, task=task)
         return task
     except KeyError as exc:
+        if _wants_react_json(request):
+            return _react_action_outcome(ok=False, error="task not found", status_code=404)
         raise HTTPException(status_code=404, detail="task not found") from exc
+    except ValueError as exc:
+        if wants_html:
+            return RedirectResponse(
+                f"{_project_board_path(project_id)}?error={quote(str(exc))}",
+                status_code=303,
+            )
+        if _wants_react_json(request):
+            return _react_action_outcome(ok=False, error=str(exc), status_code=409)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/tasks/{task_id}/review", dependencies=[Depends(require_portal_auth)])
 async def review_task_endpoint(task_id: str, request: Request):
-    payload, wants_html = await _review_action_payload_from_request(request)
+    try:
+        payload, wants_html = await _review_action_payload_from_request(request)
+    except HTTPException as exc:
+        if _wants_react_json(request):
+            return _react_action_outcome(
+                ok=False,
+                error=_http_exception_message(exc),
+                status_code=exc.status_code,
+            )
+        raise
     database_path = request.app.state.settings.database_path
     try:
         task = db.get_task(database_path, task_id)
+        _ensure_task_project_binding(task, payload.project_id)
         _ensure_review_task(task, database_path)
         if payload.action == "save_prompt":
             updated = _save_review_prompt(database_path, task, payload.review_prompt)
@@ -199,16 +251,22 @@ async def review_task_endpoint(task_id: str, request: Request):
         else:  # pragma: no cover - pydantic validation prevents this
             raise HTTPException(status_code=422, detail="unsupported review action")
     except KeyError as exc:
+        if _wants_react_json(request):
+            return _react_action_outcome(ok=False, error="task not found", status_code=404)
         raise HTTPException(status_code=404, detail="task not found") from exc
     except ValueError as exc:
         if wants_html:
             from urllib.parse import quote
 
             return RedirectResponse(f"{_board_redirect_for_task(task, payload.project_id)}?error={quote(str(exc))}", status_code=303)
+        if _wants_react_json(request):
+            return _react_action_outcome(ok=False, error=str(exc), status_code=409)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     if wants_html:
         return RedirectResponse(_board_redirect_for_task(updated, payload.project_id), status_code=303)
+    if _wants_react_json(request):
+        return _react_action_outcome(ok=True, task=updated)
     return updated
 
 
@@ -331,8 +389,8 @@ async def estimate_form(
     request: Request,
     description: str = Form(""),
     markdown_file: UploadFile | None = File(None),
-) -> RedirectResponse:
-    """HTML form intake: POST plain text or Markdown → estimate → redirect to board."""
+):
+    """HTML or negotiated JSON intake: plain text estimates; Markdown is review-first."""
     return await _estimate_form_for_project(request, description=description, markdown_file=markdown_file)
 
 
@@ -342,7 +400,7 @@ async def project_estimate_form(
     request: Request,
     description: str = Form(""),
     markdown_file: UploadFile | None = File(None),
-) -> RedirectResponse:
+):
     return await _estimate_form_for_project(
         request,
         description=description,
@@ -357,21 +415,36 @@ async def _estimate_form_for_project(
     description: str,
     markdown_file: UploadFile | None,
     project_id: str | None = None,
-) -> RedirectResponse:
+):
+    wants_json = _wants_react_json(request)
     project_metadata: dict[str, Any] = {}
     board_path = "/board"
     if project_id:
+        board_path = f"/projects/{project_id}/board"
         try:
             project = db.get_connected_project(request.app.state.settings.database_path, project_id)
         except KeyError as exc:
+            if wants_json:
+                return _react_action_outcome(
+                    ok=False,
+                    error="connected project not found",
+                    status_code=404,
+                )
             raise HTTPException(status_code=404, detail="connected project not found") from exc
+        if db.project_is_archived(project):
+            error = "restore archived project before adding tasks"
+            if wants_json:
+                return _react_action_outcome(ok=False, error=error, status_code=409)
+            return RedirectResponse(
+                f"{board_path}?error={quote(error)}",
+                status_code=303,
+            )
         project_metadata = project_task_metadata(project)
-        board_path = f"/projects/{project_id}/board"
     try:
         normalized_description, intake_metadata = await _description_from_intake_form(description, markdown_file)
     except ValueError as exc:
-        from urllib.parse import quote
-
+        if wants_json:
+            return _react_action_outcome(ok=False, error=str(exc), status_code=422)
         return RedirectResponse(f"{board_path}?error={quote(str(exc))}", status_code=303)
 
     intake_metadata = _with_single_project_default(
@@ -382,9 +455,14 @@ async def _estimate_form_for_project(
     if _requires_task_breakdown_review(normalized_description, intake_metadata):
         # Large or Markdown-shaped intake is reviewed before it becomes board cards.
         breakdown = await _create_task_breakdown_review(request, normalized_description, intake_metadata)
-        return RedirectResponse(f"/task-breakdowns/{breakdown['id']}/review", status_code=303)
+        review_href = f"/task-breakdowns/{breakdown['id']}/review"
+        if wants_json:
+            return _react_action_outcome(ok=True, next_href=review_href)
+        return RedirectResponse(review_href, status_code=303)
 
-    await _estimate_and_create_task(request, normalized_description, extra_metadata=intake_metadata)
+    task = await _estimate_and_create_task(request, normalized_description, extra_metadata=intake_metadata)
+    if wants_json:
+        return _react_action_outcome(ok=True, task=task)
     return RedirectResponse(board_path, status_code=303)
 
 
@@ -895,8 +973,20 @@ async def _description_from_intake_form(
 
 
 def _looks_like_markdown(text: str) -> bool:
-    markdown_markers = ("# ", "## ", "- [ ]", "- [x]", "```", "\n- ", "\n* ", "\n1. ")
-    return any(marker in text for marker in markdown_markers)
+    markdown_patterns = (
+        r"(?m)^\s{0,3}#{1,6}\s+",
+        r"(?m)^\s{0,3}(?:[-+*]\s+|\d+[.)]\s+|>\s*)",
+        r"(?m)^\s{0,3}(?:```|~~~)",
+        r"(?m)^\s{0,3}(?:[-*_]\s*){3,}$",
+        r"!?\[[^\]]+\]\([^\)]+\)",
+        r"(?:\*\*|__)[^\n]+?(?:\*\*|__)",
+        r"(?<!\*)\*[^*\n]+\*(?!\*)|(?<![\w_])_[^\n]+?_(?![\w_])",
+        r"`+[^`\n]+`+",
+        r"~~[^\n]+?~~",
+        r"<(?:https?://|mailto:)[^>\n]+>",
+        r"(?m)^\s*\|?.+\|.+\n\s*\|?\s*:?-{3,}",
+    )
+    return any(re.search(pattern, text) for pattern in markdown_patterns)
 
 
 def _markdown_task_items(description: str) -> list[str]:
@@ -928,8 +1018,7 @@ def _markdown_source_title(description: str) -> str | None:
 
 async def _review_action_payload_from_request(request: Request) -> tuple[TaskReviewActionRequest, bool]:
     content_type = request.headers.get("content-type", "")
-    accept = request.headers.get("accept", "")
-    wants_html = "text/html" in accept and "application/json" not in accept
+    wants_html = _wants_html(request)
     if "application/json" in content_type:
         try:
             return TaskReviewActionRequest.model_validate(await request.json()), False
@@ -939,7 +1028,7 @@ async def _review_action_payload_from_request(request: Request) -> tuple[TaskRev
         form = await request.form()
         raw = {key: value for key, value in form.items() if value is not None}
         try:
-            return TaskReviewActionRequest.model_validate(raw), True
+            return TaskReviewActionRequest.model_validate(raw), not _wants_react_json(request)
         except ValidationError as exc:
             raise HTTPException(status_code=422, detail=exc.errors()) from exc
     try:
@@ -1286,6 +1375,15 @@ def _form_project_id(form: Any) -> str | None:
     return str(value) if value else None
 
 
+def _ensure_task_project_binding(task: dict[str, Any], project_id: str | None) -> None:
+    if not project_id:
+        return
+    raw_metadata = task.get("metadata")
+    metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+    if str(metadata.get("connected_project_id") or "") != str(project_id):
+        raise ValueError("Task does not belong to the selected project.")
+
+
 def _project_board_path(project_id: str | None) -> str:
     if project_id:
         return f"/projects/{project_id}/board"
@@ -1314,8 +1412,7 @@ def _breakdown_board_path(breakdown: dict[str, Any]) -> str:
 
 async def _launch_payload_from_request(request: Request) -> tuple[TaskLaunchRequest, bool]:
     content_type = request.headers.get("content-type", "")
-    accept = request.headers.get("accept", "")
-    wants_html = "text/html" in accept and "application/json" not in accept
+    wants_html = _wants_html(request)
     if "application/json" in content_type:
         raw = await request.json()
         try:
@@ -1338,11 +1435,72 @@ async def _launch_payload_from_request(request: Request) -> tuple[TaskLaunchRequ
         raw["native_budget_acknowledged"] = "native_budget_acknowledged" in raw
         raw.setdefault("proxy_url", DEFAULT_PROXY_URL)
         try:
-            return TaskLaunchRequest.model_validate(raw), True
+            return TaskLaunchRequest.model_validate(raw), not _wants_react_json(request)
         except ValidationError as exc:
             raise HTTPException(status_code=422, detail=exc.errors()) from exc
 
     return TaskLaunchRequest(proxy_url=DEFAULT_PROXY_URL), wants_html
+
+
+def _wants_html(request: Request) -> bool:
+    return _accepts_media_type(request, "text/html") and not _wants_react_json(request)
+
+
+def _wants_react_json(request: Request) -> bool:
+    return _accepts_media_type(request, "application/json")
+
+
+def _accepts_media_type(request: Request, media_type: str) -> bool:
+    for media_range in request.headers.get("accept", "").split(","):
+        parts = [part.strip() for part in media_range.split(";")]
+        if not parts or parts[0].lower() != media_type:
+            continue
+        quality = 1.0
+        for parameter in parts[1:]:
+            name, separator, value = parameter.partition("=")
+            if separator and name.strip().lower() == "q":
+                try:
+                    quality = float(value.strip())
+                except ValueError:
+                    quality = 0.0
+        if quality > 0:
+            return True
+    return False
+
+
+def _react_action_outcome(
+    *,
+    ok: bool,
+    error: str | None = None,
+    setup_href: str | None = None,
+    next_href: str | None = None,
+    task: dict[str, Any] | None = None,
+    status_code: int = 200,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "ok": ok,
+            "error": str(_safe_review_value(error)) if error else None,
+            "setup_href": setup_href,
+            "next_href": next_href,
+            "task": {"id": task.get("id"), "status": task.get("status")} if task else None,
+        },
+    )
+
+
+def _http_exception_message(exc: HTTPException) -> str:
+    if not isinstance(exc.detail, list):
+        return str(exc.detail)
+    messages: list[str] = []
+    for item in exc.detail:
+        if not isinstance(item, dict):
+            messages.append(str(item))
+            continue
+        location = ".".join(str(part) for part in item.get("loc", []) if part != "body")
+        message = str(item.get("msg") or "Invalid value")
+        messages.append(f"{location}: {message}" if location else message)
+    return "; ".join(messages) or "Invalid request"
 
 
 def _initial_task_status_and_metadata(

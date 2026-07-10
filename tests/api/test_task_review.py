@@ -229,6 +229,126 @@ def test_review_action_save_prompt_and_mark_done_preserve_completed_session_evid
     assert body["metadata"]["review_decision"] == "accepted"
     assert body["metadata"]["reviewed_by"] == "operator"
 
+
+@pytest.mark.parametrize(("accept", "react_json"), [(None, False), ("application/json", True)])
+def test_review_form_without_json_accept_preserves_redirect(
+    tmp_path, monkeypatch, accept, react_json
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        session = db.create_session(
+            database_path,
+            task_description="Review through browser form",
+            model="5.4",
+            session_key_hash="f" * 64,
+            guardrail_overrides={},
+            status="completed",
+        )
+        task = db.create_task(
+            database_path,
+            description="Review through browser form",
+            status="Review",
+            estimate_tokens=8000,
+            recommended_model="5.4",
+            session_id=session["id"],
+        )
+
+        headers = _auth_headers()
+        if accept:
+            headers["accept"] = accept
+        response = client.post(
+            f"/tasks/{task['id']}/review",
+            headers=headers,
+            data={"action": "mark_done"},
+            follow_redirects=False,
+        )
+
+    if react_json:
+        assert response.status_code == 200
+        assert response.json() == {
+            "ok": True,
+            "error": None,
+            "setup_href": None,
+            "next_href": None,
+            "task": {"id": task["id"], "status": "Done"},
+        }
+    else:
+        assert response.status_code == 303
+        assert response.headers["location"] == "/board"
+
+
+def test_react_review_rejects_cross_project_task_binding(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = db.list_connected_projects(database_path)[0]
+        session = db.create_session(
+            database_path,
+            task_description="Project-bound DEMO review",
+            model="5.4",
+            session_key_hash="p" * 64,
+            guardrail_overrides={},
+            status="completed",
+        )
+        task = db.create_task(
+            database_path,
+            description="Project-bound DEMO review",
+            status="Review",
+            estimate_tokens=8000,
+            recommended_model="5.4",
+            session_id=session["id"],
+            metadata=project_task_metadata(project),
+        )
+
+        response = client.post(
+            f"/tasks/{task['id']}/review",
+            headers={**_auth_headers(), "accept": "application/json"},
+            data={"action": "mark_done", "project_id": "proj_DEMO_999_OTHER"},
+        )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "ok": False,
+        "error": "Task does not belong to the selected project.",
+        "setup_href": None,
+        "next_href": None,
+        "task": None,
+    }
+    assert db.get_task(database_path, task["id"])["status"] == "Review"
+
+
+def test_react_review_validation_error_uses_stable_outcome(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/tasks/task_DEMO_999/review",
+            headers={**_auth_headers(), "accept": "application/json"},
+            data={"action": "not-supported"},
+        )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert set(body) == {"ok", "error", "setup_href", "next_href", "task"}
+    assert body["ok"] is False
+    assert "action" in body["error"]
+
+
+def test_react_review_missing_task_uses_stable_outcome(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/tasks/task_DEMO_999_MISSING/review",
+            headers={**_auth_headers(), "accept": "application/json"},
+            data={"action": "save_prompt", "review_prompt": "Check DEMO contract 2099"},
+        )
+
+    assert response.status_code == 404
+    body = response.json()
+    assert body["ok"] is False
+    assert body["error"] == "task not found"
+
+
 def test_review_action_block_requires_reason_and_records_operator_decision(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
@@ -255,6 +375,11 @@ def test_review_action_block_requires_reason_and_records_operator_decision(tmp_p
             headers=_auth_headers(),
             json={"action": "block"},
         )
+        react_missing_reason = client.post(
+            f"/tasks/{task['id']}/review",
+            headers={**_auth_headers(), "accept": "application/json"},
+            json={"action": "block"},
+        )
         blocked = client.post(
             f"/tasks/{task['id']}/review",
             headers=_auth_headers(),
@@ -262,6 +387,15 @@ def test_review_action_block_requires_reason_and_records_operator_decision(tmp_p
         )
 
     assert missing_reason.status_code == 409
+    assert missing_reason.json() == {"detail": "Blocked Review tasks require a reason."}
+    assert react_missing_reason.status_code == 409
+    assert react_missing_reason.json() == {
+        "ok": False,
+        "error": "Blocked Review tasks require a reason.",
+        "setup_href": None,
+        "next_href": None,
+        "task": None,
+    }
     assert blocked.status_code == 200
     body = blocked.json()
     assert body["status"] == "Blocked"

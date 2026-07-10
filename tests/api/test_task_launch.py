@@ -266,6 +266,11 @@ def test_launch_blocks_unverified_adapter_without_session_or_runner(tmp_path, mo
             headers=_auth_headers(),
             json={"adapter_id": "codex", "proxy_url": "http://127.0.0.1:8000/v1"},
         )
+        react_response = client.post(
+            f"/tasks/{task['id']}/launch",
+            headers={**_auth_headers(), "accept": "application/json"},
+            json={"adapter_id": "codex", "proxy_url": "http://127.0.0.1:8000/v1"},
+        )
         board = client.get("/board", headers=_auth_headers())
         with db.connect(tmp_path / "harness.db") as conn:
             sessions = conn.execute("select * from sessions").fetchall()
@@ -276,9 +281,48 @@ def test_launch_blocks_unverified_adapter_without_session_or_runner(tmp_path, mo
     assert body["task"]["session_id"] is None
     assert "Token tracking has not been verified" in body["launch_guardrails"]["reasons"][0]
     assert body["task"]["metadata"]["launch_blocked_reason"] == "Token tracking has not been verified for this adapter."
+    assert react_response.status_code == 409
+    assert react_response.json() == {
+        "ok": False,
+        "error": "Token tracking has not been verified for this adapter.",
+        "setup_href": "/settings/workers?adapter_id=codex",
+        "next_href": None,
+        "task": None,
+    }
     assert runner_calls == []
     assert sessions == []
     assert "Token tracking has not been verified for this adapter." in board.text
+
+
+def test_react_launch_validation_error_uses_stable_outcome(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/tasks/task_DEMO_999/launch",
+            headers={**_auth_headers(), "accept": "application/json"},
+            data={"estimate_tokens": "not-an-integer"},
+        )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert set(body) == {"ok", "error", "setup_href", "next_href", "task"}
+    assert body["ok"] is False
+    assert "estimate_tokens" in body["error"]
+
+
+def test_react_launch_missing_task_uses_stable_outcome(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/tasks/task_DEMO_999_MISSING/launch",
+            headers={**_auth_headers(), "accept": "application/json"},
+            data={},
+        )
+
+    assert response.status_code == 404
+    body = response.json()
+    assert body["ok"] is False
+    assert body["error"] == "task not found"
 
 def test_codex_launch_rejects_disallowed_model_before_runner(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
@@ -421,7 +465,13 @@ def test_launch_sanitizes_runner_output_everywhere(tmp_path, monkeypatch):
     assert "FAKESECRET2099" not in serialized
     assert "***REDACTED***" in serialized
 
-def test_board_form_launch_uses_default_proxy_for_verified_default_adapter(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("accept", "react_json"),
+    [("text/html", False), (None, False), ("application/json", True)],
+)
+def test_board_form_launch_uses_default_proxy_for_verified_default_adapter(
+    tmp_path, monkeypatch, accept, react_json
+):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     runner_calls = []
 
@@ -459,17 +509,30 @@ def test_board_form_launch_uses_default_proxy_for_verified_default_adapter(tmp_p
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
 
+        headers = _auth_headers()
+        if accept is not None:
+            headers["accept"] = accept
         response = client.post(
             f"/tasks/{task['id']}/launch",
-            headers={**_auth_headers(), "accept": "text/html"},
-            data={},
+            headers=headers,
+            data={"project_id": task["metadata"]["connected_project_id"]},
             follow_redirects=False,
         )
         _wait_for_worker_run(tmp_path / "harness.db", task["id"], "completed")
         refreshed = db.get_task(tmp_path / "harness.db", task["id"])
 
-    assert response.status_code == 303
-    assert response.headers["location"] == f"/projects/{task['metadata']['connected_project_id']}/board"
+    if react_json:
+        assert response.status_code == 200
+        assert response.json() == {
+            "ok": True,
+            "error": None,
+            "setup_href": None,
+            "next_href": None,
+            "task": {"id": task["id"], "status": "Running"},
+        }
+    else:
+        assert response.status_code == 303
+        assert response.headers["location"] == f"/projects/{task['metadata']['connected_project_id']}/board"
     assert refreshed["status"] == "Review"
     assert len(runner_calls) == 1
     assert runner_calls[0].env["OPENAI_BASE_URL"] == "http://127.0.0.1:8000/v1"
@@ -849,6 +912,55 @@ def test_project_board_live_refresh_controls_and_status_endpoint(tmp_path, monke
     assert body["queue_active"] is False
 
 
+@pytest.mark.parametrize("matching_project", [True, False])
+def test_react_refresh_returns_stable_json_outcome(tmp_path, monkeypatch, matching_project):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = db.list_connected_projects(database_path)[0]
+        session = db.create_session(
+            database_path,
+            task_description="Refresh completed DEMO task",
+            model="gpt-5.4",
+            session_key_hash="r" * 64,
+            guardrail_overrides={},
+            status="completed",
+        )
+        task = db.create_task(
+            database_path,
+            description="Refresh completed DEMO task",
+            status="Running",
+            session_id=session["id"],
+            metadata=project_task_metadata(project),
+        )
+
+        response = client.post(
+            f"/tasks/{task['id']}/refresh",
+            headers={**_auth_headers(), "accept": "application/json"},
+            data={"project_id": project["id"] if matching_project else "proj_DEMO_999_OTHER"},
+        )
+
+    if matching_project:
+        assert response.status_code == 200
+        assert response.json() == {
+            "ok": True,
+            "error": None,
+            "setup_href": None,
+            "next_href": None,
+            "task": {"id": task["id"], "status": "Done"},
+        }
+    else:
+        assert response.status_code == 409
+        assert response.json() == {
+            "ok": False,
+            "error": "Task does not belong to the selected project.",
+            "setup_href": None,
+            "next_href": None,
+            "task": None,
+        }
+        assert db.get_task(database_path, task["id"])["status"] == "Running"
+
+
 def test_project_board_status_endpoint_reports_terminal_worker_run_without_manual_refresh(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
 
@@ -903,7 +1015,10 @@ def test_project_board_status_endpoint_reports_terminal_worker_run_without_manua
     assert body["has_active_runs"] is False
 
 
-def test_project_run_next_launches_one_project_task_with_automation_metadata(tmp_path, monkeypatch):
+@pytest.mark.parametrize("react_json", [False, True])
+def test_project_run_next_launches_one_project_task_with_automation_metadata(
+    tmp_path, monkeypatch, react_json
+):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     runner_calls = []
 
@@ -950,18 +1065,87 @@ def test_project_run_next_launches_one_project_task_with_automation_metadata(tmp
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
 
+        headers = _auth_headers()
+        if react_json:
+            headers["accept"] = "application/json"
         response = client.post(
             f"/projects/{project['id']}/run-next",
-            headers=_auth_headers(),
+            headers=headers,
             follow_redirects=False,
         )
         _wait_for_worker_run(tmp_path / "harness.db", first["id"], "completed")
 
-    assert response.status_code == 303
-    assert response.headers["location"] == f"/projects/{project['id']}/board"
+    if react_json:
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body) == {
+            "ok",
+            "error",
+            "setup_href",
+            "next_href",
+            "task",
+            "automation",
+        }
+        assert {key: body[key] for key in ("ok", "error", "setup_href", "next_href", "task")} == {
+            "ok": True,
+            "error": None,
+            "setup_href": None,
+            "next_href": None,
+            "task": {"id": first["id"], "status": "Running"},
+        }
+        assert body["automation"]["status"] == "idle"
+    else:
+        assert response.status_code == 303
+        assert response.headers["location"] == f"/projects/{project['id']}/board"
     assert len(runner_calls) == 1
     assert db.get_task(tmp_path / "harness.db", first["id"])["metadata"]["automation_source"] == "run_next"
     assert db.get_task(tmp_path / "harness.db", second["id"])["status"] == "Estimated"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/projects/proj_DEMO_999_MISSING/run-next",
+        "/projects/proj_DEMO_999_MISSING/queue/start",
+        "/projects/proj_DEMO_999_MISSING/queue/stop",
+        "/projects/proj_DEMO_999_MISSING/tasks/archive-done",
+        "/projects/proj_DEMO_999_MISSING/tasks/task_DEMO_999/archive",
+    ],
+)
+def test_react_project_board_actions_return_stable_missing_project_outcome(
+    tmp_path, monkeypatch, path
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.post(
+            path,
+            headers={**_auth_headers(), "accept": "application/json"},
+        )
+
+    assert response.status_code == 404
+    body = response.json()
+    assert set(body) >= {"ok", "error", "setup_href", "next_href", "task"}
+    assert body["ok"] is False
+    assert body["error"] == "connected project not found"
+
+
+def test_react_project_board_action_returns_stable_archived_project_outcome(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = db.list_connected_projects(database_path)[0]
+        db.archive_connected_project(database_path, project["id"])
+        response = client.post(
+            f"/projects/{project['id']}/run-next",
+            headers={**_auth_headers(), "accept": "application/json"},
+        )
+
+    assert response.status_code == 409
+    body = response.json()
+    assert body["ok"] is False
+    assert body["error"] == "restore archived project before launching active work"
 
 
 def test_project_run_queue_launches_next_after_review_without_cross_project_fallback(tmp_path, monkeypatch):
@@ -1110,9 +1294,18 @@ def test_project_run_queue_stops_on_observed_only_adapter(tmp_path, monkeypatch)
         _configure_codex_worker(tmp_path / "harness.db", tmp_path, tracking_mode="observed_only")
 
         start = client.post(f"/projects/{project['id']}/queue/start", headers=_auth_headers(), follow_redirects=False)
+        react_start = client.post(
+            f"/projects/{project['id']}/queue/start",
+            headers={**_auth_headers(), "accept": "application/json"},
+        )
         body = client.get(f"/projects/{project['id']}/board/status", headers=_auth_headers()).json()
 
     assert start.status_code == 303
+    assert react_start.status_code == 409
+    react_body = react_start.json()
+    assert react_body["ok"] is False
+    assert react_body["setup_href"] == "/settings/workers"
+    assert react_body["automation"]["latest_stop_reason"] == "launch_guardrail_blocked"
     assert body["queue"]["status"] == "stopped"
     assert body["queue"]["latest_stop_reason"] == "launch_guardrail_blocked"
 
@@ -1209,19 +1402,45 @@ def test_project_run_queue_stops_retryable_task_with_stale_active_worker_pointer
     assert body["queue"]["latest_stop_reason"] == "retryable_failure"
 
 
-def test_project_run_queue_no_eligible_and_operator_stop_reasons(tmp_path, monkeypatch):
+@pytest.mark.parametrize("react_json", [False, True])
+def test_project_run_queue_no_eligible_and_operator_stop_reasons(tmp_path, monkeypatch, react_json):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    headers = _auth_headers()
+    if react_json:
+        headers["accept"] = "application/json"
     with _client(tmp_path) as client:
         project = db.list_connected_projects(tmp_path / "harness.db")[0]
-        start = client.post(f"/projects/{project['id']}/queue/start", headers=_auth_headers(), follow_redirects=False)
+        start = client.post(f"/projects/{project['id']}/queue/start", headers=headers, follow_redirects=False)
         no_eligible = client.get(f"/projects/{project['id']}/board/status", headers=_auth_headers()).json()
-        stop = client.post(f"/projects/{project['id']}/queue/stop", headers=_auth_headers(), follow_redirects=False)
+        stop = client.post(f"/projects/{project['id']}/queue/stop", headers=headers, follow_redirects=False)
         stopped = client.get(f"/projects/{project['id']}/board/status", headers=_auth_headers()).json()
         board = client.get(f"/projects/{project['id']}/board", headers=_auth_headers())
 
-    assert start.status_code == 303
+    assert start.status_code == (200 if react_json else 303)
+    if react_json:
+        start_body = start.json()
+        assert {key: start_body[key] for key in ("ok", "error", "setup_href", "next_href", "task")} == {
+            "ok": True,
+            "error": None,
+            "setup_href": None,
+            "next_href": None,
+            "task": None,
+        }
+        assert start_body["automation"]["status"] == "stopped"
+        assert start_body["automation"]["latest_stop_reason"] == "completed_no_eligible_tasks"
     assert no_eligible["queue"]["latest_stop_reason"] == "completed_no_eligible_tasks"
-    assert stop.status_code == 303
+    assert stop.status_code == (200 if react_json else 303)
+    if react_json:
+        stop_body = stop.json()
+        assert {key: stop_body[key] for key in ("ok", "error", "setup_href", "next_href", "task")} == {
+            "ok": True,
+            "error": None,
+            "setup_href": None,
+            "next_href": None,
+            "task": None,
+        }
+        assert stop_body["automation"]["status"] == "stopped"
+        assert stop_body["automation"]["latest_stop_reason"] == "operator_stop"
     assert stopped["queue"]["latest_stop_reason"] == "operator_stop"
     assert "operator_stop" in board.text
     assert "Queue: stopped" in board.text
