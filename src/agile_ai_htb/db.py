@@ -363,6 +363,7 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
                 failure_type text,
                 failure_message text,
                 created_task_ids_json text not null default '[]',
+                revision integer not null default 0,
                 created_at text not null,
                 updated_at text not null
             )
@@ -376,6 +377,8 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
             conn.execute("alter table task_breakdowns add column global_contract_summary text not null default ''")
         if "repo_context_evidence_json" not in task_breakdown_columns:
             conn.execute("alter table task_breakdowns add column repo_context_evidence_json text not null default '{}'")
+        if "revision" not in task_breakdown_columns:
+            conn.execute("alter table task_breakdowns add column revision integer not null default 0")
     conn.execute("create index if not exists idx_worker_runs_task_status on worker_runs(task_id, status)")
     conn.execute("create index if not exists idx_worker_runs_session on worker_runs(session_id)")
     conn.execute("create index if not exists idx_task_breakdowns_status on task_breakdowns(status, created_at)")
@@ -581,6 +584,7 @@ def record_checkpoint_result(
 def create_task(
     path: Path | str,
     *,
+    task_id: str | None = None,
     description: str,
     status: str = "Blocked",
     estimate_tokens: int | None = None,
@@ -589,17 +593,21 @@ def create_task(
     session_id: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    task_id = f"task_{uuid.uuid4().hex}"
+    idempotent = task_id is not None
+    task_id = task_id or f"task_{uuid.uuid4().hex}"
     if status == "Ready":
         status = "Estimated"
     with connect(path) as conn:
-        conn.execute(
-            """
+        statement = """
             insert into tasks (
                 id, description, status, estimate_tokens, recommended_model,
                 actual_tokens, session_id, metadata_json, created_at
             ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+            """
+        if idempotent:
+            statement = statement.replace("insert into", "insert or ignore into", 1)
+        conn.execute(
+            statement,
             (
                 task_id,
                 description,
@@ -687,7 +695,14 @@ def get_task_breakdown(path: Path | str, breakdown_id: str) -> dict[str, Any]:
     return _task_breakdown_from_row(row)
 
 
-def update_task_breakdown(path: Path | str, breakdown_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+def update_task_breakdown(
+    path: Path | str,
+    breakdown_id: str,
+    updates: dict[str, Any],
+    *,
+    expected_statuses: set[str] | None = None,
+    expected_revision: int | None = None,
+) -> dict[str, Any] | None:
     # Whitelist updateable fields before building SQL column assignments.
     allowed = {
         "status": "status",
@@ -732,14 +747,27 @@ def update_task_breakdown(path: Path | str, breakdown_id: str, updates: dict[str
             values.append(value)
     if not assignments:
         return get_task_breakdown(path, breakdown_id)
-    assignments.append("updated_at = ?")
+    assignments.extend(["revision = revision + 1", "updated_at = ?"])
     values.append(_now_iso())
+    predicates = ["id = ?"]
+    predicate_values: list[Any] = [breakdown_id]
+    if expected_statuses is not None:
+        if not expected_statuses:
+            return None
+        placeholders = ", ".join("?" for _ in expected_statuses)
+        predicates.append(f"status in ({placeholders})")
+        predicate_values.extend(sorted(expected_statuses))
+    if expected_revision is not None:
+        predicates.append("revision = ?")
+        predicate_values.append(expected_revision)
     with connect(path) as conn:
         cursor = conn.execute(
-            f"update task_breakdowns set {', '.join(assignments)} where id = ?",
-            (*values, breakdown_id),
+            f"update task_breakdowns set {', '.join(assignments)} where {' and '.join(predicates)}",
+            (*values, *predicate_values),
         )
         if cursor.rowcount == 0:
+            if expected_statuses is not None or expected_revision is not None:
+                return None
             raise KeyError(f"task breakdown not found: {breakdown_id}")
     return get_task_breakdown(path, breakdown_id)
 
@@ -1211,6 +1239,14 @@ def list_tasks(path: Path | str) -> list[dict[str, Any]]:
     with connect(path) as conn:
         rows = conn.execute("select * from tasks order by created_at, id").fetchall()
     return [_task_from_row(row) for row in rows]
+
+
+def list_task_ids_for_breakdown(path: Path | str, breakdown_id: str) -> list[str]:
+    return [
+        task["id"]
+        for task in list_tasks(path)
+        if str((task.get("metadata") or {}).get("task_breakdown_id") or "") == breakdown_id
+    ]
 
 
 def list_sessions(path: Path | str) -> list[dict[str, Any]]:
@@ -2033,6 +2069,7 @@ def _task_breakdown_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "failure_type": row["failure_type"],
         "failure_message": row["failure_message"],
         "created_task_ids": _from_json_list(row["created_task_ids_json"]),
+        "revision": row["revision"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }

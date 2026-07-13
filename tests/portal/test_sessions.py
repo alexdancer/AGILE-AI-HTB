@@ -1,7 +1,17 @@
 import json
 
+import pytest
+
 from agile_ai_htb import db
+from agile_ai_htb.routes import react_shell
 from tests.portal.helpers import PORTAL_TOKEN, _client, _portal_headers, _project_metadata
+
+
+@pytest.fixture(autouse=True)
+def _jinja_fallback(tmp_path, monkeypatch):
+    build_dir = tmp_path / "missing-react-build"
+    build_dir.mkdir(exist_ok=True)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
 
 
 def test_sessions_index_renders_mockup_style_session_table(tmp_path, monkeypatch):

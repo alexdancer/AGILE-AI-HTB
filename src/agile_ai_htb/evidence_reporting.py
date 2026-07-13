@@ -33,7 +33,7 @@ def safe_evidence(value: Any, key_hint: str = "", *, max_length: int = 1000) -> 
         return [safe_evidence(item, key_hint, max_length=max_length) for item in value]
     if isinstance(value, str):
         redacted = redact_native_cli_text(SECRET_TEXT_PATTERN.sub("***REDACTED***", value))
-        if redacted != value or value.startswith("sk_") or "secret" in value.lower():
+        if redacted != value or value.startswith("sk_"):
             return "***REDACTED***" if redacted == value else redacted[:max_length]
         return value[:max_length]
     return value

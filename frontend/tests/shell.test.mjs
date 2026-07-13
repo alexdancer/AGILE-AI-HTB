@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { act, create } from "react-test-renderer";
 import { createServer } from "vite";
 
 const frontendRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -18,6 +19,16 @@ let pollBoardStatus;
 let submitBoardAction;
 let WorkspaceState;
 let submitProjectRestore;
+let SessionsState;
+let SessionReportState;
+let TaskBreakdownReviewState;
+let TaskBreakdownReview;
+let submitBreakdownAction;
+let buildAcceptForm;
+let confirmReviewNavigation;
+let preventReviewUnload;
+let NavContext;
+let NavigationGuardContext;
 
 before(async () => {
   server = await createServer({
@@ -30,6 +41,17 @@ before(async () => {
   ({ DashboardState } = await server.ssrLoadModule("/src/views/Dashboard.jsx"));
   ({ BoardState, mergeBoardStatus, pollBoardStatus, submitBoardAction } = await server.ssrLoadModule("/src/views/Board.jsx"));
   ({ WorkspaceState, submitProjectRestore } = await server.ssrLoadModule("/src/views/Workspace.jsx"));
+  ({ SessionsState } = await server.ssrLoadModule("/src/views/Sessions.jsx"));
+  ({ SessionReportState } = await server.ssrLoadModule("/src/views/SessionReport.jsx"));
+  ({
+    default: TaskBreakdownReview,
+    TaskBreakdownReviewState,
+    submitBreakdownAction,
+    buildAcceptForm,
+    confirmReviewNavigation,
+    preventReviewUnload,
+  } = await server.ssrLoadModule("/src/views/TaskBreakdownReview.jsx"));
+  ({ NavContext, NavigationGuardContext } = await server.ssrLoadModule("/src/nav.jsx"));
   ({ parseRoute } = await server.ssrLoadModule("/src/App.jsx"));
 });
 
@@ -296,8 +318,48 @@ function boardData() {
   };
 }
 
+function evidencePage(items = []) {
+  return { items, pagination: { offset: 0, limit: 50, total: items.length, has_more: false, next_href: null } };
+}
+
+function sessionBounded(preview, truncated = false) {
+  return { preview, truncated, full_href: truncated ? "/api/sessions/sess-demo-999/text/task" : null };
+}
+
+function reportData() {
+  return {
+    session: { id: "sess-demo-999", kind: "Worker Session", task: sessionBounded("DEMO task 2099", true), model: "gpt-5.5", status: "running", started_at: "2099-01-01T00:00:00Z", active: true },
+    summary: {
+      selected_project: sessionBounded("DEMO project 999"), launch_target: sessionBounded("opencode run"), adapter_id: "opencode", worker_model: "gpt-5.5", tracking_mode: "native_usage", status: "running", result: sessionBounded("Worker running"), requires_review: true,
+      missing_labels: ["missing authoritative usage"], evidence_counts: { alarms: 1, checkpoints: 1, failed_checkpoints: 1, worker_runs: 1, worker_events: 1, error_events: 0 },
+    },
+    tokens: {
+      provider_totals: { prompt_tokens: 30, completion_tokens: 20, total_tokens: 50 },
+      normalized: { total_tokens: 40, by_category: { control_plane: 1, task_breakdown: 2, worker_execution: 30, adapter_verification: 3, reporting_summary: 4, other: 0 } },
+      worker_components: { available: true, items: [{ key: "cache_read", label: "cache read/reused context", value: 10 }, { key: "output", label: "output", value: 20 }], cost: 0.01, turn_count: 1 },
+      log: evidencePage([{ usage_kind: "worker", model: "gpt-5.5", prompt_tokens: 30, completion_tokens: 20, total_tokens: 50, cost: 0.01, raw_usage: sessionBounded("provider raw usage", true) }]),
+    },
+    zone_timeline: evidencePage([{ zone: "yellow", max_tokens: 2048, created_at: "2099-01-01T00:00:01Z" }]),
+    worker_timeline: evidencePage([{ created_at: "2099-01-01T00:00:02Z", level: "info", layer: "worker_harness", kind: "launch", title: "Worker launched", detail_summary: "status=running", detail: sessionBounded("timeline detail", true) }]),
+    repo_context_briefs: evidencePage([{ worker_run_id: "run-demo-999", documents: evidencePage([{ path: "AGENTS.md" }]), manifests: evidencePage(["pyproject.toml"]), text: sessionBounded("Repo Context Brief text", true) }]),
+    alarms: evidencePage([{ id: "alarm-demo-999", type: "BUDGET_YELLOW", severity: "MEDIUM", recommended_action: "Review spend", created_at: "2099-01-01T00:00:03Z" }]),
+    checkpoints: evidencePage([{ name: "budget_health", passed: false, details: sessionBounded("checkpoint detail", true) }]),
+    related_agent_review: {
+      status: "completed", recommendation: "approve", summary: sessionBounded("Agent Review summary", true), model: "claude-demo-999", reviewed_at: "2099-01-01T00:00:04Z", review_session_id: "review-demo-999", review_session_href: "/sessions/review-demo-999", review_total_tokens: 19, error: null,
+      findings: evidencePage([sessionBounded("Agent Review finding", true)]),
+    },
+    freshness: { session_id: "sess-demo-999", status: "running", active: true, version: "a".repeat(64), last_evidence_at: "2099-01-01T00:00:04Z" },
+    links: { sessions_href: "/sessions", self_href: "/sessions/sess-demo-999" },
+  };
+}
+
 test("only exact React routes are parsed as owned views", () => {
   assert.deepEqual(parseRoute("/app"), { view: "dashboard" });
+  assert.deepEqual(parseRoute("/sessions"), { view: "sessions" });
+  assert.deepEqual(parseRoute("/sessions/sess-demo-999"), {
+    view: "sessionReport",
+    sessionId: "sess-demo-999",
+  });
   assert.deepEqual(parseRoute("/app/projects/demo-999"), {
     view: "workspace",
     projectId: "demo-999",
@@ -320,6 +382,54 @@ test("Dashboard is the sole active home navigation item", () => {
   const markup = renderSidebar();
   assert.match(markup, /class="active" href="\/app">Dashboard/);
   assert.doesNotMatch(markup, /sidebar-action active/);
+});
+
+test("Sessions sidebar and list preserve compact scan, states, and pagination", () => {
+  const sidebar = renderSidebar({ activeView: "sessions" });
+  assert.match(sidebar, /class="active" href="\/sessions">Sessions/);
+  assert.doesNotMatch(sidebar, /class="active" href="\/app">Dashboard/);
+
+  const loading = renderToStaticMarkup(React.createElement(SessionsState, { data: null, error: null, loading: true }));
+  assert.match(loading, /Loading Sessions/);
+  const failed = renderToStaticMarkup(React.createElement(SessionsState, { data: null, error: new Error("secret"), loading: false }));
+  assert.match(failed, /Could not load Sessions. Retry/);
+  assert.doesNotMatch(failed, /secret/);
+  const data = {
+    sessions: [{ id: "sess-demo-999", kind: "Agent Review", task_preview: "DEMO review task", model: "claude-demo-999", status: "running", active: true, token_totals: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }, evidence_counts: { worker_runs: 1, worker_events: 2, failed_checkpoints: 1 }, current_zone: "yellow", alarm_count: 1, report_href: "/sessions/sess-demo-999" }],
+    pagination: { offset: 0, limit: 1, total: 2, has_more: true }, has_active: true, poll_after_ms: 5000,
+  };
+  const populated = renderToStaticMarkup(React.createElement(SessionsState, { data, error: null, loading: false }));
+  for (const text of ["Agent Review", "DEMO review task", "claude-demo-999", "10 prompt", "5 completion", "15 total", "1 runs", "2 events", "1 failed checks", "yellow zone", "1 alarms", "Active sessions refresh every 5 seconds", "Next sessions"]) assert.match(populated, new RegExp(text));
+  assert.match(populated, /href="\/sessions\/sess-demo-999"/);
+});
+
+test("Session Report renders compact governance plus every bounded evidence path", () => {
+  const markup = renderToStaticMarkup(React.createElement(SessionReportState, {
+    data: reportData(), error: null, loading: false,
+    freshnessNotice: { version: "b".repeat(64) },
+    refreshError: "Could not check for new session evidence. Retry Refresh.",
+  }));
+  for (const text of [
+    "Governance summary", "DEMO task 2099", "DEMO project 999", "opencode", "native_usage", "review needed", "missing authoritative usage",
+    "Provider / raw totals", "Normalized budget total", "control_plane: 1", "worker_execution: 30", "reporting_summary: 4", "cache read/reused context",
+    "Token log", "provider raw usage", "Budget-zone timeline", "yellow zone", "Worker Run timeline", "worker_harness", "Repo Context Brief", "AGENTS.md", "pyproject.toml",
+    "Alarms", "BUDGET_YELLOW", "Checkpoint results", "FAIL", "Related Agent Review", "review/control-plane evidence", "19 review/control-plane tokens", "Agent Review finding",
+    "Preview truncated", "Load full text", "New session evidence available", "Could not check for new session evidence",
+  ]) assert.match(markup, new RegExp(text));
+  assert.match(markup, /href="\/sessions\/review-demo-999"/);
+  assert.match(markup, /aria-live="polite"/);
+  assert.ok(markup.indexOf("Governance summary") < markup.indexOf("Token log"));
+});
+
+test("Session Report refresh remounts paged evidence and labels review-session outcomes", () => {
+  const data = reportData();
+  data.session.kind = "Agent Review";
+  const markup = renderToStaticMarkup(React.createElement(SessionReportState, { data, error: null, loading: false }));
+  assert.match(markup, /Agent Review outcome/);
+  const source = readFileSync(new URL("../src/views/SessionReport.jsx", import.meta.url), "utf8");
+  for (const key of ["tokens-${version}", "zones-${version}", "worker-${version}", "repo-${version}", "alarms-${version}", "checkpoints-${version}"]) {
+    assert.ok(source.includes(key));
+  }
 });
 
 test("dashboard renders loading, error, populated, and empty states", () => {
@@ -764,4 +874,420 @@ test("task-board and logout controls are conditional", () => {
     data: { portal_auth_required: true, sidebar_projects: [] },
   });
   assert.match(authenticated, /action="\/logout"/);
+});
+
+function bounded(preview, overrides = {}) {
+  return { preview, truncated: false, full_href: null, ...overrides };
+}
+
+function page(items = []) {
+  return {
+    items,
+    pagination: { offset: 0, limit: 50, total: items.length, has_more: false, next_href: null },
+  };
+}
+
+function breakdownReviewData(status = "proposed") {
+  const candidate = {
+    index: 0,
+    accepted_by_default: status === "proposed",
+    kind: "implementation",
+    execution_mode: "AFK",
+    title: bounded("DEMO title 999"),
+    objective: bounded("DEMO objective 999"),
+    prompt: bounded("DEMO prompt preview 999", { truncated: true, full_href: "/api/task-breakdowns/demo/text/candidate-0-prompt" }),
+    acceptance_criteria: bounded("DEMO acceptance 999"),
+    proof: bounded("DEMO proof 999"),
+    hitl_reason: bounded(""),
+    constraints: bounded("DEMO constraint 999"),
+    why_this_task_exists: bounded("Exists 999"),
+    why_not_smaller: bounded("Not smaller 999"),
+    why_not_larger: bounded("Not larger 999"),
+    dependencies: bounded("Dependency 999"),
+    likely_entry_points: bounded("src/demo.py"),
+  };
+  return {
+    review: {
+      id: "breakdown-demo-999", status, decision: "proposed_task_breakdown",
+      model: bounded("DEMO-model-999"), session_id: "session-demo-999",
+      session_href: "/sessions/session-demo-999", rationale: bounded("DEMO rationale 999"),
+      source_text: bounded("DEMO source 2099", { truncated: true, full_href: "/api/task-breakdowns/demo/text/source" }),
+      failure_type: status === "failed" ? bounded("provider_error") : null,
+      failure_message: status === "failed" ? bounded("Safe DEMO failure 999") : null,
+      created_task_ids: page(status === "accepted" ? [bounded("task-demo-999")] : []),
+    },
+    candidates: page(status === "failed" ? [] : [candidate]),
+    context: {
+      global_contract_summary: bounded("DEMO global contract 999"),
+      global_constraints: page([bounded("DEMO global constraint 999")]),
+      verification: page([bounded("Run DEMO verification 999")]),
+      rejected_items: page([{ text: bounded("Rejected DEMO 999"), reason: bounded("Not a task") }]),
+      non_goals: page([bounded("No real data")]),
+      recommended_sequence: page([bounded("DEMO title 999")]),
+    },
+    repo_context: {
+      available: true, source: bounded("repo_context_brief"), text_chars: 999,
+      documents: page([bounded("AGENTS.md")]), manifests: page([bounded("pyproject.toml")]),
+      entrypoints: page([bounded("src/demo.py")]), test_commands: page([bounded("uv run pytest")]),
+      tracked_files_sample: page([bounded("tests/demo.py")]),
+    },
+    controls: {
+      can_accept: status === "proposed", can_retry: status === "failed",
+      can_create_manual_candidate: status === "failed",
+    },
+    links: {
+      self_href: "/task-breakdowns/breakdown-demo-999/review",
+      api_href: "/api/task-breakdowns/breakdown-demo-999/review",
+      board_href: "/app/projects/project-demo-999/board",
+      accept_href: status === "proposed" ? "/task-breakdowns/breakdown-demo-999/accept" : null,
+      retry_href: status === "failed" ? "/task-breakdowns/breakdown-demo-999/retry" : null,
+      manual_href: status === "failed" ? "/task-breakdowns/breakdown-demo-999/manual" : null,
+    },
+  };
+}
+
+function breakdownDraft(data, { overflow = false } = {}) {
+  const fields = Object.fromEntries(Object.entries(data.candidates.items[0] || {})
+    .filter(([, value]) => value && typeof value === "object" && "preview" in value)
+    .map(([field, value]) => [field, {
+      value: value.preview, loaded: !value.truncated, fullHref: value.full_href,
+      touched: false, error: null,
+    }]));
+  return {
+    candidates: data.candidates.items.length ? [{
+      index: 0, selected: true, kind: "implementation", executionMode: "AFK",
+      kindTouched: false, executionModeTouched: false, fields,
+    }] : [],
+    candidatePagination: { ...data.candidates.pagination, has_more: overflow, next_href: overflow ? "/api/task-breakdowns/demo/evidence/candidates?offset=1&limit=50" : null },
+    globalContract: { value: "DEMO global contract 999", loaded: true, touched: false, error: null },
+    globalConstraints: { value: "DEMO global constraint 999", loaded: true, touched: false, error: null },
+    verification: { value: "Run DEMO verification 999", loaded: true, touched: false, error: null },
+  };
+}
+
+function renderBreakdown(status, options = {}) {
+  const data = breakdownReviewData(status);
+  if (options.acceptanceClaim) {
+    data.controls = {
+      can_accept: false,
+      can_retry: false,
+      can_create_manual_candidate: false,
+    };
+    data.links.accept_href = null;
+  }
+  return renderToStaticMarkup(React.createElement(TaskBreakdownReviewState, {
+    breakdownId: data.review.id,
+    data,
+    draft: breakdownDraft(data, options),
+    loading: false,
+    error: null,
+    dirty: Boolean(options.dirty),
+  }));
+}
+
+test("Task Breakdown Review renders proposed parity and bounded edit gates", () => {
+  const markup = renderBreakdown("proposed", { dirty: true });
+  for (const text of [
+    "Task Breakdown Review", "DEMO title 999", "Candidate kind", "Execution mode",
+    "Acceptance criteria", "Candidate proof / verification path", "Task slicing evidence",
+    "Global contract summary", "Rejected as Tasks", "Repo Context Brief",
+    "Accept selected and estimate", "Unsaved browser-local edits",
+  ]) assert.match(markup, new RegExp(text));
+  assert.match(markup, /Load full text before editing/);
+  assert.match(markup, /disabled=""/);
+});
+
+test("Task Breakdown Review renders failed recovery, accepted evidence, and overflow gate", () => {
+  const failed = renderBreakdown("failed");
+  assert.match(failed, /Breakdown failed/);
+  assert.match(failed, /Retry breakdown/);
+  assert.match(failed, /Create manual candidate/);
+  assert.match(failed, /Safe DEMO failure 999/);
+  assert.match(failed, /Preserved context/);
+  assert.match(failed, /Repo Context Brief/);
+
+  const accepted = renderBreakdown("accepted");
+  assert.match(accepted, /Accepted review/);
+  assert.match(accepted, /task-demo-999/);
+  assert.match(accepted, /Accepted candidates/);
+  assert.match(accepted, /DEMO title 999/);
+  assert.match(accepted, /Global contract summary/);
+  assert.match(accepted, /Repo Context Brief/);
+  assert.doesNotMatch(accepted, /Accept selected and estimate/);
+
+  const overflow = renderBreakdown("proposed", { overflow: true });
+  assert.match(overflow, /Load remaining candidates/);
+  assert.match(overflow, /Load every candidate before acceptance/);
+  assert.match(overflow, /Accept selected and estimate<\/button>/);
+});
+
+test("Task Breakdown Review renders a proposed acceptance claim read-only", () => {
+  const markup = renderBreakdown("proposed", { acceptanceClaim: true });
+  assert.match(markup, /Acceptance in progress/);
+  assert.match(markup, /controlled operator repair/);
+  assert.match(markup, /DEMO title 999/);
+  assert.doesNotMatch(markup, /Accept selected and estimate|Candidate kind|Execution mode/);
+});
+
+function reviewButton(root, label) {
+  return root.findAllByType("button").find((button) => button.children.join("").includes(label));
+}
+
+function mountedReview(breakdownId, setGuard = () => {}, navigate = () => true) {
+  return React.createElement(
+    NavContext.Provider,
+    { value: navigate },
+    React.createElement(
+      NavigationGuardContext.Provider,
+      { value: setGuard },
+      React.createElement(TaskBreakdownReview, { breakdownId }),
+    ),
+  );
+}
+
+test("Task Breakdown controller pages, loads full text, and installs dirty guards", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const originalActFlag = globalThis.IS_REACT_ACT_ENVIRONMENT;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = originalActFlag;
+  });
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  let guard = null;
+  let beforeUnload = null;
+  const data = breakdownReviewData("proposed");
+  data.review.source_text = bounded("DEMO source 2099");
+  data.candidates.pagination = {
+    offset: 0, limit: 1, total: 2, has_more: true,
+    next_href: "/api/task-breakdowns/demo/evidence/candidates?offset=1&limit=1",
+  };
+  const second = { ...data.candidates.items[0], index: 1, title: bounded("DEMO title 2") };
+  globalThis.window = {
+    location: { pathname: "/task-breakdowns/breakdown-demo-999/review", assign: () => {} },
+    confirm: () => false,
+    addEventListener: (name, listener) => { if (name === "beforeunload") beforeUnload = listener; },
+    removeEventListener: () => {},
+  };
+  globalThis.fetch = async (url) => {
+    if (url === data.links.api_href) return { ok: true, json: async () => data };
+    if (String(url).includes("evidence/candidates")) {
+      return { ok: true, json: async () => page([second]) };
+    }
+    if (String(url).includes("candidate-0-prompt")) {
+      return { ok: true, text: async () => "Complete DEMO prompt 999" };
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  let renderer;
+  await act(async () => { renderer = create(mountedReview(data.review.id, (value) => { guard = value; })); });
+  assert.equal(reviewButton(renderer.root, "Accept selected").props.disabled, true);
+  await act(async () => { await reviewButton(renderer.root, "Load remaining candidates").props.onClick(); });
+  assert.equal(reviewButton(renderer.root, "Accept selected").props.disabled, false);
+  assert.equal(reviewButton(renderer.root, "Load remaining candidates"), undefined);
+  await act(async () => { await reviewButton(renderer.root, "Load full text before editing").props.onClick(); });
+  assert(renderer.root.findAllByType("textarea").some((field) => field.props.value === "Complete DEMO prompt 999"));
+
+  const title = renderer.root.findAllByType("input").find((field) => field.props.value === "DEMO title 999");
+  await act(async () => { title.props.onChange({ target: { value: "Edited DEMO title 999" } }); });
+  assert.equal(typeof guard, "function");
+  assert.equal(guard(), false);
+  const event = { prevented: false, returnValue: null, preventDefault() { this.prevented = true; } };
+  beforeUnload(event);
+  assert.equal(event.prevented, true);
+  assert.equal(event.returnValue, "");
+  await act(async () => { renderer.unmount(); });
+});
+
+test("Task Breakdown Retry and Manual refetch authoritative same-state evidence", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const originalActFlag = globalThis.IS_REACT_ACT_ENVIRONMENT;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = originalActFlag;
+  });
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const first = breakdownReviewData("failed");
+  const second = breakdownReviewData("failed");
+  const recovered = breakdownReviewData("proposed");
+  first.review.source_text = bounded("DEMO source 2099");
+  second.review.source_text = bounded("DEMO source 2099");
+  first.review.failure_message = bounded("Old failure preview", { truncated: true, full_href: "/api/task-breakdowns/demo/text/failure-message" });
+  second.review.failure_message = bounded("New failure preview", { truncated: true, full_href: "/api/task-breakdowns/demo/text/failure-message" });
+  first.context.non_goals = page([bounded("Old non-goal")]);
+  second.context.non_goals = page([bounded("New non-goal")]);
+  const reviewPayloads = [first, second, recovered];
+  const posted = [];
+  const postedBodies = [];
+  globalThis.window = {
+    location: { pathname: "/task-breakdowns/breakdown-demo-999/review", assign: () => {} },
+    confirm: () => true,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    if (options.method === "POST") {
+      posted.push(url);
+      postedBodies.push(Object.fromEntries(options.body.entries()));
+      return { ok: true, json: async () => ({ ok: true, next_href: first.links.self_href }) };
+    }
+    if (url === first.links.api_href) {
+      return { ok: true, json: async () => reviewPayloads.shift() };
+    }
+    if (url === "/api/task-breakdowns/demo/text/failure-message") {
+      return { ok: true, text: async () => "Old full failure" };
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  let renderer;
+  await act(async () => { renderer = create(mountedReview(first.review.id)); });
+  const fullTextButtons = renderer.root.findAllByType("button").filter((button) => button.children.join("").includes("Load full text"));
+  await act(async () => { await fullTextButtons.at(-1).props.onClick(); });
+  assert.match(JSON.stringify(renderer.toJSON()), /Old full failure/);
+
+  await act(async () => { await reviewButton(renderer.root, "Retry breakdown").props.onClick(); });
+  const retried = JSON.stringify(renderer.toJSON());
+  assert.match(retried, /New failure preview/);
+  assert.match(retried, /New non-goal/);
+  assert.doesNotMatch(retried, /Old full failure|Old non-goal/);
+
+  await act(async () => { await reviewButton(renderer.root, "Create manual candidate").props.onClick(); });
+  assert.match(JSON.stringify(renderer.toJSON()), /Accept selected and estimate/);
+  assert.deepEqual(posted, [first.links.retry_href, first.links.manual_href]);
+  assert.deepEqual(postedBodies, [{}, {}]);
+  await act(async () => { renderer.unmount(); });
+});
+
+test("dirty Retry confirms, single-flights, and follows accepted replay navigation", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const originalActFlag = globalThis.IS_REACT_ACT_ENVIRONMENT;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = originalActFlag;
+  });
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const failed = breakdownReviewData("failed");
+  failed.review.source_text = bounded("Complete DEMO source 2099");
+  let allowRetry = false;
+  let confirmations = 0;
+  let postCount = 0;
+  let resolvePost;
+  const postResponse = new Promise((resolve) => { resolvePost = resolve; });
+  const navigated = [];
+  globalThis.window = {
+    location: { pathname: failed.links.self_href, assign: (path) => navigated.push(path) },
+    confirm: () => { confirmations += 1; return allowRetry; },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    if (options.method === "POST") {
+      postCount += 1;
+      return postResponse;
+    }
+    if (url === failed.links.api_href) return { ok: true, json: async () => failed };
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  let renderer;
+  await act(async () => {
+    renderer = create(mountedReview(failed.review.id, () => {}, (path) => navigated.push(path)));
+  });
+  const manualTitle = renderer.root.findAllByType("input").find((field) => field.props.value === "Manual task from source");
+  await act(async () => { manualTitle.props.onChange({ target: { value: "Edited DEMO manual 999" } }); });
+  await act(async () => { await reviewButton(renderer.root, "Retry breakdown").props.onClick(); });
+  assert.equal(postCount, 0);
+
+  allowRetry = true;
+  let first;
+  await act(async () => {
+    first = reviewButton(renderer.root, "Retry breakdown").props.onClick();
+    reviewButton(renderer.root, "Retry breakdown").props.onClick();
+    resolvePost({
+      ok: true,
+      json: async () => ({ ok: true, status: "accepted", next_href: failed.links.board_href }),
+    });
+    await first;
+  });
+  assert.equal(postCount, 1);
+  assert.equal(confirmations, 2);
+  assert.deepEqual(navigated, [failed.links.board_href]);
+  await act(async () => { renderer.unmount(); });
+});
+
+test("Task Breakdown action controller negotiates exact JSON and preserves safe failures", async () => {
+  let request;
+  const success = await submitBreakdownAction({
+    url: "/task-breakdowns/demo/accept",
+    body: new URLSearchParams({ accept_0: "1" }),
+    fetchImpl: async (url, options) => {
+      request = { url, options };
+      return { ok: true, json: async () => ({ ok: true, next_href: "/app/projects/demo/board" }) };
+    },
+  });
+  assert.equal(success.ok, true);
+  assert.equal(request.options.method, "POST");
+  assert.equal(request.options.headers.Accept, "application/json");
+  assert.equal(request.options.credentials, "same-origin");
+
+  const failure = await submitBreakdownAction({
+    url: "/task-breakdowns/demo/retry",
+    body: new URLSearchParams(),
+    fetchImpl: async () => ({ ok: false, json: async () => ({
+      ok: false, error: "Safe validation failure", retry_href: "/task-breakdowns/demo/review",
+    }) }),
+  });
+  assert.deepEqual(failure, {
+    ok: false, error: "Safe validation failure", retryHref: "/task-breakdowns/demo/review",
+  });
+});
+
+test("Task Breakdown Accept omits loaded-only redacted values and submits actual edits", () => {
+  const data = breakdownReviewData("proposed");
+  const draft = breakdownDraft(data);
+  draft.candidates[0].fields.prompt = {
+    value: "complete [REDACTED] prompt 999", loaded: true, touched: false, fullHref: null, error: null,
+  };
+  const loadOnly = buildAcceptForm(draft);
+  assert.equal(loadOnly.get("accept_0"), "1");
+  assert.equal(loadOnly.has("prompt_0"), false);
+
+  draft.candidates[0].fields.prompt.touched = true;
+  draft.candidates[0].fields.prompt.value = "operator-edited [REDACTED] prompt 999";
+  const edited = buildAcceptForm(draft);
+  assert.equal(edited.get("prompt_0"), "operator-edited [REDACTED] prompt 999");
+});
+
+test("Task Breakdown Review distinguishes loading, safe error, and empty states", () => {
+  const loading = renderToStaticMarkup(React.createElement(TaskBreakdownReviewState, {
+    breakdownId: "breakdown-demo-999", data: null, draft: null, loading: true, error: null,
+  }));
+  assert.match(loading, /Loading Task Breakdown Review/);
+
+  const failedLoad = renderToStaticMarkup(React.createElement(TaskBreakdownReviewState, {
+    breakdownId: "breakdown-demo-999", data: null, draft: null, loading: false, error: new Error("secret detail"),
+  }));
+  assert.match(failedLoad, /Could not load Task Breakdown Review/);
+  assert.match(failedLoad, /Retry review/);
+  assert.doesNotMatch(failedLoad, /secret detail|server-rendered/);
+
+  const empty = renderToStaticMarkup(React.createElement(TaskBreakdownReviewState, {
+    breakdownId: "breakdown-demo-999", data: null, draft: null, loading: false, error: null,
+  }));
+  assert.match(empty, /No Task Breakdown Review state available/);
+});
+
+test("Task Breakdown Review is exact-route owned without swallowing suffixes", () => {
+  assert.deepEqual(parseRoute("/task-breakdowns/breakdown-demo-999/review"), {
+    view: "taskBreakdownReview", breakdownId: "breakdown-demo-999",
+  });
+  assert.equal(parseRoute("/task-breakdowns/breakdown-demo-999/review/extra").view, "notFound");
+  assert.equal(parseRoute("/app/task-breakdowns/breakdown-demo-999/review").view, "notFound");
 });

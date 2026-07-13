@@ -105,7 +105,7 @@ export function Sidebar({ activeView, activeProjectId, data, error, loading }) {
           >
             Dashboard
           </AppLink>
-          <a href="/sessions">Sessions</a>
+          <AppLink to="/sessions" className={activeView === "sessions" || activeView === "sessionReport" ? "active" : ""}>Sessions</AppLink>
           <a href="/alarms">Alarms</a>
         </nav>
 

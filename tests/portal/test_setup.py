@@ -1,6 +1,131 @@
 from agile_ai_htb import db
 from tests.portal.helpers import PORTAL_TOKEN, _client, _connect_project, _portal_headers, _project_metadata
 
+
+class _CapabilityBackend:
+    def __init__(self, state: str):
+        self.state = state
+
+    def project_capability(self, project):
+        return {
+            "state": self.state,
+            "label": self.state.replace("_", "-").title(),
+            "backend": "test_backend",
+            "reasons": [],
+            "can_launch": self.state == "launch_ready",
+            "can_analyze": self.state in {"analysis_ready", "launch_ready"},
+        }
+
+
+def _prepare_ready_setup(database_path, workdir, monkeypatch):
+    monkeypatch.setenv("AGILE_AI_HTB_CONTROL_API_KEY", "test-control-plane-key")
+    db.set_token_budget_settings(database_path, daily_cap_tokens=999000, session_cap_tokens=111000)
+    db.update_worker_adapter(
+        database_path,
+        "codex",
+        workdir=str(workdir),
+        config={"command": "codex"},
+        supported_models=["gpt-5.4"],
+        is_default=True,
+    )
+    db.mark_worker_adapter_verification(
+        database_path,
+        "codex",
+        verified=True,
+        evidence={"tracking_mode": "native_usage", "tracking_authoritative": True},
+    )
+
+
+def _connect_invalid_project(database_path, root_path):
+    return db.upsert_connected_project(
+        database_path,
+        name=root_path.name,
+        root_path=str(root_path),
+        profile={"name": root_path.name, "root_path": str(root_path)},
+        capability={"state": "launch_ready", "can_launch": True},
+    )
+
+
+def test_setup_requires_connected_project_after_other_requirements_pass(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+
+    with _client(tmp_path) as client:
+        _prepare_ready_setup(database_path, tmp_path, monkeypatch)
+        setup = client.get("/setup", headers=_portal_headers())
+
+    assert setup.status_code == 200
+    assert "next missing action" in setup.text
+    assert 'href="/settings/project">Open Projects</a>' in setup.text
+    assert "Governed Worker launch is ready." not in setup.text
+    assert "Projects</a>: needs setup" in setup.text
+
+
+def test_setup_defensively_rejects_analysis_ready_project(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+
+    with _client(tmp_path) as client:
+        _prepare_ready_setup(database_path, tmp_path, monkeypatch)
+        _connect_project(database_path, tmp_path / "analysis-project")
+        getattr(client.app, "state").execution_backend = _CapabilityBackend("analysis_ready")
+        setup = client.get("/setup", headers=_portal_headers())
+
+    assert setup.status_code == 200
+    assert 'href="/settings/project">Open Projects</a>' in setup.text
+    assert "Projects</a>: needs setup" in setup.text
+    assert "Governed Worker launch is ready." not in setup.text
+
+
+def test_setup_rejects_blocked_project_and_preserves_earlier_blocker_priority(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+
+    with _client(tmp_path) as client:
+        _prepare_ready_setup(database_path, tmp_path, monkeypatch)
+        _connect_invalid_project(database_path, tmp_path / "missing-project")
+        blocked = client.get("/setup", headers=_portal_headers())
+        monkeypatch.delenv("AGILE_AI_HTB_CONTROL_API_KEY")
+        earlier_blocker = client.get("/setup", headers=_portal_headers())
+
+    assert blocked.status_code == 200
+    assert 'href="/settings/project">Open Projects</a>' in blocked.text
+    assert "Projects</a>: needs setup" in blocked.text
+    assert 'href="/settings/control-plane">Open Control plane model</a>' in earlier_blocker.text
+    assert "Projects</a>: needs setup" in earlier_blocker.text
+
+
+def test_setup_links_exact_launch_ready_project_board(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+
+    with _client(tmp_path) as client:
+        _prepare_ready_setup(database_path, tmp_path, monkeypatch)
+        launch_ready = _connect_project(database_path, tmp_path / "launch-ready-project")
+        _connect_invalid_project(database_path, tmp_path / "newer-blocked-project")
+        setup = client.get("/setup", headers=_portal_headers())
+
+    expected_href = f'/projects/{launch_ready["id"]}/board'
+    assert setup.status_code == 200
+    assert "Governed Worker launch is ready." in setup.text
+    assert f'href="{expected_href}"' in setup.text
+    assert 'href="/board"' not in setup.text
+
+
+def test_setup_ignores_stale_launch_ready_capability_when_local_runner_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+
+    with _client(tmp_path, local_runner_enabled=False) as client:
+        _prepare_ready_setup(database_path, tmp_path, monkeypatch)
+        _connect_project(database_path, tmp_path / "stale-launch-ready-project")
+        setup = client.get("/setup", headers=_portal_headers())
+
+    assert setup.status_code == 200
+    assert 'href="/settings/project">Open Projects</a>' in setup.text
+    assert "Projects</a>: needs setup" in setup.text
+    assert "Governed Worker launch is ready." not in setup.text
+
 def test_setup_overview_and_budget_settings_flow(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     with _client(tmp_path) as client:

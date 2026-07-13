@@ -5,7 +5,7 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 
-from agile_ai_htb import db
+from agile_ai_htb import db, session_handoff, task_breakdown_handoff
 from agile_ai_htb.guardrails import load_guardrails
 from agile_ai_htb.llm import LLMClient
 from agile_ai_htb.execution_backend import LocalExecutionBackend
@@ -41,4 +41,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(proxy.router)
     app.include_router(portal.router)
     app.include_router(react_shell.router)
+    app.include_router(session_handoff.router)
+    app.include_router(task_breakdown_handoff.router)
     return app

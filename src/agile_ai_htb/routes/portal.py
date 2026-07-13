@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlparse
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
@@ -54,6 +54,7 @@ from agile_ai_htb.operator_config import (
     write_control_plane_secret,
 )
 from agile_ai_htb.project_context import task_project_id
+from agile_ai_htb.routes.react_shell import react_shell_available
 from agile_ai_htb.settings import Settings
 from agile_ai_htb.task_launch import DEFAULT_PROXY_URL, TaskLaunchBlocked, launch_task, refresh_task_from_session
 from agile_ai_htb.routes.tasks import _ensure_review_task, _run_agent_review, _wants_react_json
@@ -423,7 +424,13 @@ def setup_overview(request: Request):
     budget_settings = _effective_budget_settings(database_path, config, timezone=settings.timezone)
     adapters = _worker_adapter_view_models(database_path)
     active_adapter = _active_adapter_for_request(adapters, request.query_params.get("adapter_id"))
-    projects = db.list_connected_projects(database_path)
+    connected_projects = db.list_connected_projects(database_path)
+    backend = _local_backend(request)
+    projects = [_project_view_model(request, project) for project in connected_projects] if backend else []
+    launch_ready_project = next(
+        (project for project in projects if (project.get("capability") or {}).get("state") == "launch_ready"),
+        None,
+    )
     try:
         control_status = db.get_execution_backend_status(database_path, "control_plane_model")
     except KeyError:
@@ -449,14 +456,21 @@ def setup_overview(request: Request):
         },
         {
             "name": "Projects",
-            "state": "ready" if projects else "optional",
+            "state": "ready" if launch_ready_project else "needs setup",
             "href": "/settings/project",
-            "detail": projects[0]["name"] if projects else "Connect a project for local Worker runs",
+            "detail": (
+                launch_ready_project["name"]
+                if launch_ready_project
+                else "Local Runner is unavailable"
+                if connected_projects and not backend
+                else "No launch-ready project"
+                if connected_projects
+                else "Connect a project for local Worker runs"
+            ),
         },
     ]
-    # Launch readiness is gated by control-plane, budget, and Worker setup.
-    ready_to_launch = all(step["state"] == "ready" for step in steps[:3])
-    next_step = _next_setup_step(steps, ready_to_launch)
+    ready_to_launch = all(step["state"] == "ready" for step in steps)
+    next_step = _next_setup_step(steps, launch_ready_project if ready_to_launch else None)
     return templates.TemplateResponse(
         request,
         "setup.html",
@@ -786,10 +800,16 @@ def _render_board(request: Request, *, active_project: dict[str, Any] | None = N
     )
 
 
-def _next_setup_step(steps: list[dict[str, Any]], ready_to_launch: bool) -> dict[str, Any]:
-    if ready_to_launch:
-        return {"label": "Open task board", "href": "/board", "detail": "Governed Worker launch is ready."}
-    next_step = next((step for step in steps[:3] if step["state"] != "ready"), steps[0])
+def _next_setup_step(
+    steps: list[dict[str, Any]], launch_ready_project: dict[str, Any] | None
+) -> dict[str, Any]:
+    if launch_ready_project:
+        return {
+            "label": "Open task board",
+            "href": f"/projects/{launch_ready_project['id']}/board",
+            "detail": "Governed Worker launch is ready.",
+        }
+    next_step = next((step for step in steps if step["state"] != "ready"), steps[0])
     return {"label": f"Open {next_step['name']}", "href": next_step["href"], "detail": next_step["detail"]}
 
 
@@ -1416,65 +1436,32 @@ async def discover_worker_models_route(adapter_id: str, request: Request):
 
 @router.get("/sessions", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def sessions_index(request: Request):
-    database_path = request.app.state.settings.database_path
-    config = request.app.state.guardrails
-    rows = []
-    for session in db.list_sessions(database_path):
-        artifact = db.build_session_artifact(database_path, session["id"])
-        token_totals = _token_totals(artifact)
-        budget = artifact["session"].get("guardrail_overrides", {}).get("budget", {})
-        daily_used_tokens = int(budget.get("daily_used_tokens", 0)) + token_totals["total_tokens"]
-        daily_cap = _daily_cap_tokens(budget, config)
-        rows.append(
-            {
-                "session": artifact["session"],
-                "token_totals": token_totals,
-                "current_zone": get_budget_zone(daily_used_tokens, daily_cap, config),
-                "alarms": artifact["alarms"],
-                "evidence_summary": _session_evidence_summary(artifact),
-            }
-        )
+    from agile_ai_htb.routes.react_shell import _react_index
+    from agile_ai_htb.session_handoff import build_sessions_context
+
+    index = _react_index()
+    if index is not None:
+        return FileResponse(index)
     return templates.TemplateResponse(
         request,
         "sessions.html",
-        {"active_page": "sessions", "sessions": list(reversed(rows))},
+        build_sessions_context(request),
     )
 
 
 @router.get("/sessions/{session_id}", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def session_report_view(session_id: str, request: Request):
-    database_path = request.app.state.settings.database_path
-    try:
-        artifact = db.build_session_artifact(database_path, session_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="session not found") from exc
-    artifact = dict(artifact)
-    artifact["worker_run_events"] = [
-        {**event, "detail": _safe_worker_evidence(event.get("detail") or {})}
-        for event in artifact.get("worker_run_events", [])
-    ]
+    from agile_ai_htb.routes.react_shell import _react_index
+    from agile_ai_htb.session_handoff import build_session_report_context
 
-    token_totals = _token_totals(artifact)
-    token_breakdown = db.session_token_breakdown(database_path, session_id)
-    worker_token_components = _token_component_summary_from_log(artifact["token_log"], spend_category="worker_execution")
-    requires_review = bool(artifact["alarms"]) or any(
-        not checkpoint["passed"] for checkpoint in artifact["checkpoint_results"]
-    )
+    context = build_session_report_context(request, session_id)
+    index = _react_index()
+    if index is not None:
+        return FileResponse(index)
     return templates.TemplateResponse(
         request,
         "session_report.html",
-        {
-            "artifact": artifact,
-            "active_page": "sessions",
-            "session": artifact["session"],
-            "token_totals": token_totals,
-            "token_breakdown": token_breakdown,
-            "worker_token_components": worker_token_components,
-            "requires_review": requires_review,
-            "evidence_summary": _session_evidence_summary(artifact),
-            "related_agent_review": _related_agent_review(database_path, session_id),
-            "zone_timeline": artifact["guardrail_snapshots"],
-        },
+        context,
     )
 
 
@@ -1704,10 +1691,8 @@ def _local_backend(request: Request) -> LocalExecutionBackend | None:
 
 
 def _default_portal_landing(database_path: Path | str) -> str:
-    # The existing server-rendered Portal is the default landing. The React
-    # shell at `/app` remains reachable as an experimental/migrated surface
-    # but is not the default until it reaches Portal chrome, dashboard, and
-    # AGILE Board parity (see docs/REACT_PORTAL_PARITY_PLAN.md).
+    if react_shell_available():
+        return "/app"
     projects = db.list_connected_projects(database_path)
     if projects:
         return f"/projects/{projects[0]['id']}"

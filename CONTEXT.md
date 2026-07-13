@@ -10,6 +10,11 @@
 **Also known as**: AGILE-AI-HTB, Token-Tracker Harness.
 **Relationships**: Governs a Worker. Declares Guardrails. Evaluates Checkpoints. Fires Alarms. Exposes Material Handling interfaces.
 
+## Portal Recovery Surface
+**Definition**: The minimal user-facing fallback that preserves Portal authentication and recovery when the normal operator console cannot load.
+**Properties**: Provides only login, load-failure explanation, and recovery guidance. It is not a second operator console and does not duplicate Dashboard, AGILE Board, Setup, Settings, Session, Alarm, or report workflows.
+**Relationships**: Supports the Portal Login Token workflow. Remains available independently of the normal authenticated operator-console frontend.
+
 ## Control Plane
 **Definition**: The deployable Harness surface that owns the Portal, AGILE Board, budget governance, orchestration workflows, proxy, token accounting, and reports.
 **Properties**: Can run as a hosted service. Coordinates work but does not itself guarantee access to a User's local repository or local coding-agent tools.
@@ -88,7 +93,7 @@
 
 ## Portal Login Token
 **Definition**: The token used to authenticate to the Portal login screen when portal auth is required.
-**Properties**: Default env name is `TOKEN_TRACKER_PORTAL_TOKEN`. `htb init` writes a generated value to ignored `.htb/secrets.env`. Default loopback `htb serve` skips token login; non-loopback/shared/Docker/headless access keeps token auth unless explicitly disabled.
+**Properties**: Default env name is `TOKEN_TRACKER_PORTAL_TOKEN`. `htb init` writes a generated value to ignored `.htb/secrets.env`. Default loopback `htb serve` skips token login; non-loopback/shared/Docker/headless access keeps token auth unless explicitly disabled. Successful login always opens the Dashboard rather than returning to a previously requested Portal page.
 **Relationships**: Protects shared Portal pages. Separate from Control Plane API Key and Worker CLI auth.
 
 ## Portal-Managed Control Plane API Key
@@ -103,7 +108,7 @@
 
 ## Setup Overview
 **Definition**: The Portal setup surface that guides operators through the next missing action needed for a governed launch.
-**Properties**: Summarizes Control Plane model, Token Budget, Worker Adapter, and Connected Project readiness. It should show the next action plainly, keep advanced diagnostics secondary, and route launch-ready users to the project board.
+**Properties**: Summarizes Control Plane model, Token Budget, Worker Adapter, and Connected Project readiness. It should show the next action plainly, keep advanced diagnostics secondary, and route launch-ready users to the project board. It may claim Ready to launch only when at least one Connected Project is launch-ready; no project or analysis-only capability is not launch readiness.
 **Relationships**: Coordinates Operator Config, Control Plane Connection Test, Worker Setup, Token Budget, Connected Project, and AGILE Board readiness.
 
 ## Worker
@@ -203,7 +208,7 @@
 
 ## Alarm
 **Definition**: A structured notification that something the harness governs has deviated from expected bounds.
-**Properties**: Has a named type (e.g., BUDGET_RED, LOOP_DETECTED), a severity (LOW/MEDIUM/HIGH), context describing the deviation, and a recommended action.
+**Properties**: Has a named type (e.g., BUDGET_RED, LOOP_DETECTED), a severity (LOW/MEDIUM/HIGH), context describing the deviation, and a recommended action. Operator resolution offers only validated actions relevant to that Alarm and Session state, such as Continue, Abort Session, or Raise Budget. Generic raw Guardrail mutation is not a normal Alarm action. Open, resolved, and combined history remain inspectable so resolution is auditable.
 **Relationships**: Triggered by a Guardrail violation or a Checkpoint failure. Routed to a human via a notification channel.
 
 ## Material Handling
@@ -268,5 +273,5 @@
 
 ## Escalation
 **Definition**: The path by which the harness brings a decision to the human rather than guessing — when an alarm fires or a checkpoint fails.
-**Properties**: Delivered as a notification with a deep link to the Portal. Human responds with an action (continue, abort, raise budget).
+**Properties**: Delivered as a notification with a deep link to the Portal. Human responds with a validated action appropriate to the Alarm and Session state, such as continue, abort, or raise budget.
 **Relationships**: Triggered by Alarms and Checkpoint failures. Resolved by human action in the Portal.

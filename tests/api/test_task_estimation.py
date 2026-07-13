@@ -1063,7 +1063,7 @@ The final artifact must be verified with a CLI smoke check and must never use re
                 "prompt_2": "Verify the combined artifact.",
                 "acceptance_criteria_2": "Smoke proof and findings are recorded.",
                 "constraints_2": "Do not rebuild the CLI.",
-                "hitl_reason_2": "",
+                "hitl_reason_2": "Requires operator review or judgment before completion.",
                 "global_contract_summary": "Edited summary: DEMO_CLI_2099 parses DEMO_INPUT_999 and emits DEMO_REPORT_2099.",
                 "global_constraints": "Use only synthetic DEMO_2099 data.",
                 "verification": "Run a CLI smoke check.",

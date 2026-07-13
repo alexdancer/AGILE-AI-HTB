@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-import { AppLink } from "../nav.jsx";
+import { AppLink, NavContext } from "../nav.jsx";
 import { getJSON } from "../api.js";
 
 const COLUMNS = ["Estimated", "Running", "Review", "Done", "Blocked"];
@@ -63,6 +63,7 @@ export async function pollBoardStatus({ getStatus, reload, update }) {
 }
 
 export default function Board({ projectId }) {
+  const navigate = React.useContext(NavContext);
   const [state, setState] = useState({ data: null, error: null, loading: true });
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState(null);
@@ -95,7 +96,10 @@ export default function Board({ projectId }) {
       url,
       body,
       fetchImpl: fetch,
-      navigate: (href) => window.location.assign(href),
+      navigate: (href) => {
+        if (/^\/task-breakdowns\/[^/]+\/review$/.test(href)) navigate(href);
+        else window.location.assign(href);
+      },
       reload: load,
       onNotice: setNotice,
     });

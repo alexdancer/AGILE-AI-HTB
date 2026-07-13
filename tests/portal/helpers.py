@@ -27,12 +27,12 @@ class FakeControlPlaneLLM:
         }
 
 
-def _client(tmp_path, *, portal_auth_required: bool = True):
+def _client(tmp_path, *, portal_auth_required: bool = True, local_runner_enabled: bool = True):
     settings = Settings(
         database_path=tmp_path / "harness.db",
         guardrails_path=ROOT / "guardrails.yaml",
         portal_auth_required=portal_auth_required,
-        local_runner_enabled=True,
+        local_runner_enabled=local_runner_enabled,
         operator_config={},
     )
     return TestClient(create_app(settings))

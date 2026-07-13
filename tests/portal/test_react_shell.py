@@ -39,6 +39,21 @@ def _build_partial_react_assets(tmp_path):
     return build_dir
 
 
+def _build_mixed_quote_partial_react_assets(tmp_path):
+    build_dir = tmp_path / "mixed_quote_partial_react_build"
+    (build_dir / "assets").mkdir(parents=True)
+    (build_dir / "index.html").write_text(
+        '<!doctype html><div id="root"></div>'
+        '<script type="module" src="/static/react/assets/main.js"></script>'
+        "<link rel='stylesheet' href='/static/react/assets/missing.css'>",
+        encoding="utf-8",
+    )
+    (build_dir / "assets" / "main.js").write_text(
+        "console.log('react shell');", encoding="utf-8"
+    )
+    return build_dir
+
+
 def test_react_shell_served_when_built(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     build_dir = _build_react_assets(tmp_path)
@@ -97,21 +112,79 @@ def test_partial_react_build_falls_back_without_blank_shell(tmp_path, monkeypatc
 
     with _client(tmp_path, portal_auth_required=False) as client:
         root = client.get("/", follow_redirects=False)
+        login_form = client.get("/login", follow_redirects=False)
+        login_submit = client.post(
+            "/login",
+            data={"token": "unused-DEMO-999"},
+            follow_redirects=False,
+        )
+        logout = client.post("/logout", follow_redirects=False)
+        landing = client.get(root.headers["location"])
 
     with _client(tmp_path) as client:
         login = client.post(
             "/login", data={"token": PORTAL_TOKEN}, follow_redirects=False
         )
+        authenticated_root = client.get("/", follow_redirects=False)
         shell = client.get("/app", headers=_portal_headers())
 
     assert root.headers["location"] == "/projects"
+    assert login_form.headers["location"] == "/projects"
+    assert login_submit.headers["location"] == "/projects"
+    assert logout.headers["location"] == "/projects"
+    assert landing.status_code == 200
     assert login.status_code == 303
     assert login.headers["location"] == "/projects"
+    assert authenticated_root.headers["location"] == "/projects"
     assert shell.status_code == 503
     assert "not built" in shell.text
 
 
-def test_landing_uses_jinja_even_when_react_built(tmp_path, monkeypatch):
+def test_partial_react_build_uses_connected_project_fallback_for_all_entries(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_partial_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+    database_path = tmp_path / "harness.db"
+
+    with _client(tmp_path, portal_auth_required=False) as client:
+        project = _connect_project(database_path, tmp_path / "partial-fallback-repo")
+        no_auth_responses = [
+            client.get("/", follow_redirects=False),
+            client.get("/login", follow_redirects=False),
+            client.post(
+                "/login",
+                data={"token": "unused-DEMO-999"},
+                follow_redirects=False,
+            ),
+            client.post("/logout", follow_redirects=False),
+        ]
+
+    with _client(tmp_path) as client:
+        login = client.post(
+            "/login", data={"token": PORTAL_TOKEN}, follow_redirects=False
+        )
+        authenticated_root = client.get("/", follow_redirects=False)
+
+    expected = f"/projects/{project['id']}"
+    assert all(response.headers["location"] == expected for response in no_auth_responses)
+    assert login.headers["location"] == expected
+    assert authenticated_root.headers["location"] == expected
+
+
+def test_mixed_quote_missing_asset_rejects_partial_build(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_mixed_quote_partial_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+
+    with _client(tmp_path, portal_auth_required=False) as client:
+        root = client.get("/", follow_redirects=False)
+        shell = client.get("/app")
+
+    assert root.headers["location"] == "/projects"
+    assert shell.status_code == 503
+
+
+def test_auth_disabled_root_uses_react_when_built(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     build_dir = _build_react_assets(tmp_path)
     monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
@@ -119,11 +192,29 @@ def test_landing_uses_jinja_even_when_react_built(tmp_path, monkeypatch):
         root = client.get("/", follow_redirects=False)
 
     assert root.status_code in (302, 307)
-    # The Jinja landing is the default even when the React build is present.
-    assert root.headers["location"] == "/projects"
+    assert root.headers["location"] == "/app"
 
 
-def test_authenticated_root_uses_jinja_even_when_react_built(tmp_path, monkeypatch):
+def test_auth_disabled_login_and_logout_use_react_when_built(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+
+    with _client(tmp_path, portal_auth_required=False) as client:
+        login_form = client.get("/login", follow_redirects=False)
+        login_submit = client.post(
+            "/login",
+            data={"token": "unused-DEMO-999"},
+            follow_redirects=False,
+        )
+        logout = client.post("/logout", follow_redirects=False)
+
+    assert login_form.headers["location"] == "/app"
+    assert login_submit.headers["location"] == "/app"
+    assert logout.headers["location"] == "/app"
+
+
+def test_authenticated_root_uses_react_when_built(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     build_dir = _build_react_assets(tmp_path)
     monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
@@ -135,8 +226,27 @@ def test_authenticated_root_uses_jinja_even_when_react_built(tmp_path, monkeypat
 
     assert login.status_code == 303
     assert root.status_code in (302, 307)
-    # Authenticated root must not land on the incomplete React /app surface.
-    assert root.headers["location"] == "/projects"
+    assert root.headers["location"] == "/app"
+
+
+@pytest.mark.parametrize(
+    "build_helper",
+    [_build_react_assets, _build_partial_react_assets],
+)
+def test_react_build_availability_never_bypasses_root_auth(
+    build_helper,
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = build_helper(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+
+    with _client(tmp_path) as client:
+        root = client.get("/", follow_redirects=False)
+
+    assert root.status_code in (302, 307)
+    assert root.headers["location"] == "/login"
 
 
 def test_landing_falls_back_to_jinja_when_build_missing(tmp_path, monkeypatch):
@@ -151,6 +261,28 @@ def test_landing_falls_back_to_jinja_when_build_missing(tmp_path, monkeypatch):
     assert "<html" in landing.text.lower()
 
 
+def test_missing_build_falls_back_to_connected_project_for_all_no_auth_entries(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+
+    with _client(tmp_path, portal_auth_required=False) as client:
+        project = _connect_project(database_path, tmp_path / "fallback-repo")
+        root = client.get("/", follow_redirects=False)
+        login_form = client.get("/login", follow_redirects=False)
+        login_submit = client.post(
+            "/login",
+            data={"token": "unused-DEMO-999"},
+            follow_redirects=False,
+        )
+        logout = client.post("/logout", follow_redirects=False)
+
+    expected = f"/projects/{project['id']}"
+    assert root.headers["location"] == expected
+    assert login_form.headers["location"] == expected
+    assert login_submit.headers["location"] == expected
+    assert logout.headers["location"] == expected
+
+
 def test_authenticated_root_falls_back_to_jinja_when_build_missing(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     with _client(tmp_path) as client:
@@ -163,7 +295,7 @@ def test_authenticated_root_falls_back_to_jinja_when_build_missing(tmp_path, mon
     assert root.headers["location"] == "/projects"
 
 
-def test_login_redirects_to_jinja_even_when_react_built(tmp_path, monkeypatch):
+def test_login_redirects_to_react_when_built(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     build_dir = _build_react_assets(tmp_path)
     monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
@@ -173,14 +305,11 @@ def test_login_redirects_to_jinja_even_when_react_built(tmp_path, monkeypatch):
         )
 
     assert login.status_code == 303
-    assert login.headers["location"] == "/projects"
+    assert login.headers["location"] == "/app"
     assert "agile_ai_htb_portal" in login.headers.get("set-cookie", "")
 
 
-def test_built_react_and_valid_cookie_lands_on_jinja_not_app(tmp_path, monkeypatch):
-    # Regression lock: a built React shell plus a valid signed portal cookie
-    # must still land on the server-rendered project page, never /app, until
-    # React Portal parity gates pass (see docs/REACT_PORTAL_PARITY_PLAN.md).
+def test_built_react_and_valid_cookie_lands_on_app(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     build_dir = _build_react_assets(tmp_path)
     monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
@@ -193,15 +322,15 @@ def test_built_react_and_valid_cookie_lands_on_jinja_not_app(tmp_path, monkeypat
         )
         assert login.status_code == 303
         assert "agile_ai_htb_portal" in login.headers.get("set-cookie", "")
-        # Authenticated root must redirect to the Jinja project landing.
         root = client.get("/", follow_redirects=False)
         landing = client.get(root.headers["location"], follow_redirects=False)
 
-    assert login.headers["location"] == f"/projects/{project['id']}"
+    assert project["id"]
+    assert login.headers["location"] == "/app"
     assert root.status_code in (302, 307)
-    assert root.headers["location"] == f"/projects/{project['id']}"
+    assert root.headers["location"] == "/app"
     assert landing.status_code == 200
-    assert "<html" in landing.text.lower()
+    assert 'id="root"' in landing.text
 
 
 def test_login_falls_back_to_jinja_when_build_missing(tmp_path, monkeypatch):
@@ -213,6 +342,54 @@ def test_login_falls_back_to_jinja_when_build_missing(tmp_path, monkeypatch):
 
     assert login.status_code == 303
     assert login.headers["location"] == "/projects"
+
+
+def test_non_migrated_jinja_routes_remain_directly_reachable(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "jinja-fallback-repo")
+        session = db.create_session(
+            database_path,
+            task_description="DEMO session report 999",
+            model="DEMO-model-999",
+            session_key_hash="DEMO-hash-999",
+            guardrail_overrides={},
+            status="completed",
+        )
+        breakdown = db.create_task_breakdown(
+            database_path,
+            source_text="# DEMO breakdown 999",
+            source_sha256="DEMO-sha-999",
+            intake_metadata={},
+            status="pending_review",
+            decision="single_task",
+            model="DEMO-model-999",
+            candidates=[],
+        )
+        headers = {**_portal_headers(), "Accept": "text/html"}
+        paths = [
+            "/dashboard",
+            "/projects",
+            f"/projects/{project['id']}",
+            f"/projects/{project['id']}/board",
+            "/sessions",
+            f"/sessions/{session['id']}",
+            "/alarms",
+            "/setup",
+            "/settings/control-plane",
+            "/settings/budget",
+            "/settings/project",
+            "/settings/workers",
+            f"/projects/{project['id']}/task-history",
+            f"/task-breakdowns/{breakdown['id']}/review",
+        ]
+        responses = {path: client.get(path, headers=headers) for path in paths}
+
+    assert {path: response.status_code for path, response in responses.items()} == {
+        path: 200 for path in paths
+    }
 
 
 def test_react_projects_endpoint_requires_auth(tmp_path, monkeypatch):
@@ -1245,6 +1422,31 @@ def test_react_task_projection_has_stable_null_and_empty_defaults():
     }
 
 
+def test_react_task_title_preserves_safe_secret_word_and_redacts_embedded_value():
+    safe_title = "Implement Secret scanner parity"
+    safe_card = react_shell._react_task(
+        {
+            "id": "task_DEMO_998",
+            "status": "Review",
+            "description": safe_title,
+            "metadata": {},
+        }
+    )
+    card = react_shell._react_task(
+        {
+            "id": "task_DEMO_999",
+            "status": "Review",
+            "description": f"{safe_title}; secret=DEMO-TITLE-SECRET-999",
+            "metadata": {},
+        }
+    )
+
+    assert safe_card["summary"]["text"] == safe_title
+    assert safe_title in card["summary"]["text"]
+    assert "DEMO-TITLE-SECRET-999" not in card["summary"]["text"]
+    assert "***REDACTED***" in card["summary"]["text"]
+
+
 def test_react_json_missing_project_is_404(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     with _client(tmp_path) as client:
@@ -1346,7 +1548,6 @@ def test_react_shell_non_migrated_links_are_anchors():
     for jinja_href in (
         "/setup",
 
-        "/sessions",
         "/alarms",
         "/settings/control-plane",
         "/settings/budget",
@@ -1396,3 +1597,49 @@ def test_css_react_board_controls_and_details_present():
     assert ".board-input" in css_source
     assert ".board-file::file-selector-button" in css_source
     assert ".raw-evidence" in css_source
+
+
+def test_canonical_sessions_routes_use_complete_build_and_validate_report(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+    db.init_db(tmp_path / "harness.db")
+    session = db.create_session(
+        tmp_path / "harness.db",
+        task_description="DEMO React session 2099",
+        model="demo-model-999",
+        session_key_hash="s" * 64,
+        guardrail_overrides={},
+    )
+    with _client(tmp_path) as client:
+        sessions = client.get("/sessions", headers=_portal_headers())
+        report = client.get(f"/sessions/{session['id']}", headers=_portal_headers())
+        missing = client.get("/sessions/missing", headers=_portal_headers())
+        unauthenticated = client.get("/sessions", follow_redirects=False)
+        unknown_alias = client.get("/app/sessions", headers=_portal_headers())
+    assert sessions.status_code == report.status_code == 200
+    assert '<div id="root"></div>' in sessions.text and '<div id="root"></div>' in report.text
+    assert missing.status_code == 404
+    assert unauthenticated.status_code in {302, 303, 401}
+    assert unknown_alias.status_code == 404
+
+
+@pytest.mark.parametrize("partial", [True, False])
+def test_canonical_sessions_routes_keep_jinja_fallback(tmp_path, monkeypatch, partial):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_partial_react_assets(tmp_path) if partial else tmp_path / "absent"
+    build_dir.mkdir(exist_ok=True)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+    db.init_db(tmp_path / "harness.db")
+    session = db.create_session(
+        tmp_path / "harness.db",
+        task_description="DEMO Jinja fallback 2099",
+        model="demo-model-999",
+        session_key_hash="s" * 64,
+        guardrail_overrides={},
+    )
+    with _client(tmp_path) as client:
+        sessions = client.get("/sessions", headers=_portal_headers())
+        report = client.get(f"/sessions/{session['id']}", headers=_portal_headers())
+    assert "All sessions" in sessions.text
+    assert "Session report" in report.text

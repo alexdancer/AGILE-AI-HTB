@@ -16,7 +16,7 @@ budget, review disposition) are unchanged and remain the source of truth.
 from __future__ import annotations
 
 import math
-import re
+from html.parser import HTMLParser
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -68,13 +68,37 @@ def _react_index() -> Path | None:
     return index if _referenced_assets_available(index) else None
 
 
+def react_shell_available() -> bool:
+    """Return whether the complete built React shell can serve the default landing."""
+
+    return _react_index() is not None
+
+
+class _ReactAssetReferenceParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.asset_paths: list[str] = []
+
+    def handle_starttag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        del tag
+        for name, value in attrs:
+            if name in {"src", "href"} and value and value.startswith("/static/react/"):
+                self.asset_paths.append(value)
+
+
 def _referenced_assets_available(index: Path) -> bool:
     build_dir = react_build_dir().resolve()
     try:
         html = index.read_text(encoding="utf-8")
     except OSError:
         return False
-    asset_paths = re.findall(r'(?:src|href)="(/static/react/[^"]+)"', html)
+    parser = _ReactAssetReferenceParser()
+    parser.feed(html)
+    asset_paths = parser.asset_paths
     if not asset_paths:
         return False
     for asset_path in asset_paths:

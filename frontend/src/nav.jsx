@@ -6,6 +6,7 @@ import React from "react";
 // normally while plain clicks stay in-shell. Non-migrated Jinja surfaces keep
 // using ordinary <a> full navigations.
 export const NavContext = React.createContext(() => {});
+export const NavigationGuardContext = React.createContext(() => {});
 
 export function AppLink({ to, className, children }) {
   const navigate = React.useContext(NavContext);

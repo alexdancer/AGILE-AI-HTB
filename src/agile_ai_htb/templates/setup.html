@@ -28,13 +28,13 @@
   <div class="panel-header"><h3>Launch readiness</h3></div>
   <div class="panel-body">
     {% if ready_to_launch %}
-    <p><span class="pill green">ready</span> Worker execution has a budget-authoritative adapter and confirmed budget.</p>
-    <p><a class="btn primary" href="/board">Open task board</a></p>
+    <p><span class="pill green">ready</span> Worker execution has a confirmed budget, budget-authoritative adapter, and launch-ready Connected Project.</p>
+    <p><a class="btn primary" href="{{ next_step.href }}">Open task board</a></p>
     {% else %}
     <p><span class="pill yellow">setup needed</span> Complete the required setup steps before governed Worker launch.</p>
     <ol>
-      <!-- The first three setup checks gate governed Worker launch. -->
-      {% for step in steps[:3] %}
+      <!-- All setup checks gate governed Worker launch. -->
+      {% for step in steps %}
       <li><a href="{{ step.href }}">{{ step.name }}</a>: {{ step.state }}</li>
       {% endfor %}
     </ol>

@@ -40,7 +40,7 @@
   </div>
 </div>
 
-{% if breakdown.status != 'failed' %}
+{% if breakdown.status == 'proposed' and controls.can_accept %}
 <!-- Accepting candidates is what materializes board tasks from this review. -->
 <form method="post" action="/task-breakdowns/{{ breakdown.id }}/accept">
   <div class="grid cols-2">
@@ -124,5 +124,30 @@
     <a href="{{ board_path }}" class="btn ghost">Cancel</a>
   </div>
 </form>
+{% elif accepting %}
+<section class="panel">
+  <div class="panel-header"><h3>Acceptance in progress</h3></div>
+  <div class="panel-body">
+    <p>This review is read-only while acceptance is in progress or requires controlled operator repair.</p>
+    <h4>Created Task IDs</h4>
+    {% if breakdown.created_task_ids %}<ul class="muted">{% for task_id in breakdown.created_task_ids %}<li>{{ task_id }}</li>{% endfor %}</ul>{% else %}<p class="muted">No Tasks were materialized before the claim stopped.</p>{% endif %}
+    <a href="{{ board_path }}" class="btn ghost">Open board</a>
+  </div>
+</section>
+{% elif breakdown.status == 'accepted' %}
+<section class="panel">
+  <div class="panel-header"><h3>Accepted review</h3></div>
+  <div class="panel-body">
+    <p>This review is read-only. {{ breakdown.created_task_ids|length }} Tasks were created.</p>
+    <h4>Created Task IDs</h4>
+    {% if breakdown.created_task_ids %}<ul class="muted">{% for task_id in breakdown.created_task_ids %}<li>{{ task_id }}</li>{% endfor %}</ul>{% else %}<p class="muted">No Tasks were recorded.</p>{% endif %}
+    <a href="{{ board_path }}" class="btn ghost">Open board</a>
+  </div>
+</section>
+{% elif breakdown.status == 'proposed' %}
+<section class="panel">
+  <div class="panel-header"><h3>No candidates available</h3></div>
+  <div class="panel-body"><a href="{{ board_path }}" class="btn ghost">Open board</a></div>
+</section>
 {% endif %}
 {% endblock %}

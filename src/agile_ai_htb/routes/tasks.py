@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from pydantic import ValidationError
@@ -29,6 +29,7 @@ from agile_ai_htb.task_breakdown import (
     breakdown_task_source,
     validate_breakdown_result,
 )
+from agile_ai_htb.task_breakdown_handoff import build_task_breakdown_review_context
 from agile_ai_htb.template_context import portal_template_context
 from agile_ai_htb.worker_model_allowlist import allowed_worker_model_ids
 
@@ -289,8 +290,14 @@ async def _estimate_and_create_task(
     remaining_daily_tokens: int | None = None,
     daily_cap_tokens: int | None = None,
     extra_metadata: dict[str, Any] | None = None,
+    task_id: str | None = None,
 ) -> dict[str, Any]:
     database_path = request.app.state.settings.database_path
+    if task_id is not None:
+        try:
+            return db.get_task(database_path, task_id)
+        except KeyError:
+            pass
     settings = request.app.state.settings
     estimator_model = settings.estimator_model
     try:
@@ -308,6 +315,7 @@ async def _estimate_and_create_task(
     except EstimatorError as exc:
         return db.create_task(
             database_path,
+            task_id=task_id,
             description=description,
             status="Blocked",
             metadata={
@@ -365,6 +373,7 @@ async def _estimate_and_create_task(
     metadata = _with_single_project_default(database_path, metadata)
     task = db.create_task(
         database_path,
+        task_id=task_id,
         description=description,
         status="Estimated",
         estimate_tokens=result.token_estimate,
@@ -467,107 +476,260 @@ async def _estimate_form_for_project(
 
 
 @router.get("/task-breakdowns/{breakdown_id}/review", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
-def task_breakdown_review(breakdown_id: str, request: Request) -> HTMLResponse:
-    try:
-        breakdown = db.get_task_breakdown(request.app.state.settings.database_path, breakdown_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Task breakdown not found") from exc
+def task_breakdown_review(breakdown_id: str, request: Request):
+    context = build_task_breakdown_review_context(request, breakdown_id)
+    from agile_ai_htb.routes.react_shell import react_build_dir, react_shell_available
+
+    if react_shell_available():
+        return FileResponse(react_build_dir() / "index.html")
     return templates.TemplateResponse(
         request,
         "task_breakdown_review.html",
-        {"active_page": "board", "breakdown": breakdown, "board_path": _breakdown_board_path(breakdown)},
+        context,
     )
 
 
 @router.post("/task-breakdowns/{breakdown_id}/accept", dependencies=[Depends(require_portal_auth)])
-async def accept_task_breakdown(breakdown_id: str, request: Request) -> RedirectResponse:
+async def accept_task_breakdown(breakdown_id: str, request: Request):
     database_path = request.app.state.settings.database_path
+    wants_json = _wants_react_json(request)
     try:
         breakdown = db.get_task_breakdown(database_path, breakdown_id)
     except KeyError as exc:
+        if wants_json:
+            return _breakdown_action_outcome(None, status_code=404, error="Task breakdown not found.")
         raise HTTPException(status_code=404, detail="Task breakdown not found") from exc
     if breakdown["status"] == "accepted":
+        if wants_json:
+            return _breakdown_action_outcome(breakdown, ok=True, next_href=_breakdown_react_board_path(breakdown))
         return RedirectResponse(_breakdown_board_path(breakdown), status_code=303)
-    if breakdown["status"] == "failed":
+    if breakdown.get("status") not in {"proposed", "pending_review"}:
+        if wants_json:
+            return _breakdown_action_outcome(
+                breakdown,
+                status_code=409,
+                error="Review must be retried or replaced manually before acceptance.",
+                retry_href=f"/task-breakdowns/{breakdown_id}/review",
+            )
         return RedirectResponse(f"/task-breakdowns/{breakdown_id}/review", status_code=303)
 
-    form = await request.form()
-    global_contract_summary = str(
-        form.get("global_contract_summary") or breakdown.get("global_contract_summary") or ""
-    ).strip()
-    global_constraints = _textarea_lines(str(form.get("global_constraints") or ""))
-    verification = _textarea_lines(str(form.get("verification") or ""))
-    accepted_candidates = _accepted_breakdown_candidates(breakdown, form)
-    created_task_ids: list[str] = []
-    for index, candidate in enumerate(accepted_candidates, start=1):
-        # Each accepted candidate becomes an independently estimated board task.
-        description = _breakdown_candidate_description(
-            candidate,
-            global_contract_summary,
-            global_constraints,
-            verification,
-            source_text=breakdown.get("source_text", ""),
+    try:
+        form = await request.form()
+        candidates = breakdown.get("candidates")
+        _validate_breakdown_accept_form(
+            form, candidate_count=len(candidates) if isinstance(candidates, list) else 0
         )
-        task = await _estimate_and_create_task(
-            request,
-            description,
-            extra_metadata={
-                **breakdown.get("intake_metadata", {}),
-                "task_breakdown_id": breakdown["id"],
-                "task_breakdown_source_sha256": breakdown["source_sha256"],
-                "task_breakdown_decision": breakdown["decision"],
-                "task_breakdown_index": index,
-                "task_breakdown_count": len(accepted_candidates),
-                "task_breakdown_kind": candidate["kind"],
-                "task_breakdown_title": candidate["title"],
-                "task_breakdown_objective": candidate["objective"],
-                "task_breakdown_prompt": candidate["prompt"],
-                "task_breakdown_acceptance_criteria": candidate["acceptance_criteria"],
-                "task_breakdown_constraints": candidate["constraints"],
-                "task_breakdown_proof": candidate["proof"],
-                "task_breakdown_dependencies": candidate["dependencies"],
-                "task_breakdown_likely_entry_points": candidate["likely_entry_points"],
-                "task_breakdown_execution_mode": candidate["execution_mode"],
-                "task_breakdown_hitl_reason": candidate["hitl_reason"],
-                "task_breakdown_policy_evidence": _candidate_policy_evidence(candidate),
-                "task_breakdown_global_contract_summary": global_contract_summary,
-                "task_breakdown_global_constraints": global_constraints,
-                "task_breakdown_verification": verification,
-                "task_breakdown_recommended_last": candidate["kind"] == "acceptance_verification",
+        global_contract_summary = _present_text_or_original(
+            form, "global_contract_summary", breakdown.get("global_contract_summary")
+        )
+        if not global_contract_summary:
+            raise HTTPException(status_code=422, detail="Task breakdown acceptance is invalid.")
+        global_constraints = _present_lines_or_original(
+            form, "global_constraints", breakdown.get("global_constraints")
+        )
+        verification = _present_lines_or_original(form, "verification", breakdown.get("verification"))
+        accepted_candidates = _accepted_breakdown_candidates(
+            breakdown, form, presence_aware=True
+        )
+        claimed_breakdown = db.update_task_breakdown(
+            database_path,
+            breakdown_id,
+            {
+                "status": "accepting",
+                "candidates": accepted_candidates,
+                "global_contract_summary": global_contract_summary,
+                "global_constraints": global_constraints,
+                "verification": verification,
+                "created_task_ids": [],
             },
+            expected_statuses={"proposed", "pending_review"},
+            expected_revision=breakdown["revision"],
         )
-        created_task_ids.append(task["id"])
-    db.update_task_breakdown(
-        database_path,
-        breakdown_id,
-        {
-            "status": "accepted",
-            "candidates": accepted_candidates,
-            "global_contract_summary": global_contract_summary,
-            "global_constraints": global_constraints,
-            "verification": verification,
-            "created_task_ids": created_task_ids,
-        },
-    )
+        if claimed_breakdown is None:
+            breakdown = db.get_task_breakdown(database_path, breakdown_id)
+            if breakdown["status"] == "accepted":
+                if wants_json:
+                    return _breakdown_action_outcome(
+                        breakdown, ok=True, next_href=_breakdown_react_board_path(breakdown)
+                    )
+                return RedirectResponse(_breakdown_board_path(breakdown), status_code=303)
+            if wants_json:
+                return _breakdown_action_outcome(
+                    breakdown,
+                    status_code=409,
+                    error="Task breakdown changed or acceptance is already in progress.",
+                    retry_href=f"/task-breakdowns/{breakdown_id}/review",
+                )
+            return RedirectResponse(f"/task-breakdowns/{breakdown_id}/review", status_code=303)
+        breakdown = claimed_breakdown
+        created_task_ids: list[str] = []
+        for index, candidate in enumerate(accepted_candidates, start=1):
+            source_index = candidate["_source_index"]
+            description = _breakdown_candidate_description(
+                candidate,
+                global_contract_summary,
+                global_constraints,
+                verification,
+                source_text=breakdown.get("source_text", ""),
+            )
+            task = await _estimate_and_create_task(
+                request,
+                description,
+                task_id=_task_breakdown_candidate_task_id(breakdown_id, source_index),
+                extra_metadata={
+                    **breakdown.get("intake_metadata", {}),
+                    "task_breakdown_id": breakdown["id"],
+                    "task_breakdown_source_sha256": breakdown["source_sha256"],
+                    "task_breakdown_decision": breakdown["decision"],
+                    "task_breakdown_index": index,
+                    "task_breakdown_count": len(accepted_candidates),
+                    "task_breakdown_kind": candidate["kind"],
+                    "task_breakdown_title": candidate["title"],
+                    "task_breakdown_objective": candidate["objective"],
+                    "task_breakdown_prompt": candidate["prompt"],
+                    "task_breakdown_acceptance_criteria": candidate["acceptance_criteria"],
+                    "task_breakdown_constraints": candidate["constraints"],
+                    "task_breakdown_proof": candidate["proof"],
+                    "task_breakdown_dependencies": candidate["dependencies"],
+                    "task_breakdown_likely_entry_points": candidate["likely_entry_points"],
+                    "task_breakdown_execution_mode": candidate["execution_mode"],
+                    "task_breakdown_hitl_reason": candidate["hitl_reason"],
+                    "task_breakdown_policy_evidence": _candidate_policy_evidence(candidate),
+                    "task_breakdown_global_contract_summary": global_contract_summary,
+                    "task_breakdown_global_constraints": global_constraints,
+                    "task_breakdown_verification": verification,
+                    "task_breakdown_recommended_last": candidate["kind"] == "acceptance_verification",
+                },
+            )
+            created_task_ids.append(task["id"])
+            updated_claim = db.update_task_breakdown(
+                database_path,
+                breakdown_id,
+                {"created_task_ids": created_task_ids},
+                expected_statuses={"accepting"},
+                expected_revision=breakdown["revision"],
+            )
+            if updated_claim is None:
+                raise RuntimeError("Task breakdown acceptance claim was lost.")
+            breakdown = updated_claim
+        persisted_candidates = [
+            {key: value for key, value in candidate.items() if key != "_source_index"}
+            for candidate in accepted_candidates
+        ]
+        created_task_ids = list(
+            dict.fromkeys(
+                [*created_task_ids, *db.list_task_ids_for_breakdown(database_path, breakdown_id)]
+            )
+        )
+        accepted_breakdown = db.update_task_breakdown(
+            database_path,
+            breakdown_id,
+            {
+                "status": "accepted",
+                "candidates": persisted_candidates,
+                "global_contract_summary": global_contract_summary,
+                "global_constraints": global_constraints,
+                "verification": verification,
+                "created_task_ids": created_task_ids,
+            },
+            expected_statuses={"accepting"},
+            expected_revision=breakdown["revision"],
+        )
+        if accepted_breakdown is None:
+            raise RuntimeError("Task breakdown acceptance claim was lost.")
+        breakdown = accepted_breakdown
+    except (HTTPException, TaskBreakdownError, ValueError) as exc:
+        if wants_json:
+            return _breakdown_action_outcome(
+                breakdown,
+                status_code=422,
+                error="Task breakdown acceptance is invalid.",
+                retry_href=f"/task-breakdowns/{breakdown_id}/review",
+            )
+        raise exc
+    except Exception:
+        if wants_json:
+            return _breakdown_action_outcome(
+                breakdown,
+                status_code=500,
+                error="Task breakdown action failed.",
+                retry_href=f"/task-breakdowns/{breakdown_id}/review",
+            )
+        raise
+    if wants_json:
+        return _breakdown_action_outcome(breakdown, ok=True, next_href=_breakdown_react_board_path(breakdown))
     return RedirectResponse(_breakdown_board_path(breakdown), status_code=303)
 
 
 @router.post("/task-breakdowns/{breakdown_id}/retry", dependencies=[Depends(require_portal_auth)])
-async def retry_task_breakdown(breakdown_id: str, request: Request) -> RedirectResponse:
+async def retry_task_breakdown(breakdown_id: str, request: Request):
     database_path = request.app.state.settings.database_path
+    wants_json = _wants_react_json(request)
     try:
         breakdown = db.get_task_breakdown(database_path, breakdown_id)
     except KeyError as exc:
+        if wants_json:
+            return _breakdown_action_outcome(None, status_code=404, error="Task breakdown not found.")
         raise HTTPException(status_code=404, detail="Task breakdown not found") from exc
     if breakdown["status"] == "accepted":
+        if wants_json:
+            return _breakdown_action_outcome(breakdown, ok=True, next_href=_breakdown_react_board_path(breakdown))
         return RedirectResponse(_breakdown_board_path(breakdown), status_code=303)
-    updates = await _task_breakdown_agent_updates(
-        request,
-        breakdown["source_text"],
-        breakdown.get("intake_metadata", {}),
-        source_sha256=breakdown["source_sha256"],
-    )
-    db.update_task_breakdown(database_path, breakdown_id, updates)
+    if breakdown["status"] == "accepting":
+        if wants_json:
+            return _breakdown_action_outcome(
+                breakdown,
+                status_code=409,
+                error="Task breakdown acceptance is already in progress.",
+                retry_href=f"/task-breakdowns/{breakdown_id}/review",
+            )
+        return RedirectResponse(f"/task-breakdowns/{breakdown_id}/review", status_code=303)
+    try:
+        updates = await _task_breakdown_agent_updates(
+            request,
+            breakdown["source_text"],
+            breakdown.get("intake_metadata", {}),
+            source_sha256=breakdown["source_sha256"],
+        )
+        updated_breakdown = db.update_task_breakdown(
+            database_path,
+            breakdown_id,
+            updates,
+            expected_statuses={breakdown["status"]},
+            expected_revision=breakdown["revision"],
+        )
+        if updated_breakdown is None:
+            breakdown = db.get_task_breakdown(database_path, breakdown_id)
+            if breakdown["status"] == "accepted":
+                if wants_json:
+                    return _breakdown_action_outcome(
+                        breakdown, ok=True, next_href=_breakdown_react_board_path(breakdown)
+                    )
+                return RedirectResponse(_breakdown_board_path(breakdown), status_code=303)
+            if wants_json:
+                return _breakdown_action_outcome(
+                    breakdown,
+                    status_code=409,
+                    error="Task breakdown changed while Retry was running.",
+                    retry_href=f"/task-breakdowns/{breakdown_id}/review",
+                )
+            return RedirectResponse(f"/task-breakdowns/{breakdown_id}/review", status_code=303)
+        breakdown = updated_breakdown
+    except Exception:
+        if wants_json:
+            return _breakdown_action_outcome(
+                breakdown,
+                status_code=500,
+                error="Task breakdown action failed.",
+                retry_href=f"/task-breakdowns/{breakdown_id}/review",
+            )
+        raise
+    if wants_json:
+        return _breakdown_action_outcome(
+            breakdown,
+            ok=True,
+            next_href=f"/task-breakdowns/{breakdown_id}/review",
+        )
     return RedirectResponse(f"/task-breakdowns/{breakdown_id}/review", status_code=303)
 
 
@@ -575,45 +737,115 @@ async def retry_task_breakdown(breakdown_id: str, request: Request) -> RedirectR
 async def manual_task_breakdown_candidate(
     breakdown_id: str,
     request: Request,
-    title: str = Form(""),
-    prompt: str = Form(""),
-    acceptance_criteria: str = Form(""),
-) -> RedirectResponse:
+):
     database_path = request.app.state.settings.database_path
+    wants_json = _wants_react_json(request)
     try:
         breakdown = db.get_task_breakdown(database_path, breakdown_id)
     except KeyError as exc:
+        if wants_json:
+            return _breakdown_action_outcome(None, status_code=404, error="Task breakdown not found.")
         raise HTTPException(status_code=404, detail="Task breakdown not found") from exc
     if breakdown["status"] == "accepted":
+        if wants_json:
+            return _breakdown_action_outcome(breakdown, ok=True, next_href=_breakdown_react_board_path(breakdown))
         return RedirectResponse(_breakdown_board_path(breakdown), status_code=303)
-    candidate = {
-        "kind": "implementation",
-        "title": (title or "Manual task from source").strip(),
-        "objective": (prompt or breakdown["source_text"]).strip(),
-        "prompt": (prompt or breakdown["source_text"]).strip(),
-        "acceptance_criteria": acceptance_criteria.strip(),
-        "constraints": [],
-        "proof": acceptance_criteria.strip() or "Operator-provided manual candidate requires manual verification.",
-        "why_this_task_exists": "Operator created this manual candidate from the original source.",
-        "why_not_smaller": "Manual recovery keeps the source as one reviewed slice until the operator refines it.",
-        "why_not_larger": "This manual candidate is scoped to the original Task Breakdown source.",
-        "dependencies": [],
-        "likely_entry_points": [],
-        "execution_mode": "HITL",
-        "hitl_reason": "Manual recovery candidate requires operator review.",
-        "human_in_loop": True,
-    }
-    db.update_task_breakdown(
-        database_path,
-        breakdown_id,
-        {
-            "status": "proposed",
-            "decision": "single_task",
-            "candidates": [candidate],
-            "failure_type": None,
-            "failure_message": None,
-        },
-    )
+    if breakdown["status"] == "accepting":
+        if wants_json:
+            return _breakdown_action_outcome(
+                breakdown,
+                status_code=409,
+                error="Task breakdown acceptance is already in progress.",
+                retry_href=f"/task-breakdowns/{breakdown_id}/review",
+            )
+        return RedirectResponse(f"/task-breakdowns/{breakdown_id}/review", status_code=303)
+    try:
+        form = await request.form()
+        _validate_manual_breakdown_form(form)
+        title = (
+            str(form.get("title") or "").strip()
+            if "title" in form
+            else "Manual task from source"
+        )
+        prompt = (
+            str(form.get("prompt") or "").strip()
+            if "prompt" in form
+            else str(breakdown.get("source_text") or "").strip()
+        )
+        if not title or not prompt:
+            raise HTTPException(status_code=422, detail="Manual candidate is invalid.")
+        acceptance_criteria = str(form.get("acceptance_criteria") or "").strip()
+        candidate = {
+            "kind": "implementation",
+            "title": title,
+            "objective": prompt,
+            "prompt": prompt,
+            "acceptance_criteria": acceptance_criteria,
+            "constraints": [],
+            "proof": acceptance_criteria or "Operator-provided manual candidate requires manual verification.",
+            "why_this_task_exists": "Operator created this manual candidate from the original source.",
+            "why_not_smaller": "Manual recovery keeps the source as one reviewed slice until the operator refines it.",
+            "why_not_larger": "This manual candidate is scoped to the original Task Breakdown source.",
+            "dependencies": [],
+            "likely_entry_points": [],
+            "execution_mode": "HITL",
+            "hitl_reason": "Manual recovery candidate requires operator review.",
+            "human_in_loop": True,
+        }
+        updated_breakdown = db.update_task_breakdown(
+            database_path,
+            breakdown_id,
+            {
+                "status": "proposed",
+                "decision": "single_task",
+                "candidates": [candidate],
+                "failure_type": None,
+                "failure_message": None,
+            },
+            expected_statuses={breakdown["status"]},
+            expected_revision=breakdown["revision"],
+        )
+        if updated_breakdown is None:
+            breakdown = db.get_task_breakdown(database_path, breakdown_id)
+            if breakdown["status"] == "accepted":
+                if wants_json:
+                    return _breakdown_action_outcome(
+                        breakdown, ok=True, next_href=_breakdown_react_board_path(breakdown)
+                    )
+                return RedirectResponse(_breakdown_board_path(breakdown), status_code=303)
+            if wants_json:
+                return _breakdown_action_outcome(
+                    breakdown,
+                    status_code=409,
+                    error="Task breakdown changed while Manual recovery was running.",
+                    retry_href=f"/task-breakdowns/{breakdown_id}/review",
+                )
+            return RedirectResponse(f"/task-breakdowns/{breakdown_id}/review", status_code=303)
+        breakdown = updated_breakdown
+    except (HTTPException, ValueError):
+        if wants_json:
+            return _breakdown_action_outcome(
+                breakdown,
+                status_code=422,
+                error="Manual candidate is invalid.",
+                retry_href=f"/task-breakdowns/{breakdown_id}/review",
+            )
+        raise
+    except Exception:
+        if wants_json:
+            return _breakdown_action_outcome(
+                breakdown,
+                status_code=500,
+                error="Task breakdown action failed.",
+                retry_href=f"/task-breakdowns/{breakdown_id}/review",
+            )
+        raise
+    if wants_json:
+        return _breakdown_action_outcome(
+            breakdown,
+            ok=True,
+            next_href=f"/task-breakdowns/{breakdown_id}/review",
+        )
     return RedirectResponse(f"/task-breakdowns/{breakdown_id}/review", status_code=303)
 
 
@@ -761,77 +993,200 @@ def _breakdown_repo_context_evidence(brief: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _accepted_breakdown_candidates(breakdown: dict[str, Any], form: Any) -> list[dict[str, Any]]:
+_BREAKDOWN_ACCEPT_FIELD_LIMITS = {
+    "global_contract_summary": 50_000,
+    "global_constraints": 50_000,
+    "verification": 50_000,
+    "title": 1_000,
+    "kind": 64,
+    "execution_mode": 64,
+    "objective": 20_000,
+    "prompt": 100_000,
+    "acceptance_criteria": 40_000,
+    "proof": 40_000,
+    "hitl_reason": 20_000,
+    "constraints": 40_000,
+    "why_this_task_exists": 20_000,
+    "why_not_smaller": 20_000,
+    "why_not_larger": 20_000,
+    "dependencies": 40_000,
+    "likely_entry_points": 40_000,
+}
+
+
+def _breakdown_action_outcome(
+    breakdown: dict[str, Any] | None,
+    *,
+    ok: bool = False,
+    error: str | None = None,
+    next_href: str | None = None,
+    retry_href: str | None = None,
+    status_code: int = 200,
+    created_task_count: int | None = None,
+) -> JSONResponse:
+    if breakdown is None:
+        breakdown_id = None
+        status_value = None
+        count = 0
+    else:
+        breakdown_id = str(breakdown.get("id") or "") or None
+        raw_status = breakdown.get("status")
+        status_value = "proposed" if raw_status in {"pending_review", "accepting"} else raw_status
+        if status_value not in {"proposed", "failed", "accepted"}:
+            status_value = "failed"
+        stored_ids = breakdown.get("created_task_ids")
+        count = len(stored_ids) if isinstance(stored_ids, list) and status_value == "accepted" else 0
+    if created_task_count is not None:
+        count = created_task_count
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "ok": bool(ok),
+            "error": error,
+            "next_href": next_href,
+            "retry_href": retry_href,
+            "breakdown_id": breakdown_id,
+            "status": status_value,
+            "created_task_count": count,
+        },
+    )
+
+
+def _validate_breakdown_accept_form(form: Any, *, candidate_count: int) -> None:
+    global_fields = {
+        "global_contract_summary",
+        "global_constraints",
+        "verification",
+    }
+    candidate_fields = set(_BREAKDOWN_ACCEPT_FIELD_LIMITS) - global_fields
+    candidate_fields.add("accept")
+    for raw_key, raw_value in form.items():
+        key = str(raw_key)
+        if key in global_fields:
+            field = key
+        else:
+            match = re.fullmatch(r"([a-z_]+)_(0|[1-9]\d*)", key)
+            if (
+                not match
+                or match.group(1) not in candidate_fields
+                or int(match.group(2)) >= candidate_count
+            ):
+                raise HTTPException(status_code=422, detail="Task breakdown acceptance is invalid.")
+            field = match.group(1)
+        limit = _BREAKDOWN_ACCEPT_FIELD_LIMITS.get(field)
+        if limit is not None and len(str(raw_value)) > limit:
+            raise HTTPException(status_code=422, detail="Task breakdown acceptance is invalid.")
+
+
+def _validate_manual_breakdown_form(form: Any) -> None:
+    limits = {"title": 1_000, "prompt": 100_000, "acceptance_criteria": 40_000}
+    if any(str(field) not in limits for field in form):
+        raise HTTPException(status_code=422, detail="Manual candidate is invalid.")
+    for field, limit in limits.items():
+        if field in form and len(str(form.get(field) or "")) > limit:
+            raise HTTPException(status_code=422, detail="Manual candidate is invalid.")
+
+
+def _present_text_or_original(form: Any, field: str, original: Any) -> str:
+    if field in form:
+        return str(form.get(field) or "").strip()
+    return original.strip() if isinstance(original, str) else ""
+
+
+def _present_lines_or_original(form: Any, field: str, original: Any) -> list[str]:
+    if field in form:
+        return _textarea_lines(str(form.get(field) or ""))
+    return [item.strip() for item in original if isinstance(item, str) and item.strip()] if isinstance(original, list) else []
+
+
+def _accepted_breakdown_candidates(
+    breakdown: dict[str, Any], form: Any, *, presence_aware: bool = False
+) -> list[dict[str, Any]]:
     accepted: list[dict[str, Any]] = []
-    for index, original in enumerate(breakdown.get("candidates", [])):
+    source_indexes: list[int] = []
+    candidates = breakdown.get("candidates")
+    for index, original in enumerate(candidates if isinstance(candidates, list) else []):
         if f"accept_{index}" not in form:
             continue
-        title = str(form.get(f"title_{index}") or original.get("title") or "").strip()
-        prompt = str(form.get(f"prompt_{index}") or original.get("prompt") or "").strip()
-        kind = str(form.get(f"kind_{index}") or original.get("kind") or "implementation").strip()
-        objective = _form_or_original_text(form, original, "objective", index, fallback=prompt)
-        proof = _form_or_original_text(
+        original = original if isinstance(original, dict) else {}
+        title = _candidate_form_text(form, original, "title", index, presence_aware=presence_aware)
+        prompt = _candidate_form_text(form, original, "prompt", index, presence_aware=presence_aware)
+        kind = _candidate_form_text(form, original, "kind", index, fallback="implementation", presence_aware=presence_aware)
+        objective = _candidate_form_text(form, original, "objective", index, fallback=prompt, presence_aware=presence_aware)
+        acceptance_criteria = _candidate_form_text(form, original, "acceptance_criteria", index, presence_aware=presence_aware)
+        proof = _candidate_form_text(form, original, "proof", index, fallback=acceptance_criteria, presence_aware=presence_aware)
+        execution_mode = _candidate_execution_mode(
+            form, original, index, presence_aware=presence_aware
+        )
+        hitl_reason = _candidate_form_text(
             form,
             original,
-            "proof",
+            "hitl_reason",
             index,
-            fallback=str(original.get("acceptance_criteria") or "").strip(),
+            presence_aware=presence_aware,
+            empty_uses_fallback=not presence_aware,
         )
-        execution_mode = _candidate_execution_mode(form, original, index)
-        hitl_reason = _form_or_original_text(form, original, "hitl_reason", index, fallback="")
         if execution_mode == "AFK":
             hitl_reason = ""
-        if not title or not prompt:
-            continue
+        why_this_task_exists = _candidate_form_text(
+            form,
+            original,
+            "why_this_task_exists",
+            index,
+            fallback=f"{title} is a distinct board-card candidate from the source contract.",
+            presence_aware=presence_aware,
+        )
+        why_not_smaller = _candidate_form_text(
+            form,
+            original,
+            "why_not_smaller",
+            index,
+            fallback="Smaller substeps would not be independently useful and verifiable.",
+            presence_aware=presence_aware,
+        )
+        why_not_larger = _candidate_form_text(
+            form,
+            original,
+            "why_not_larger",
+            index,
+            fallback="Merging this with adjacent work would broaden the Worker prompt and weaken reviewability.",
+            presence_aware=presence_aware,
+        )
+        if kind not in {"implementation", "acceptance_verification"}:
+            raise HTTPException(status_code=422, detail="Task breakdown acceptance is invalid.")
+        if execution_mode not in {"AFK", "HITL"}:
+            raise HTTPException(status_code=422, detail="Task breakdown acceptance is invalid.")
+        required = [title, objective, prompt, acceptance_criteria, proof, why_this_task_exists, why_not_smaller, why_not_larger]
+        if execution_mode == "HITL" and presence_aware:
+            required.append(hitl_reason)
+        if any(not value for value in required):
+            raise HTTPException(status_code=422, detail="Task breakdown acceptance is invalid.")
         accepted.append(
             {
                 "kind": kind,
                 "title": title,
                 "objective": objective,
                 "prompt": prompt,
-                "acceptance_criteria": str(
-                    form.get(f"acceptance_criteria_{index}")
-                    or original.get("acceptance_criteria")
-                    or ""
-                ).strip(),
-                "constraints": _textarea_lines(
-                    str(form.get(f"constraints_{index}") or "\n".join(original.get("constraints", [])))
-                ),
+                "acceptance_criteria": acceptance_criteria,
+                "constraints": _candidate_form_lines(form, original, "constraints", index, presence_aware=presence_aware),
                 "proof": proof,
-                "why_this_task_exists": _form_or_original_text(
-                    form,
-                    original,
-                    "why_this_task_exists",
-                    index,
-                    fallback=f"{title} is a distinct board-card candidate from the source contract.",
-                ),
-                "why_not_smaller": _form_or_original_text(
-                    form,
-                    original,
-                    "why_not_smaller",
-                    index,
-                    fallback="Smaller substeps would not be independently useful and verifiable.",
-                ),
-                "why_not_larger": _form_or_original_text(
-                    form,
-                    original,
-                    "why_not_larger",
-                    index,
-                    fallback="Merging this with adjacent work would broaden the Worker prompt and weaken reviewability.",
-                ),
-                "dependencies": _textarea_lines(
-                    str(form.get(f"dependencies_{index}") or "\n".join(original.get("dependencies", [])))
-                ),
-                "likely_entry_points": _textarea_lines(
-                    str(
-                        form.get(f"likely_entry_points_{index}")
-                        or "\n".join(original.get("likely_entry_points", []))
-                    )
-                ),
+                "why_this_task_exists": why_this_task_exists,
+                "why_not_smaller": why_not_smaller,
+                "why_not_larger": why_not_larger,
+                "dependencies": _candidate_form_lines(form, original, "dependencies", index, presence_aware=presence_aware),
+                "likely_entry_points": _candidate_form_lines(form, original, "likely_entry_points", index, presence_aware=presence_aware),
                 "execution_mode": execution_mode,
                 "hitl_reason": hitl_reason,
                 "human_in_loop": execution_mode == "HITL",
             }
+        )
+        stored_source_index = original.get("_source_index") if isinstance(original, dict) else None
+        source_indexes.append(
+            stored_source_index
+            if isinstance(stored_source_index, int)
+            and not isinstance(stored_source_index, bool)
+            and stored_source_index >= 0
+            else index
         )
     if not accepted:
         raise HTTPException(status_code=422, detail="Select at least one task candidate to accept.")
@@ -839,34 +1194,78 @@ def _accepted_breakdown_candidates(breakdown: dict[str, Any], form: Any) -> list
         {
             "decision": breakdown.get("decision") if breakdown.get("decision") in {"single_task", "proposed_task_breakdown"} else "proposed_task_breakdown",
             "candidates": accepted,
-            "rejected_items": breakdown.get("rejected_items", []),
-            "global_contract_summary": breakdown.get("global_contract_summary", ""),
-            "global_constraints": breakdown.get("global_constraints", []),
-            "verification": breakdown.get("verification", []),
-            "non_goals": breakdown.get("non_goals", []),
-            "recommended_sequence": breakdown.get("recommended_sequence", []),
-            "confidence": breakdown.get("confidence") or 0,
-            "rationale": breakdown.get("rationale") or "Operator-edited candidate.",
+            "rejected_items": [item for item in breakdown.get("rejected_items", []) if isinstance(item, dict)] if isinstance(breakdown.get("rejected_items"), list) else [],
+            "global_contract_summary": breakdown.get("global_contract_summary") if isinstance(breakdown.get("global_contract_summary"), str) else "",
+            "global_constraints": [item for item in breakdown.get("global_constraints", []) if isinstance(item, str)] if isinstance(breakdown.get("global_constraints"), list) else [],
+            "verification": [item for item in breakdown.get("verification", []) if isinstance(item, str)] if isinstance(breakdown.get("verification"), list) else [],
+            "non_goals": [item for item in breakdown.get("non_goals", []) if isinstance(item, str)] if isinstance(breakdown.get("non_goals"), list) else [],
+            "recommended_sequence": [item for item in breakdown.get("recommended_sequence", []) if isinstance(item, str)] if isinstance(breakdown.get("recommended_sequence"), list) else [],
+            "confidence": breakdown.get("confidence") if isinstance(breakdown.get("confidence"), (int, float)) and not isinstance(breakdown.get("confidence"), bool) else 0,
+            "rationale": breakdown.get("rationale") if isinstance(breakdown.get("rationale"), str) and breakdown.get("rationale") else "Operator-edited candidate.",
             "source": "llm",
         }
     )
-    return [candidate.as_dict() for candidate in result.candidates]
+    return [
+        {**candidate.as_dict(), "_source_index": source_index}
+        for source_index, candidate in zip(source_indexes, result.candidates, strict=True)
+    ]
 
 
-def _form_or_original_text(
-    form: Any, original: dict[str, Any], field: str, index: int, *, fallback: str
+def _task_breakdown_candidate_task_id(breakdown_id: str, source_index: int) -> str:
+    digest = hashlib.sha256(f"{breakdown_id}:{source_index}".encode("utf-8")).hexdigest()
+    return f"task_{digest[:32]}"
+
+
+def _candidate_form_text(
+    form: Any,
+    original: dict[str, Any],
+    field: str,
+    index: int,
+    *,
+    fallback: str = "",
+    presence_aware: bool = False,
+    empty_uses_fallback: bool = False,
 ) -> str:
-    value = form.get(f"{field}_{index}")
-    if value is None:
-        value = original.get(field)
-    text = str(value or "").strip()
+    key = f"{field}_{index}"
+    if key in form:
+        present = str(form.get(key) or "").strip()
+        if presence_aware or present:
+            return present
+        if empty_uses_fallback:
+            return fallback.strip()
+    value = original.get(field)
+    text = value.strip() if isinstance(value, str) else ""
     return text or fallback.strip()
 
 
-def _candidate_execution_mode(form: Any, original: dict[str, Any], index: int) -> str:
-    value = form.get(f"execution_mode_{index}")
+def _candidate_form_lines(
+    form: Any,
+    original: dict[str, Any],
+    field: str,
+    index: int,
+    *,
+    presence_aware: bool = False,
+) -> list[str]:
+    key = f"{field}_{index}"
+    if key in form:
+        present = _textarea_lines(str(form.get(key) or ""))
+        if presence_aware or present:
+            return present
+    value = original.get(field)
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()] if isinstance(value, list) else []
+
+
+def _candidate_execution_mode(
+    form: Any, original: dict[str, Any], index: int, *, presence_aware: bool = False
+) -> str:
+    key = f"execution_mode_{index}"
+    value = form.get(key)
+    if key in form and presence_aware:
+        return str(value or "").strip().upper()
     if value is None:
         value = original.get("execution_mode")
+    if not isinstance(value, str):
+        value = None
     if value is None or value == "":
         return "AFK" if original.get("human_in_loop") is False else "HITL"
     return str(value).strip().upper()
@@ -1408,6 +1807,12 @@ def _with_single_project_default(database_path: Path | str, metadata: dict[str, 
 
 def _breakdown_board_path(breakdown: dict[str, Any]) -> str:
     return task_project_board_path(breakdown.get("intake_metadata", {}))
+
+
+def _breakdown_react_board_path(breakdown: dict[str, Any]) -> str:
+    board_path = _breakdown_board_path(breakdown)
+    match = re.fullmatch(r"/projects/([^/]+)/board", board_path)
+    return f"/app/projects/{match.group(1)}/board" if match else board_path
 
 
 async def _launch_payload_from_request(request: Request) -> tuple[TaskLaunchRequest, bool]:
