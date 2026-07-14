@@ -1,12 +1,12 @@
 # React Portal Parity Migration Plan
 
-> **Status:** Portal chrome, Dashboard, project workspace, AGILE Board, Sessions/Session Report, Task Breakdown Review, and the React default-enable gate are complete. Remaining operator surfaces continue as full-page Jinja routes until migrated deliberately.
+> **Status:** Portal chrome, Dashboard, project workspace, AGILE Board, Sessions/Session Report, Task Breakdown Review, Project Task History, and the React default-enable gate are complete. Remaining operator surfaces continue as full-page Jinja routes until migrated deliberately.
 
 **Goal:** Move AGILE-AI-HTB toward a coherent React authenticated operator console without leaving operators in a partial `/app` island that lacks the real Portal layout, dashboard, and AGILE Board behavior.
 
 **Architecture:** FastAPI remains authoritative for authentication, persistence, task estimation, launch guardrails, Worker Run execution, token budget governance, review disposition, and audit evidence. React owns every normal user-facing route after each surface reaches parity. During migration, Jinja may continue implementing non-migrated surfaces. In the final state, only a minimal server-rendered Portal Recovery Surface remains for login and recovery when the React build is missing or partial; it is not a second operator console.
 
-**Current state:** A complete React build owns the authenticated front door, Dashboard, project workspace, normal governed AGILE Board loop, Sessions/Session Report, and canonical Task Breakdown Review. FastAPI selects the existing Jinja page when the React index or any referenced asset is missing. Alarms, Setup, Settings, and project task history remain ordinary full-page Jinja routes. Project task history is the next bounded parity candidate.
+**Current state:** A complete React build owns the authenticated front door, Dashboard, project workspace, normal governed AGILE Board loop, Sessions/Session Report, canonical Task Breakdown Review, and Project Task History. FastAPI selects the existing Jinja page when the React index or any referenced asset is missing. Alarms, Setup, and Settings remain ordinary full-page Jinja routes. Alarms inbox is the next bounded parity candidate.
 
 ---
 
@@ -226,7 +226,7 @@ Candidate order:
 1. ✅ Sessions list and full Session Report as one read-only vertical slice
 2. ✅ Task Breakdown Review
 3. ✅ Project task history
-4. Alarms inbox
+4. **Next:** Alarms inbox
 5. Budget settings
 6. Control-plane settings
 7. Worker settings
