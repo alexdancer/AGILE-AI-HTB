@@ -54,7 +54,7 @@ from foreman_ai_hq.operator_config import (
     write_control_plane_secret,
 )
 from foreman_ai_hq.project_context import task_project_id
-from foreman_ai_hq.routes.react_shell import react_shell_available
+from foreman_ai_hq.routes.react_shell import react_shell_available, _budget_json
 from foreman_ai_hq.settings import Settings
 from foreman_ai_hq.task_launch import DEFAULT_PROXY_URL, TaskLaunchBlocked, launch_task, refresh_task_from_session
 from foreman_ai_hq.routes.tasks import _ensure_review_task, _run_agent_review, _wants_react_json
@@ -102,6 +102,25 @@ def _react_action_outcome(
     if automation is not None:
         content["automation"] = automation
     return JSONResponse(status_code=status_code, content=content)
+
+
+def _react_budget_outcome(
+    *,
+    ok: bool,
+    budget: dict[str, Any] | None = None,
+    error: str | None = None,
+    status_code: int = 200,
+) -> JSONResponse:
+    """Bounded JSON outcome for budget save/reset actions."""
+
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "ok": ok,
+            "error": str(_safe_worker_evidence(error)) if error else None,
+            "budget": _budget_json(budget) if budget else None,
+        },
+    )
 
 
 def _react_restore_outcome(
@@ -500,6 +519,11 @@ def setup_overview(request: Request):
 
 @router.get("/settings/budget", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def budget_settings(request: Request):
+    from foreman_ai_hq.routes.react_shell import _react_index
+
+    index = _react_index()
+    if index is not None:
+        return FileResponse(index)
     database_path = request.app.state.settings.database_path
     config = request.app.state.guardrails
     budget = _effective_budget_settings(database_path, config, timezone=request.app.state.settings.timezone)
@@ -512,26 +536,43 @@ def budget_settings(request: Request):
 
 @router.post("/settings/budget", dependencies=[Depends(require_portal_auth)])
 async def save_budget_settings(request: Request):
-    payload, wants_html = await _budget_payload_from_request(request)
+    try:
+        payload, wants_html = await _budget_payload_from_request(request)
+    except HTTPException as exc:
+        if _wants_react_json(request):
+            return _react_budget_outcome(
+                ok=False,
+                error="daily and session caps must be positive integers",
+            )
+        raise
     database_path = request.app.state.settings.database_path
-    saved = db.set_token_budget_settings(
+    db.set_token_budget_settings(
         database_path,
         daily_cap_tokens=payload.daily_cap_tokens,
         session_cap_tokens=payload.session_cap_tokens,
     )
+    budget = _effective_budget_settings(
+        database_path,
+        request.app.state.guardrails,
+        timezone=request.app.state.settings.timezone,
+    )
     if wants_html:
         return RedirectResponse("/setup", status_code=status.HTTP_303_SEE_OTHER)
-    return saved
+    return _react_budget_outcome(ok=True, budget=budget)
 
 
 @router.post("/settings/budget/reset", dependencies=[Depends(require_portal_auth)])
 async def reset_budget_counter(request: Request):
     database_path = request.app.state.settings.database_path
-    saved = db.reset_daily_budget_counter(database_path)
-    accept = request.headers.get("accept", "")
-    if "text/html" in accept and "application/json" not in accept:
-        return RedirectResponse("/settings/budget", status_code=status.HTTP_303_SEE_OTHER)
-    return saved
+    db.reset_daily_budget_counter(database_path)
+    budget = _effective_budget_settings(
+        database_path,
+        request.app.state.guardrails,
+        timezone=request.app.state.settings.timezone,
+    )
+    if _wants_react_json(request):
+        return _react_budget_outcome(ok=True, budget=budget)
+    return RedirectResponse("/settings/budget", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.get("/board", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
@@ -1632,19 +1673,18 @@ def _control_plane_settings_with_error(request: Request, error: str):
 
 async def _budget_payload_from_request(request: Request) -> tuple[TokenBudgetSettingsRequest, bool]:
     content_type = request.headers.get("content-type", "")
-    accept = request.headers.get("accept", "")
-    wants_html = "text/html" in accept and "application/json" not in accept
+    wants_html = not _wants_react_json(request)
     if "application/json" in content_type:
         raw = await request.json()
         try:
-            return TokenBudgetSettingsRequest.model_validate(raw or {}), False
+            return TokenBudgetSettingsRequest.model_validate(raw or {}), wants_html
         except ValidationError as exc:
             raise HTTPException(status_code=422, detail=exc.errors()) from exc
     if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
         form = await request.form()
         raw = {key: int(str(value)) for key, value in form.items() if value not in (None, "")}
         try:
-            return TokenBudgetSettingsRequest.model_validate(raw), True
+            return TokenBudgetSettingsRequest.model_validate(raw), wants_html
         except (ValidationError, ValueError) as exc:
             raise HTTPException(status_code=422, detail="daily and session caps must be positive integers") from exc
     raise HTTPException(status_code=422, detail="budget settings are required")

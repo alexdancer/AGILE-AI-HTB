@@ -267,6 +267,38 @@ def react_dashboard_state(request: Request):
     }
 
 
+def _budget_json(budget: dict) -> dict:
+    """Bounded, canonical budget projection shared by the JSON endpoint and action outcomes."""
+
+    return {
+        "daily_cap_tokens": budget.get("daily_cap_tokens"),
+        "session_cap_tokens": budget.get("session_cap_tokens"),
+        "current_window_used_tokens": budget.get("current_window_used_tokens"),
+        "current_window_remaining_tokens": budget.get("current_window_remaining_tokens"),
+        "budget_since": budget.get("budget_since"),
+        "daily_usage_reset_at": budget.get("daily_usage_reset_at"),
+    }
+
+
+@router.get("/api/settings/budget", dependencies=[Depends(require_portal_auth)])
+def react_budget_settings(request: Request):
+    """Bounded, authenticated budget-setup state for the React Budget Settings view.
+
+    Reuses the same ``_effective_budget_settings`` helper that powers the Jinja
+    ``budget.html`` page so the React surface never recomputes budget rules.
+    """
+
+    from foreman_ai_hq.routes.portal import _effective_budget_settings
+
+    database_path = request.app.state.settings.database_path
+    budget = _effective_budget_settings(
+        database_path,
+        request.app.state.guardrails,
+        timezone=request.app.state.settings.timezone,
+    )
+    return _budget_json(budget)
+
+
 def _dashboard_project_entry(request: Request, project: dict) -> dict:
     """Project-card fields only; never return workspace path or configuration."""
 

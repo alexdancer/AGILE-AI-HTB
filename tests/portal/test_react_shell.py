@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -1802,6 +1803,215 @@ def test_task_history_view_source_contract():
     assert "aria-pressed" in source
     assert "colSpan" in source
     assert "filter=" in jinja_template
+
+
+def test_react_budget_settings_requires_auth(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.get("/api/settings/budget")
+    assert response.status_code == 401
+
+
+def test_react_budget_settings_json_uses_exact_contract_and_null_defaults(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        db.set_token_budget_settings(
+            database_path,
+            daily_cap_tokens=1000,
+            session_cap_tokens=200,
+        )
+        db.reset_daily_budget_counter(database_path)
+        response = client.get("/api/settings/budget", headers=_portal_headers())
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {
+        "daily_cap_tokens",
+        "session_cap_tokens",
+        "current_window_used_tokens",
+        "current_window_remaining_tokens",
+        "budget_since",
+        "daily_usage_reset_at",
+    }
+    assert payload["daily_cap_tokens"] == 1000
+    assert payload["session_cap_tokens"] == 200
+    assert payload["current_window_used_tokens"] == 0
+    assert payload["current_window_remaining_tokens"] == 1000
+    assert payload["daily_usage_reset_at"]
+    assert payload["budget_since"]
+
+
+def test_react_budget_settings_absent_caps_report_typed_null(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        guardrails = client.app.state.guardrails
+        disabled = replace(
+            guardrails,
+            daily_cap=replace(guardrails.daily_cap, enabled=False),
+            session_cap=replace(guardrails.session_cap, enabled=False),
+        )
+        monkeypatch.setattr(client.app.state, "guardrails", disabled)
+        response = client.get("/api/settings/budget", headers=_portal_headers())
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["daily_cap_tokens"] is None
+    assert payload["session_cap_tokens"] is None
+    assert payload["current_window_remaining_tokens"] is None
+    assert payload["daily_usage_reset_at"] is None
+    assert payload["current_window_used_tokens"] == 0
+
+
+def test_react_budget_save_json_outcome_and_persistence(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    headers = {**_portal_headers(), "Accept": "application/json"}
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/settings/budget",
+            headers=headers,
+            json={"daily_cap_tokens": 5000, "session_cap_tokens": 1000},
+        )
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {"ok", "error", "budget"}
+    assert payload["ok"] is True
+    assert payload["error"] is None
+    assert payload["budget"]["daily_cap_tokens"] == 5000
+    assert payload["budget"]["session_cap_tokens"] == 1000
+    saved = db.get_token_budget_settings(database_path)
+    assert saved["daily_cap_tokens"] == 5000
+    assert saved["session_cap_tokens"] == 1000
+    assert saved["confirmed"] is True
+
+
+def test_react_budget_save_json_rejects_invalid_caps_and_preserves_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    headers = {**_portal_headers(), "Accept": "application/json"}
+    with _client(tmp_path) as client:
+        db.set_token_budget_settings(
+            database_path,
+            daily_cap_tokens=1000,
+            session_cap_tokens=200,
+        )
+        response = client.post(
+            "/settings/budget",
+            headers=headers,
+            json={"daily_cap_tokens": -1, "session_cap_tokens": 0},
+        )
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {"ok", "error", "budget"}
+    assert payload["ok"] is False
+    assert payload["error"]
+    assert "Traceback" not in payload["error"]
+    assert payload["budget"] is None
+    saved = db.get_token_budget_settings(database_path)
+    assert saved["daily_cap_tokens"] == 1000
+    assert saved["session_cap_tokens"] == 200
+
+
+def test_react_budget_save_html_redirect_preserved(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/settings/budget",
+            headers=_portal_headers(),
+            data={"daily_cap_tokens": "3000", "session_cap_tokens": "500"},
+            follow_redirects=False,
+        )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/setup"
+    saved = db.get_token_budget_settings(database_path)
+    assert saved["daily_cap_tokens"] == 3000
+    assert saved["session_cap_tokens"] == 500
+
+
+def test_react_budget_reset_json_outcome_and_persistence(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    headers = {**_portal_headers(), "Accept": "application/json"}
+    with _client(tmp_path) as client:
+        db.set_token_budget_settings(
+            database_path,
+            daily_cap_tokens=1000,
+            session_cap_tokens=200,
+        )
+        response = client.post(
+            "/settings/budget/reset",
+            headers=headers,
+            json={},
+        )
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {"ok", "error", "budget"}
+    assert payload["ok"] is True
+    assert payload["error"] is None
+    assert payload["budget"]["daily_usage_reset_at"]
+    assert payload["budget"]["daily_cap_tokens"] == 1000
+
+
+def test_react_budget_reset_html_redirect_preserved(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/settings/budget/reset",
+            headers=_portal_headers(),
+            follow_redirects=False,
+        )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings/budget"
+
+
+def test_canonical_settings_budget_route_serves_react_when_built(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+    with _client(tmp_path) as client:
+        response = client.get("/settings/budget", headers=_portal_headers())
+    assert response.status_code == 200
+    assert 'id="root"' in response.text
+
+
+def test_canonical_settings_budget_route_keeps_jinja_fallback(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_partial_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+    with _client(tmp_path) as client:
+        response = client.get("/settings/budget", headers=_portal_headers())
+    assert response.status_code == 200
+    assert "Token budget" in response.text
+
+
+def test_react_budget_settings_source_contract():
+    """Frontend BudgetSettings view matches the backend contract and route wiring."""
+    app_source = Path("frontend/src/App.jsx").read_text(encoding="utf-8")
+    shell_source = Path("frontend/src/components/Shell.jsx").read_text(encoding="utf-8")
+    source = Path("frontend/src/views/BudgetSettings.jsx").read_text(encoding="utf-8")
+    api_source = Path("frontend/src/api.js").read_text(encoding="utf-8")
+
+    assert 'view: "budgetSettings"' in app_source
+    assert "<BudgetSettings />" in app_source
+    assert 'activeView === "budgetSettings"' in shell_source
+    assert 'href="/settings/budget"' in shell_source
+    assert 'href="/setup"' in source
+    assert 'useResource("/api/settings/budget"' in source
+    assert 'postJSON("/settings/budget"' in source
+    assert 'postJSON("/settings/budget/reset"' in source
+    for field in (
+        "daily_cap_tokens",
+        "session_cap_tokens",
+        "current_window_used_tokens",
+        "current_window_remaining_tokens",
+        "budget_since",
+        "daily_usage_reset_at",
+    ):
+        assert field in source, f"{field} missing from BudgetSettings.jsx"
+    assert "aria-live" in source
+    assert "role=\"dialog\"" in source
+    assert "aria-modal" in source
+    assert 'Accept: "application/json"' in api_source
 
 
 def test_react_alarms_api_requires_auth_and_bounded_projection(tmp_path, monkeypatch):

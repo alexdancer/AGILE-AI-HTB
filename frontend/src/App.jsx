@@ -10,6 +10,7 @@ import SessionReport from "./views/SessionReport.jsx";
 import TaskBreakdownReview from "./views/TaskBreakdownReview.jsx";
 import TaskHistory from "./views/TaskHistory.jsx";
 import Alarms from "./views/Alarms.jsx";
+import BudgetSettings from "./views/BudgetSettings.jsx";
 import { NavigationGuardContext } from "./nav.jsx";
 
 // The shell is served under /app. Client routes mirror the Jinja URLs so the
@@ -22,6 +23,7 @@ export function parseRoute(pathname) {
   if (normalized === "/app") return { view: "dashboard" };
   if (normalized === "/alarms") return { view: "alarms" };
   if (normalized === "/sessions") return { view: "sessions" };
+  if (normalized === "/settings/budget") return { view: "budgetSettings" };
 
   const report = normalized.match(/^\/sessions\/([^/]+)$/);
   if (report) return { view: "sessionReport", sessionId: decodeURIComponent(report[1]) };
@@ -106,6 +108,8 @@ export default function App() {
     />;
   } else if (route.view === "taskHistory") {
     content = <TaskHistory key={route.projectId} projectId={route.projectId} />;
+  } else if (route.view === "budgetSettings") {
+    content = <BudgetSettings />;
   } else {
     content = (
       <div className="notice danger">
