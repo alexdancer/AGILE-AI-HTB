@@ -222,10 +222,10 @@ If a feature cannot be ported safely yet, the React board should clearly link to
 
 Candidate order:
 
-0. Correct current Setup readiness so `Ready to launch` requires a launch-ready Connected Project
+0. ✅ Correct current Setup readiness so `Ready to launch` requires a launch-ready Connected Project
 1. ✅ Sessions list and full Session Report as one read-only vertical slice
 2. ✅ Task Breakdown Review
-3. **Next:** Project task history
+3. ✅ Project task history
 4. Alarms inbox
 5. Budget settings
 6. Control-plane settings
@@ -233,6 +233,25 @@ Candidate order:
 8. Project settings
 9. Setup overview after all four destination Settings surfaces are React
 10. Login and Portal Recovery Surface
+
+### Slice ledger
+
+Live record of each Phase 5 slice, the OpenSpec change that delivers it, and its status. `Proposed`/`Implementing` changes live in `openspec/changes/`; `Archived` ones in `openspec/changes/archive/`. Update the row when a change is proposed, and again when it archives. This table is the source of truth for status; the ✅ marks above mirror it.
+
+| # | Slice | OpenSpec change | Status |
+|---|-------|-----------------|--------|
+| 0 | Setup readiness fix | `require-launch-ready-project-setup` | Archived |
+| 1 | Sessions list + Session Report | `react-sessions-report-parity` | Archived |
+| 2 | Task Breakdown Review | `react-task-breakdown-review-parity` | Archived |
+| 3 | Project task history | `react-project-task-history` | Archived |
+| 4 | Alarms inbox | — | Not started |
+| 5 | Budget settings | — | Not started |
+| 6 | Control-plane settings | — | Not started |
+| 7 | Worker settings | — | Not started |
+| 8 | Project settings | — | Not started |
+| 9 | Setup overview | — | Not started |
+| 10 | Login + Portal Recovery Surface | — | Not started |
+| — | Final Jinja retirement | — | Not started |
 
 For each surface:
 
@@ -328,6 +347,8 @@ Add browser/manual smoke evidence before declaring the UI replacement complete:
 ---
 
 ## Proposed OpenSpec Changes
+
+> **Historical.** This captured the original Phase 1–6 landing sequence. Live per-slice change names and status now live in the [Slice ledger](#slice-ledger) under Phase 5; update that table, not this list.
 
 Recommended sequence:
 

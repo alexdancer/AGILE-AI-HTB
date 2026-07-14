@@ -5,7 +5,7 @@ Parking lot for ideas I actually want to revisit. This is not a roadmap or a pro
 ## Build next
 
 - [ ] **Portal refresh:** make the project board easier to scan, especially project navigation, worker setup, queue status, review evidence, and empty/error states.
-- [ ] **Revamped Frontend:** change the frontend to have more general quality using React or Svelte
+- [ ] **Finish React Portal migration:** React now owns the authenticated front door, Dashboard, project workspace, AGILE Board, Sessions/Session Report, Task Breakdown Review, and Project Task History. Remaining surfaces (Alarms, Settings, Setup, Login) still track in `docs/REACT_PORTAL_PARITY_PLAN.md`.
 - [ ] **Full CLI:** turn `htb` into a real terminal product for init, serve, check, projects, board tasks, worker setup, runs, reports, and budget status.
 - [ ] **CLI token usage summary:** add `htb` commands to show token usage by run, task, and day for HTB-governed sessions.
 - [ ] **CLI action sign-off:** let operators approve or deny commands/actions requested by Worker CLIs from the terminal, recording the decision as audit evidence without bypassing Harness guardrails.
@@ -18,6 +18,7 @@ Parking lot for ideas I actually want to revisit. This is not a roadmap or a pro
 - [ ] **Diff Viewer:** Have a diff viewer included
 - [ ] **Parallel task communication:** provide a way for multiple Tasks running in parallel to exchange status, findings, and handoff notes without bypassing Harness guardrails.
 - [ ] Revisit Hermes Worker Adapter support later: define a correct non-interactive command shape, prove selected-model verification, and only restore it after trustworthy run-bound usage evidence is available.
+- [ ] **ACP Worker Adapter transport:** explore adding an Agent Client Protocol (Zed's JSON-RPC-over-stdio standard) adapter kind alongside the current template-based command builders, so ACP-capable agents (Claude Code, Gemini) auto-negotiate sessions/models instead of hand-written launch/verification templates. ACP is a control/observe protocol, not a token-accounting one: it upgrades the launch, streamed tool-call, permission (→ HITL/Escalation), and cancellation layers, but must sit on top of existing Tracking Modes — an ACP session still needs `proxy_governed` or `native_usage` underneath to stay budget-authoritative, or it degrades to `observed_only`. Add it as a new adapter transport, not a replacement for the Setup tab; keep OpenCode-first launch proof intact since OpenCode/Codex do not speak ACP natively.
 - [ ] Make budget reporting more useful: estimated vs. actual tokens, orchestration vs. Worker tokens, and native-usage override evidence.
 - [ ] **Estimate vs actual breakdown:** show where a task's real token usage diverged from the estimate, with a short explanation panel.
 - [ ] Keep Task Breakdown focused on small vertical slices plus a final Acceptance Verification task for integrated features.
