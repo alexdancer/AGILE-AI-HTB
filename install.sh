@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-PACKAGE_SOURCE="${FOREMAN_AI_HQ_INSTALL_SOURCE:-git+https://github.com/alexdancer/AGILE-AI-HTB.git}"
+PACKAGE_SOURCE="${FOREMAN_AI_HQ_INSTALL_SOURCE:-git+https://github.com/alexdancer/foreman-ai-hq.git}"
 
 say() {
   printf '%s\n' "$1"

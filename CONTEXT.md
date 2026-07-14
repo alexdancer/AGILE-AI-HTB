@@ -78,7 +78,7 @@
 
 ## Operator Install
 **Definition**: The public installation path that makes the bare `foremanctl` command available outside a source checkout.
-**Properties**: Current validated path is `pipx install "git+https://github.com/alexdancer/AGILE-AI-HTB.git"`; after PyPI release it becomes `pipx install foreman-ai-hq`. The curl installer is a bootstrapper that prefers `uv tool install`, falls back to `pipx install`, verifies `foremanctl` is on `PATH`, and prints `foremanctl init` as the next command. Homebrew is planned but not public until a formula and release checksums are validated.
+**Properties**: Current validated path is `pipx install "git+https://github.com/alexdancer/foreman-ai-hq.git"`; after PyPI release it becomes `pipx install foreman-ai-hq`. The curl installer is a bootstrapper that prefers `uv tool install`, falls back to `pipx install`, verifies `foremanctl` is on `PATH`, and prints `foremanctl init` as the next command. Homebrew is planned but not public until a formula and release checksums are validated.
 **Relationships**: Precedes Operator Config. Must not ask for or store API keys, portal tokens, Worker credentials, or native CLI auth.
 
 ## Operator Config

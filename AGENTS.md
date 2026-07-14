@@ -4,7 +4,7 @@
 
 ### Issue tracker
 
-This repo tracks work in GitHub Issues for `alexdancer/AGILE-AI-HTB`. Use the `gh` CLI when creating or updating issues.
+This repo tracks work in GitHub Issues for `alexdancer/foreman-ai-hq`. Use the `gh` CLI when creating or updating issues.
 
 ### Triage labels
 

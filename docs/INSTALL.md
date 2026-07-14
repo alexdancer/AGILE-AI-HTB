@@ -7,7 +7,7 @@ Foreman AI HQ is distributed as a Python CLI package. The package exposes the `f
 Until the package is published to PyPI, install from the GitHub source URL:
 
 ```bash
-pipx install "git+https://github.com/alexdancer/AGILE-AI-HTB.git"
+pipx install "git+https://github.com/alexdancer/foreman-ai-hq.git"
 cd /path/to/your/repo
 foremanctl init
 foremanctl serve
@@ -37,14 +37,14 @@ foremanctl init
 The installer is a small bootstrapper. It prefers `uv tool install`, falls back to `pipx install`, verifies that `foremanctl` is visible on `PATH`, and prints the next operator command.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/alexdancer/AGILE-AI-HTB/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/alexdancer/foreman-ai-hq/main/install.sh | sh
 foremanctl init
 ```
 
 For development or pre-release testing, override the source:
 
 ```bash
-FOREMAN_AI_HQ_INSTALL_SOURCE="git+https://github.com/alexdancer/AGILE-AI-HTB.git" \
+FOREMAN_AI_HQ_INSTALL_SOURCE="git+https://github.com/alexdancer/foreman-ai-hq.git" \
   sh install.sh
 ```
 
@@ -57,17 +57,17 @@ Updating replaces the global `foremanctl` CLI package. It does not delete or rec
 Before the PyPI release, rerun the curl installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/alexdancer/AGILE-AI-HTB/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/alexdancer/foreman-ai-hq/main/install.sh | sh
 ```
 
 Or update the package directly with the installer you used:
 
 ```bash
-pipx install --force "git+https://github.com/alexdancer/AGILE-AI-HTB.git"
+pipx install --force "git+https://github.com/alexdancer/foreman-ai-hq.git"
 ```
 
 ```bash
-uv tool install --force "git+https://github.com/alexdancer/AGILE-AI-HTB.git"
+uv tool install --force "git+https://github.com/alexdancer/foreman-ai-hq.git"
 ```
 
 After the PyPI release, use the package upgrade command for your installer:

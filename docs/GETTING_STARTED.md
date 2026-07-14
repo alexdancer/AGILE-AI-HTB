@@ -6,7 +6,7 @@ This is the first-run guide for operators evaluating Foreman AI HQ in their own 
 
 1. Install the operator CLI:
    ```bash
-   pipx install "git+https://github.com/alexdancer/AGILE-AI-HTB.git"
+   pipx install "git+https://github.com/alexdancer/foreman-ai-hq.git"
    ```
    After PyPI release, use `pipx install foreman-ai-hq`. See [Install options](INSTALL.md) for the curl installer and Homebrew status.
 2. Initialize and start:

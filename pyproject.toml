@@ -42,10 +42,10 @@ test = [
 foremanctl = "foreman_ai_hq.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/alexdancer/AGILE-AI-HTB"
-Repository = "https://github.com/alexdancer/AGILE-AI-HTB"
-Issues = "https://github.com/alexdancer/AGILE-AI-HTB/issues"
-Changelog = "https://github.com/alexdancer/AGILE-AI-HTB/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/alexdancer/foreman-ai-hq"
+Repository = "https://github.com/alexdancer/foreman-ai-hq"
+Issues = "https://github.com/alexdancer/foreman-ai-hq/issues"
+Changelog = "https://github.com/alexdancer/foreman-ai-hq/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]

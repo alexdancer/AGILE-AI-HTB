@@ -34,7 +34,7 @@ Foreman AI HQ only governs work launched through its own board and a verified Wo
 Recommended source install before PyPI release:
 
 ```bash
-pipx install "git+https://github.com/alexdancer/AGILE-AI-HTB.git"
+pipx install "git+https://github.com/alexdancer/foreman-ai-hq.git"
 cd /path/to/your/repo
 foremanctl init
 foremanctl serve
@@ -43,7 +43,7 @@ foremanctl serve
 One-line bootstrap alternative:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/alexdancer/AGILE-AI-HTB/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/alexdancer/foreman-ai-hq/main/install.sh | sh
 foremanctl init
 foremanctl serve
 ```
@@ -66,7 +66,7 @@ uv run foremanctl serve
 More install detail: [docs/INSTALL.md](docs/INSTALL.md).
 
 To update an existing install before PyPI release, rerun the curl installer or
-`pipx install --force "git+https://github.com/alexdancer/AGILE-AI-HTB.git"`.
+`pipx install --force "git+https://github.com/alexdancer/foreman-ai-hq.git"`.
 This updates the global `foremanctl` CLI and preserves repo-local `.foreman/` state. See
 [docs/INSTALL.md](docs/INSTALL.md#updating-foreman-ai-hq).
 

@@ -13,7 +13,7 @@ Foreman AI HQ is a local, Portal-first Harness for governed coding agents. Keep 
 
 ## Issues, branches, and labels
 
-Planned work belongs in GitHub Issues for `alexdancer/AGILE-AI-HTB`. Write issues with enough acceptance criteria that a human or agent can prove the work is done.
+Planned work belongs in GitHub Issues for `alexdancer/foreman-ai-hq`. Write issues with enough acceptance criteria that a human or agent can prove the work is done.
 
 Default triage labels:
 
