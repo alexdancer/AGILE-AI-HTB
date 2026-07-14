@@ -13,3 +13,5 @@ dist/
 .codegraph/
 frontend/node_modules/
 src/foreman_ai_hq/static/react/
+# Obsidian per-machine pane/scroll state
+.obsidian/workspace.json
