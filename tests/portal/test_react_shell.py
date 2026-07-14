@@ -1643,3 +1643,164 @@ def test_canonical_sessions_routes_keep_jinja_fallback(tmp_path, monkeypatch, pa
         report = client.get(f"/sessions/{session['id']}", headers=_portal_headers())
     assert "All sessions" in sessions.text
     assert "Session report" in report.text
+
+
+def test_react_task_history_endpoint_requires_auth(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.get("/api/projects/does-not-exist/task-history")
+    assert response.status_code == 401
+
+
+def test_react_task_history_json_uses_exact_contract(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "repo")
+        session = db.create_session(
+            database_path,
+            task_description="DEMO task history session",
+            model="demo-model-999",
+            session_key_hash="s" * 64,
+            guardrail_overrides={},
+        )
+        task = db.create_task(
+            database_path,
+            description="DEMO archived history task",
+            status="Done",
+            estimate_tokens=1_000,
+            actual_tokens=2_000,
+            recommended_model="demo-model-999",
+            session_id=session["id"],
+            metadata={
+                **project_task_metadata(project),
+                "active_worker_run_id": "run-123",
+                "blocked_reason": "DEMO blocked reason",
+                "requires_manual_estimate": True,
+            },
+        )
+        db.archive_task(database_path, task["id"])
+        response = client.get(
+            f"/api/projects/{project['id']}/task-history?filter=archived",
+            headers=_portal_headers(),
+        )
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {"filters", "selected_filter", "tasks"}
+    assert all(set(filter) == {"label", "value", "count", "active"} for filter in payload["filters"])
+    assert payload["selected_filter"] == "archived"
+    assert len(payload["tasks"]) == 1
+    task = payload["tasks"][0]
+    assert set(task) == {
+        "id", "description", "status", "archived", "archived_at", "estimate_tokens",
+        "actual_tokens", "recommended_model", "session_href", "worker_run_id",
+        "blocked_reason", "requires_manual_estimate",
+    }
+    assert task["status"] == "Done"
+    assert task["archived"] is True
+    assert task["archived_at"]
+    assert task["estimate_tokens"] == 1_000
+    assert task["actual_tokens"] == 2_000
+    assert task["recommended_model"] == "demo-model-999"
+    assert task["session_href"] == f"/sessions/{session['id']}"
+    assert task["worker_run_id"] == "run-123"
+    assert task["blocked_reason"] == "DEMO blocked reason"
+    assert task["requires_manual_estimate"] is True
+
+
+def test_react_task_history_unknown_project_is_404(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.get(
+            "/api/projects/does-not-exist/task-history",
+            headers=_portal_headers(),
+        )
+    assert response.status_code == 404
+
+
+def test_canonical_task_history_route_serves_react_when_built(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "repo")
+        response = client.get(
+            f"/projects/{project['id']}/task-history", headers=_portal_headers()
+        )
+    assert response.status_code == 200
+    assert '<div id="root"></div>' in response.text
+
+
+def test_canonical_task_history_route_keeps_jinja_fallback(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_partial_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "repo")
+        response = client.get(
+            f"/projects/{project['id']}/task-history", headers=_portal_headers()
+        )
+    assert response.status_code == 200
+    assert "Task history" in response.text
+
+
+def test_unarchive_task_content_negotiation(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "repo")
+        task = db.create_task(
+            database_path,
+            description="DEMO unarchive task",
+            status="Done",
+            metadata=project_task_metadata(project),
+        )
+        db.archive_task(database_path, task["id"])
+        json_response = client.post(
+            f"/projects/{project['id']}/tasks/{task['id']}/unarchive",
+            headers={**_portal_headers(), "Accept": "application/json"},
+        )
+        html_response = client.post(
+            f"/projects/{project['id']}/tasks/{task['id']}/unarchive",
+            headers={**_portal_headers(), "Accept": "text/html"},
+            follow_redirects=False,
+        )
+    assert json_response.status_code == 200
+    payload = json_response.json()
+    assert set(payload) == {"ok", "task_id", "status", "archived"}
+    assert payload["ok"] is True
+    assert payload["task_id"] == task["id"]
+    assert payload["status"] == "Done"
+    assert payload["archived"] is False
+    assert html_response.status_code == 303
+    assert html_response.headers["location"] == f"/projects/{project['id']}/task-history"
+
+
+def test_task_history_view_source_contract():
+    """Frontend source/contract: no stale field names, all evidence fields rendered."""
+    source = Path("frontend/src/views/TaskHistory.jsx").read_text(encoding="utf-8")
+    jinja_template = Path("src/agile_ai_htb/templates/task_history.html").read_text(encoding="utf-8")
+    for field in (
+        "task.description",
+        "task.id",
+        "task.status",
+        "task.archived",
+        "task.archived_at",
+        "task.estimate_tokens",
+        "task.actual_tokens",
+        "task.recommended_model",
+        "task.session_href",
+        "task.worker_run_id",
+        "task.blocked_reason",
+        "task.requires_manual_estimate",
+    ):
+        assert field in source, f"{field} missing from TaskHistory.jsx"
+    assert "?filter=" in source
+    assert "`/projects/${projectId}/tasks/${taskId}/unarchive`" in source
+    assert "Accept: \"application/json\"" in source
+    assert "aria-live" in source
+    assert "aria-pressed" in source
+    assert "colSpan" in source
+    assert "filter=" in jinja_template

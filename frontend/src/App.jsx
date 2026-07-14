@@ -8,6 +8,7 @@ import Board from "./views/Board.jsx";
 import Sessions from "./views/Sessions.jsx";
 import SessionReport from "./views/SessionReport.jsx";
 import TaskBreakdownReview from "./views/TaskBreakdownReview.jsx";
+import TaskHistory from "./views/TaskHistory.jsx";
 import { NavigationGuardContext } from "./nav.jsx";
 
 // The shell is served under /app. Client routes mirror the Jinja URLs so the
@@ -33,6 +34,9 @@ export function parseRoute(pathname) {
 
   const workspace = normalized.match(/^\/app\/projects\/([^/]+)$/);
   if (workspace) return { view: "workspace", projectId: workspace[1] };
+
+  const taskHistory = normalized.match(/^\/projects\/([^/]+)\/task-history$/);
+  if (taskHistory) return { view: "taskHistory", projectId: decodeURIComponent(taskHistory[1]) };
 
   return { view: "notFound" };
 }
@@ -96,6 +100,8 @@ export default function App() {
       breakdownId={route.breakdownId}
       onProjectResolved={setReviewProjectId}
     />;
+  } else if (route.view === "taskHistory") {
+    content = <TaskHistory key={route.projectId} projectId={route.projectId} />;
   } else {
     content = (
       <div className="notice danger">

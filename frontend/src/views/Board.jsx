@@ -153,7 +153,7 @@ export function BoardState({
       {queueRunning ? <button className="btn small secondary" onClick={() => action(`/projects/${projectId}/queue/stop`)}>Stop queue</button> : <QueueStart projectId={projectId} queue={data.automation.queue} action={action} />}
       {data.board_summary.counts.Done > 0 && <button className="btn small secondary" onClick={() => action(`/projects/${projectId}/tasks/archive-done`)}>Archive all Done</button>}
       <AppLink className="btn small secondary" to={`/app/projects/${projectId}`}>Workspace</AppLink>
-      <a className="btn small secondary" href={data.history_href}>History</a>
+      <AppLink className="btn small secondary" to={data.history_href}>History</AppLink>
       <a className="btn small secondary" href={`/projects/${projectId}/board`}>Server board</a>
     </div>
     <section className="panel">

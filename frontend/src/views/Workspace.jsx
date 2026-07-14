@@ -159,7 +159,7 @@ export function WorkspaceState({
         <AppLink className="btn" to={links.board_href}>Open board</AppLink>
       )}
       <AppLink className="btn secondary" to="/app">Dashboard</AppLink>
-      <a className="btn secondary" href={links.task_history_href}>Task history</a>
+      <AppLink className="btn secondary" to={links.task_history_href}>Task history</AppLink>
       <a className="btn secondary" href={links.sessions_href}>Sessions</a>
       <a className="btn secondary" href={links.worker_setup_href}>Worker setup</a>
       <a className="btn secondary" href={links.project_settings_href}>Project settings</a>

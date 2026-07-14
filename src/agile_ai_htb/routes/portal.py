@@ -124,6 +124,19 @@ def _react_restore_outcome(
     )
 
 
+def _react_unarchive_outcome(task: dict[str, Any]) -> JSONResponse:
+    """Bounded JSON outcome for the React Unarchive action."""
+
+    return JSONResponse(
+        content={
+            "ok": True,
+            "task_id": str(task.get("id", ""))[:200],
+            "status": str(task.get("status", ""))[:64],
+            "archived": bool(db.task_is_archived(task)),
+        }
+    )
+
+
 def _react_automation_state(database_path: Path | str, project_id: str) -> dict[str, Any]:
     state = get_run_automation_state(database_path, project_id)
     return {
@@ -580,13 +593,19 @@ def restore_project(project_id: str, request: Request):
 
 @router.get("/projects/{project_id}/task-history", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def project_task_history(project_id: str, request: Request):
+    from agile_ai_htb.routes.react_shell import _react_index
+
     database_path = request.app.state.settings.database_path
     project = _project_view_model(request, _ensure_project(database_path, project_id))
+    selected_filter = request.query_params.get("filter", "all")
     context = _project_task_history_context(
         database_path,
         active_project=project,
-        selected_filter=request.query_params.get("filter", "all"),
+        selected_filter=selected_filter,
     )
+    index = _react_index()
+    if index is not None:
+        return FileResponse(index)
     return templates.TemplateResponse(
         request,
         "task_history.html",
@@ -642,8 +661,21 @@ def project_archive_done_tasks(project_id: str, request: Request):
 @router.post("/projects/{project_id}/tasks/{task_id}/unarchive", dependencies=[Depends(require_portal_auth)])
 def project_unarchive_task(project_id: str, task_id: str, request: Request):
     database_path = request.app.state.settings.database_path
-    _ensure_project_task(database_path, project_id, task_id)
+    try:
+        _ensure_project_task(database_path, project_id, task_id)
+    except HTTPException as exc:
+        if _wants_react_json(request):
+            return _react_action_outcome(
+                request,
+                ok=False,
+                error=str(exc.detail),
+                status_code=exc.status_code,
+            )
+        raise
     db.unarchive_task(database_path, task_id)
+    task = db.get_task(database_path, task_id)
+    if _wants_react_json(request):
+        return _react_unarchive_outcome(task)
     return RedirectResponse(f"/projects/{project_id}/task-history", status_code=status.HTTP_303_SEE_OTHER)
 
 

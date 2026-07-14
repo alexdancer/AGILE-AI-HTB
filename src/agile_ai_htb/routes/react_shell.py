@@ -28,6 +28,7 @@ from agile_ai_htb.board_workspace import (
     BOARD_COLUMNS,
     board_page_context,
     project_board_counts,
+    project_task_history_context,
     project_workspace_summary,
 )
 from agile_ai_htb.evidence_reporting import safe_evidence
@@ -481,6 +482,27 @@ def react_project_board_state(project_id: str, request: Request):
     return _react_board_projection(project, context)
 
 
+@router.get(
+    "/api/projects/{project_id}/task-history",
+    dependencies=[Depends(require_portal_auth)],
+)
+def react_project_task_history(project_id: str, request: Request):
+    """Bounded, read-only project task history for the React shell.
+
+    Reuses the same Jinja context builder and projection helpers so filter
+    counts, archive state, and per-task evidence stay single-sourced.
+    """
+
+    database_path = request.app.state.settings.database_path
+    project = _project_view_model(request, _ensure_project(database_path, project_id))
+    context = project_task_history_context(
+        database_path,
+        active_project=project,
+        selected_filter=request.query_params.get("filter", "all"),
+    )
+    return _react_history_projection(context)
+
+
 def _react_board_projection(project: dict, context: dict) -> dict:
     """Convert broad Jinja context into an explicit browser-safe allowlist."""
 
@@ -516,6 +538,49 @@ def _react_board_projection(project: dict, context: dict) -> dict:
             column: [_react_task(task) for task in (context.get("tasks_by_status") or {}).get(column, [])]
             for column in BOARD_COLUMNS
         },
+    }
+
+
+def _react_history_projection(context: dict) -> dict:
+    """Convert the project task history context into a bounded JSON contract."""
+
+    return {
+        "filters": [_react_history_filter(filter) for filter in context["history_filters"]],
+        "selected_filter": _bounded_scalar(context.get("selected_filter"), 32),
+        "tasks": [_react_history_task(task) for task in context.get("tasks", [])],
+    }
+
+
+def _react_history_filter(filter: dict) -> dict:
+    return {
+        "label": _bounded_scalar(filter.get("label"), 32),
+        "value": _bounded_scalar(filter.get("value"), 32),
+        "count": int(filter.get("count") or 0),
+        "active": bool(filter.get("active")),
+    }
+
+
+def _react_history_task(task: dict) -> dict:
+    metadata = _mapping(task.get("metadata"))
+    session_id = task.get("session_id")
+    session_href = _safe_local_href(f"/sessions/{session_id}") if session_id else None
+    return {
+        "id": str(task.get("id", ""))[:200],
+        "description": _bounded_scalar(task.get("description"), 12000),
+        "status": str(task.get("status", ""))[:64],
+        "archived": bool(db.task_is_archived(task)),
+        "archived_at": _optional_scalar(metadata.get("archived_at"), 64),
+        "estimate_tokens": _optional_number(
+            task.get("estimate_tokens"), integer=True, minimum=0, maximum=10**15
+        ),
+        "actual_tokens": _optional_number(
+            task.get("actual_tokens"), integer=True, minimum=0, maximum=10**15
+        ),
+        "recommended_model": _optional_scalar(task.get("recommended_model"), 200),
+        "session_href": session_href,
+        "worker_run_id": _optional_scalar(metadata.get("active_worker_run_id"), 200),
+        "blocked_reason": _bounded_scalar(metadata.get("blocked_reason"), 1000),
+        "requires_manual_estimate": bool(metadata.get("requires_manual_estimate")),
     }
 
 
