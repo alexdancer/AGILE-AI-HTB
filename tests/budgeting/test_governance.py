@@ -1,8 +1,8 @@
 from dataclasses import replace
 from pathlib import Path
 
-from agile_ai_htb.governance import apply_governance
-from agile_ai_htb.guardrails import load_guardrails
+from foreman_ai_hq.governance import apply_governance
+from foreman_ai_hq.guardrails import load_guardrails
 
 
 ROOT = Path(__file__).resolve().parents[2]

@@ -4,11 +4,11 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from agile_ai_htb import db
-from agile_ai_htb.app import create_app
-from agile_ai_htb.native_usage import parse_native_usage_evidence
-from agile_ai_htb.settings import Settings
-from agile_ai_htb.worker_adapters import SENTINEL_RESPONSE, verify_worker_adapter
+from foreman_ai_hq import db
+from foreman_ai_hq.app import create_app
+from foreman_ai_hq.native_usage import parse_native_usage_evidence
+from foreman_ai_hq.settings import Settings
+from foreman_ai_hq.worker_adapters import SENTINEL_RESPONSE, verify_worker_adapter
 
 ROOT = Path(__file__).resolve().parents[2]
 PORTAL_TOKEN = "test-portal-token"
@@ -106,13 +106,13 @@ def test_verify_worker_adapter_uses_fake_runner_sentinel_and_requires_token_row(
     assert artifact["token_log"][0]["usage_kind"] == "adapter_verification"
     assert artifact["token_log"][0]["model"] == "opencode/gpt-5.1"
     assert len(runner.calls) == 1
-    assert runner.calls[0].env["AGILE_AI_HTB_SESSION_API_KEY"].startswith("sk_sess_")
+    assert runner.calls[0].env["FOREMAN_AI_HQ_SESSION_API_KEY"].startswith("sk_sess_")
     assert runner.calls[0].env["OPENAI_BASE_URL"] == "http://127.0.0.1:8000/v1"
-    assert runner.calls[0].env["OPENAI_API_KEY"] == runner.calls[0].env["AGILE_AI_HTB_SESSION_API_KEY"]
+    assert runner.calls[0].env["OPENAI_API_KEY"] == runner.calls[0].env["FOREMAN_AI_HQ_SESSION_API_KEY"]
     assert runner.calls[0].command == [
         "opencode",
         "run",
-        "Verification only. Do not read files, write files, run tools, or inspect the repository. Reply exactly AGILE_AI_HTB_ADAPTER_OK",
+        "Verification only. Do not read files, write files, run tools, or inspect the repository. Reply exactly FOREMAN_AI_HQ_ADAPTER_OK",
     ]
     assert runner.calls[0].cwd == tmp_path
     assert "sk_sess_" not in str(adapter["verification_evidence"])
@@ -663,7 +663,7 @@ def test_verify_worker_adapter_native_usage_records_authoritative_token_row(tmp_
         "opencode/gpt-5.1",
         "--format",
         "json",
-        "Verification only. Do not read files, write files, run tools, or inspect the repository. Reply exactly AGILE_AI_HTB_ADAPTER_OK",
+        "Verification only. Do not read files, write files, run tools, or inspect the repository. Reply exactly FOREMAN_AI_HQ_ADAPTER_OK",
     ]
 
 
@@ -711,7 +711,7 @@ def test_verify_codex_native_usage_records_authoritative_costless_token_row(tmp_
         "--skip-git-repo-check",
         "-m",
         "gpt-5.4",
-        "Verification only. Do not read files, write files, run tools, or inspect the repository. Reply exactly AGILE_AI_HTB_ADAPTER_OK",
+        "Verification only. Do not read files, write files, run tools, or inspect the repository. Reply exactly FOREMAN_AI_HQ_ADAPTER_OK",
     ]
     assert runner.calls[0].metadata["project_root"] == str(tmp_path)
 

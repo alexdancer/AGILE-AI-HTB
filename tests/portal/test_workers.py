@@ -1,4 +1,4 @@
-from agile_ai_htb import db
+from foreman_ai_hq import db
 from tests.portal.helpers import PORTAL_TOKEN, _client, _portal_headers, _project_metadata
 
 def test_settings_workers_page_requires_auth_and_renders_safe_adapter_cards(tmp_path, monkeypatch):
@@ -17,7 +17,7 @@ def test_settings_workers_page_requires_auth_and_renders_safe_adapter_cards(tmp_
             tmp_path / "harness.db",
             "codex",
             verified=True,
-            evidence={"stdout": "AGILE_AI_HTB_ADAPTER_OK", "env": {"OPENAI_API_KEY": "super-secret-key"}},
+            evidence={"stdout": "FOREMAN_AI_HQ_ADAPTER_OK", "env": {"OPENAI_API_KEY": "super-secret-key"}},
         )
 
         response = client.get("/settings/workers", headers=_portal_headers())
@@ -39,7 +39,7 @@ def test_settings_workers_page_requires_auth_and_renders_safe_adapter_cards(tmp_
     assert "verified" in html
     assert "launchable" in html
     assert "default" in html
-    assert "AGILE_AI_HTB_ADAPTER_OK" in html
+    assert "FOREMAN_AI_HQ_ADAPTER_OK" in html
     assert "super-secret-key" not in html
     assert "OPENAI_API_KEY" not in html
     assert "sk_sess_" not in html

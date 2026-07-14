@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from agile_ai_htb import db
-from agile_ai_htb.project_context import project_task_metadata
-from agile_ai_htb.routes import react_shell
+from foreman_ai_hq import db
+from foreman_ai_hq.project_context import project_task_metadata
+from foreman_ai_hq.routes import react_shell
 from tests.portal.helpers import (
     PORTAL_TOKEN,
     _client,
@@ -306,7 +306,7 @@ def test_login_redirects_to_react_when_built(tmp_path, monkeypatch):
 
     assert login.status_code == 303
     assert login.headers["location"] == "/app"
-    assert "agile_ai_htb_portal" in login.headers.get("set-cookie", "")
+    assert "foreman_ai_hq_portal" in login.headers.get("set-cookie", "")
 
 
 def test_built_react_and_valid_cookie_lands_on_app(tmp_path, monkeypatch):
@@ -321,7 +321,7 @@ def test_built_react_and_valid_cookie_lands_on_app(tmp_path, monkeypatch):
             "/login", data={"token": PORTAL_TOKEN}, follow_redirects=False
         )
         assert login.status_code == 303
-        assert "agile_ai_htb_portal" in login.headers.get("set-cookie", "")
+        assert "foreman_ai_hq_portal" in login.headers.get("set-cookie", "")
         root = client.get("/", follow_redirects=False)
         landing = client.get(root.headers["location"], follow_redirects=False)
 
@@ -1532,7 +1532,7 @@ def test_react_shell_chrome_contract():
     assert "Token budget" in shell_source
     assert "Worker adapters" in shell_source
     # Footer contract.
-    assert "AGILE-AI-HTB portal · operator-controlled budget governance" in shell_source
+    assert "Foreman AI HQ portal · operator-controlled budget governance" in shell_source
     # Logout form posts to /logout.
     assert 'action="/logout"' in shell_source
     # Task board / No tasks subtitle contract.
@@ -1547,8 +1547,6 @@ def test_react_shell_non_migrated_links_are_anchors():
     shell_source = Path("frontend/src/components/Shell.jsx").read_text(encoding="utf-8")
     for jinja_href in (
         "/setup",
-
-        "/alarms",
         "/settings/control-plane",
         "/settings/budget",
         "/settings/project",
@@ -1781,7 +1779,7 @@ def test_unarchive_task_content_negotiation(tmp_path, monkeypatch):
 def test_task_history_view_source_contract():
     """Frontend source/contract: no stale field names, all evidence fields rendered."""
     source = Path("frontend/src/views/TaskHistory.jsx").read_text(encoding="utf-8")
-    jinja_template = Path("src/agile_ai_htb/templates/task_history.html").read_text(encoding="utf-8")
+    jinja_template = Path("src/foreman_ai_hq/templates/task_history.html").read_text(encoding="utf-8")
     for field in (
         "task.description",
         "task.id",
@@ -1804,3 +1802,218 @@ def test_task_history_view_source_contract():
     assert "aria-pressed" in source
     assert "colSpan" in source
     assert "filter=" in jinja_template
+
+
+def test_react_alarms_api_requires_auth_and_bounded_projection(tmp_path, monkeypatch):
+    """GET /api/alarms is authenticated and returns bounded projection fields."""
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "alarms-repo")
+        session = db.create_session(
+            database_path,
+            task_description="Alarm test",
+            model="claude-haiku",
+            session_key_hash="alarm-hash",
+            guardrail_overrides={},
+            status="running",
+        )
+        db.record_alarm(
+            database_path,
+            session_id=session["id"],
+            alarm={
+                "id": "alarm-open-1",
+                "type": "DAILY_CAP_EXCEEDED",
+                "severity": "HIGH",
+                "context": {"daily_cap_tokens": 1000, "daily_used_tokens": 100},
+                "recommended_action": "Raise daily cap.",
+            },
+        )
+        db.record_alarm(
+            database_path,
+            session_id=session["id"],
+            alarm={
+                "id": "alarm-resolved-1",
+                "type": "SESSION_CAP_EXCEEDED",
+                "severity": "MEDIUM",
+                "context": {"session_cap_tokens": 500, "session_used_tokens": 500},
+                "recommended_action": "Raise session cap.",
+            },
+        )
+        db.resolve_alarm(
+            database_path,
+            alarm_id="alarm-resolved-1",
+            action="continue",
+        )
+
+        no_auth = client.get("/api/alarms")
+        open_auth = client.get("/api/alarms?filter=open", headers=_portal_headers())
+        resolved_auth = client.get("/api/alarms?filter=resolved", headers=_portal_headers())
+        all_auth = client.get("/api/alarms?filter=all", headers=_portal_headers())
+
+    assert no_auth.status_code == 401
+    assert open_auth.status_code == 200
+    assert resolved_auth.status_code == 200
+    assert all_auth.status_code == 200
+
+    payload = open_auth.json()
+    assert set(payload) == {"filters", "selected_filter", "alarms"}
+    assert payload["selected_filter"] == "open"
+    assert len(payload["alarms"]) == 1
+    assert payload["alarms"][0]["id"] == "alarm-open-1"
+    assert payload["alarms"][0]["available_actions"] == [
+        {"action": "continue"},
+        {"action": "raise_budget", "cap_key": "daily_cap_tokens", "current_cap": 1000},
+    ]
+    assert payload["alarms"][0]["session_href"] == f"/sessions/{session['id']}"
+
+    resolved = resolved_auth.json()
+    assert resolved["selected_filter"] == "resolved"
+    assert len(resolved["alarms"]) == 1
+    assert resolved["alarms"][0]["resolved_at"]
+    assert resolved["alarms"][0]["resolved_action"] == "continue"
+    assert resolved["alarms"][0]["resolved_payload_summary"]
+    assert resolved["alarms"][0]["available_actions"] == []
+
+    all_payload = all_auth.json()
+    assert all_payload["selected_filter"] == "all"
+    assert {alarm["id"] for alarm in all_payload["alarms"]} == {"alarm-open-1", "alarm-resolved-1"}
+
+    filters = payload["filters"]
+    assert [f["value"] for f in filters] == ["open", "resolved", "all"]
+    assert [f["selected"] for f in filters] == [True, False, False]
+
+
+def test_react_alarms_resolve_positive_cap_guard_and_json_outcome(tmp_path, monkeypatch):
+    """raise_budget rejects non-increasing caps and returns a sanitized JSON outcome."""
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        session = db.create_session(
+            database_path,
+            task_description="Guard test",
+            model="claude-haiku",
+            session_key_hash="guard-hash",
+            guardrail_overrides={"budget": {"session_cap_tokens": 1000}},
+            status="running",
+        )
+        db.record_alarm(
+            database_path,
+            session_id=session["id"],
+            alarm={
+                "id": "alarm-guard-1",
+                "type": "SESSION_CAP_EXCEEDED",
+                "severity": "HIGH",
+                "context": {"session_cap_tokens": 1000, "session_used_tokens": 1000},
+                "recommended_action": "Raise session cap.",
+            },
+        )
+
+        bad = client.post(
+            "/alarms/alarm-guard-1/resolve",
+            headers={**_portal_headers(), "Accept": "application/json"},
+            json={"action": "raise_budget", "payload": {"session_cap_tokens": 500}},
+        )
+        equal = client.post(
+            "/alarms/alarm-guard-1/resolve",
+            headers={**_portal_headers(), "Accept": "application/json"},
+            json={"action": "raise_budget", "payload": {"session_cap_tokens": 1000}},
+        )
+        good = client.post(
+            "/alarms/alarm-guard-1/resolve",
+            headers={**_portal_headers(), "Accept": "application/json"},
+            json={"action": "raise_budget", "payload": {"session_cap_tokens": 1001}},
+        )
+
+    assert bad.status_code == 200
+    assert bad.json()["ok"] is False
+    assert bad.json()["alarm"] is None
+    assert bad.json()["action"] is None
+    assert "strictly greater" in bad.json()["error"]
+
+    assert equal.json()["ok"] is False
+    assert good.json()["ok"] is True
+    assert good.json()["alarm"]["resolved_at"]
+    assert db.get_session(database_path, session["id"])["guardrail_overrides"]["budget"]["session_cap_tokens"] == 1001
+
+
+def test_react_alarms_resolve_preserves_html_redirect_and_no_auth_json_stays_open(tmp_path, monkeypatch):
+    """HTML resolve still redirects; JSON resolve returns the outcome without new auth."""
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        session = db.create_session(
+            database_path,
+            task_description="Resolve test",
+            model="claude-haiku",
+            session_key_hash="resolve-hash",
+            guardrail_overrides={},
+            status="running",
+        )
+        db.record_alarm(
+            database_path,
+            session_id=session["id"],
+            alarm={
+                "id": "alarm-resolve-2",
+                "type": "DAILY_CAP_EXCEEDED",
+                "severity": "HIGH",
+                "context": {"daily_cap_tokens": 100, "daily_used_tokens": 50},
+                "recommended_action": "Raise daily cap.",
+            },
+        )
+
+        html = client.post(
+            "/alarms/alarm-resolve-2/resolve",
+            headers={**_portal_headers(), "accept": "text/html"},
+            data={"action": "continue"},
+            follow_redirects=False,
+        )
+        json = client.post(
+            "/alarms/alarm-resolve-2/resolve",
+            headers={"Accept": "application/json"},
+            json={"action": "continue"},
+        )
+
+    assert html.status_code == 303
+    assert html.headers["location"] == "/alarms"
+    assert json.status_code == 200
+    assert json.json()["ok"] is True
+    assert json.json()["alarm"]["resolved_at"]
+
+
+def test_react_alarms_canonical_route_serves_react_when_built(tmp_path, monkeypatch):
+    """GET /alarms with a complete build returns the React shell."""
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+    with _client(tmp_path) as client:
+        response = client.get(
+            "/alarms",
+            headers={**_portal_headers(), "Accept": "text/html"},
+        )
+    assert response.status_code == 200
+    assert 'id="root"' in response.text
+
+
+def test_react_alarms_source_contract():
+    """Frontend Alarms view matches the backend contract and routing expectations."""
+    app_source = Path("frontend/src/App.jsx").read_text(encoding="utf-8")
+    shell_source = Path("frontend/src/components/Shell.jsx").read_text(encoding="utf-8")
+    source = Path("frontend/src/views/Alarms.jsx").read_text(encoding="utf-8")
+
+    assert 'view: "alarms"' in app_source
+    assert '<Alarms />' in app_source
+    assert 'to="/alarms"' in shell_source
+    assert 'activeView === "alarms"' in shell_source
+    api_source = Path("frontend/src/api.js").read_text(encoding="utf-8")
+
+    assert "available_actions" in source
+    assert '"/api/alarms?filter="' in source or "`/api/alarms?filter=${" in source
+    assert "/alarms/${" in source and "resolve" in source
+    assert "postJSON" in source
+    assert 'Accept: "application/json"' in api_source
+    assert "aria-live" in source
+    assert "aria-pressed" in source
+    assert "raise_budget" in source
+    assert "abort" not in source.lower()
+    assert "adjust_guardrail" not in source

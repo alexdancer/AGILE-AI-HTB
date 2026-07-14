@@ -11,17 +11,17 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from agile_ai_htb import db, estimation
-from agile_ai_htb.app import create_app
-from agile_ai_htb.estimation import (
+from foreman_ai_hq import db, estimation
+from foreman_ai_hq.app import create_app
+from foreman_ai_hq.estimation import (
     EstimatorUnavailableError,
     EstimatorValidationError,
     EstimateResult,
     estimate_task,
 )
-from agile_ai_htb.guardrails import load_guardrails
-from agile_ai_htb.settings import Settings
-from agile_ai_htb.task_breakdown import (
+from foreman_ai_hq.guardrails import load_guardrails
+from foreman_ai_hq.settings import Settings
+from foreman_ai_hq.task_breakdown import (
     TASK_BREAKDOWN_MAX_TOKENS,
     TASK_BREAKDOWN_TIMEOUT_SECONDS,
     TaskBreakdownResult,
@@ -350,7 +350,7 @@ async def test_task_breakdown_system_prompt_includes_task_slicing_policy_schema(
 
     system_prompt = llm.requests[0]["messages"][0]["content"]
     assert "Task Slicing Policy:" in system_prompt
-    assert "Create the fewest AGILE Board Tasks" in system_prompt
+    assert "Create the fewest Orchestration Board Tasks" in system_prompt
     assert "Markdown bullets are evidence, not automatic Tasks" in system_prompt
     assert "why_not_smaller" in system_prompt
     assert "why_not_larger" in system_prompt

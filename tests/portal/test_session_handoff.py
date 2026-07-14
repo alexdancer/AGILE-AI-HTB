@@ -1,6 +1,6 @@
 import re
 
-from agile_ai_htb import db
+from foreman_ai_hq import db
 from tests.portal.helpers import PORTAL_TOKEN, _client, _portal_headers, _project_metadata
 
 

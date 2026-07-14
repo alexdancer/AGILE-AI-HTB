@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report reproducible AGILE-AI-HTB behavior
+about: Report reproducible Foreman AI HQ behavior
 title: "Bug: "
 labels: needs-triage
 ---
@@ -22,7 +22,7 @@ labels: needs-triage
 
 ## Redacted diagnostics
 
-Paste relevant redacted `htb check` output, traceback, or logs. If you are using a source checkout without installing the CLI, `uv run htb check` is also acceptable. Do not paste API keys, portal tokens, `.htb/secrets.env`, bearer tokens, raw credential files, or private repo content.
+Paste relevant redacted `foremanctl check` output, traceback, or logs. If you are using a source checkout without installing the CLI, `uv run foremanctl check` is also acceptable. Do not paste API keys, portal tokens, `.foreman/secrets.env`, bearer tokens, raw credential files, or private repo content.
 
 ```text
 
@@ -33,7 +33,7 @@ Paste relevant redacted `htb check` output, traceback, or logs. If you are using
 - OS:
 - CPU architecture:
 - Install method: pipx / curl installer / Homebrew / source checkout / Docker / other
-- Does `command -v htb` succeed?: yes / no
+- Does `command -v foremanctl` succeed?: yes / no
 - Control-plane provider/model:
 - Worker Adapter:
 - Tracking mode:

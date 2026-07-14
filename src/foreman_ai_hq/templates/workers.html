@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block title %}Worker setup | Foreman AI HQ{% endblock %}
+{% block content %}
+<h1 class="page-title">Worker adapters</h1>
+<p class="page-sub">local CLI harnesses · token tracking authority · launch readiness</p>
+<p class="muted">Adapter identity is the local CLI harness (OpenCode, Claude Code, Codex). Tracking mode is the evidence path: <code>proxy_governed</code>, <code>native_usage</code>, or diagnostic-only <code>observed_only</code>. Control-plane API keys do not configure native Worker CLI auth.</p>
+{% if error %}<section class="notice warning">{{ error }}</section>{% endif %}
+
+<section class="status-toolbar">
+  <div class="status-group">
+    <span class="pill {% if active_adapter and active_adapter.launchable %}green{% else %}yellow{% endif %}">{% if active_adapter and active_adapter.launchable %}launch ready{% else %}setup needed{% endif %}</span>
+    <span class="status-item">Next missing action: {{ next_action.detail }}</span>
+  </div>
+  <a class="btn primary" href="{{ next_action.href }}">{{ next_action.label }}</a>
+</section>
+
+<section class="panel">
+  <div class="panel-header"><h3>Choose active adapter</h3></div>
+  <div class="panel-body">
+    <div class="btn-row">
+      {% for a in adapters %}
+      <a class="btn {% if active_adapter and a.id == active_adapter.id %}primary{% endif %}" href="/settings/workers?adapter_id={{ a.id }}">{{ a.name }}</a>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+{% if active_adapter %}
+<!-- Active adapter setup configures Worker CLI readiness, not control-plane auth. -->
+<section class="panel">
+  <div class="panel-header">
+    <h3>{{ active_adapter.name }} setup</h3>
+    <span class="pill {% if active_adapter.launchable %}green{% elif active_adapter.verification_status == 'failed' %}red{% else %}yellow{% endif %}">{% if active_adapter.launchable %}launchable{% else %}setup needed{% endif %}</span>
+  </div>
+  <div class="panel-body grid cols-2">
+    <div class="card">
+      <h3>1. Select default Worker Adapter</h3>
+      <form method="post" action="/settings/workers/{{ active_adapter.id }}/configure">
+        <input type="hidden" name="is_default" value="1">
+        <p class="muted">Project root is selected from the connected project workspace. Adapter setup only controls the Worker CLI and tracking verification.</p>
+        <button class="primary" type="submit">Save adapter</button>
+      </form>
+    </div>
+    <div class="card">
+      <h3>2. Discover Worker models</h3>
+      <p class="muted">Use the Worker CLI's native model list when available. If a CLI has no reliable model-list command, select from explicit/curated models instead; discovery failure does not block native usage verification.</p>
+      <form method="post" action="/settings/workers/{{ active_adapter.id }}/discover-models">
+        <button type="submit">Discover models</button>
+      </form>
+      {% if active_adapter.discovered_models %}
+      <!-- Allowed models constrain Worker model routing and board launch choices. -->
+      <form method="post" action="/settings/workers/{{ active_adapter.id }}/allowed-models" style="margin-top:10px">
+        <p class="muted">Allowed for estimates and board launch</p>
+        <label for="worker-model-filter">Filter discovered models</label>
+        <input id="worker-model-filter" data-worker-model-filter placeholder="sonnet, gpt-5.5, high" autocomplete="off">
+        <div class="btn-row" style="margin:8px 0">
+          <button type="button" data-worker-model-check-visible>Check visible</button>
+          <button type="button" data-worker-model-uncheck-visible>Uncheck visible</button>
+        </div>
+        {% for model in active_adapter.discovered_models %}
+        <label class="mono" data-worker-model-option style="font-size:11px"><input type="checkbox" name="allowed_models" value="{{ model }}" {% if model in active_adapter.supported_models %}checked{% endif %}> {{ model }}</label>
+        {% endfor %}
+        <button type="submit" style="margin-top:8px">Save allowed models</button>
+      </form>
+      {% else %}
+      <p class="muted">No discovered models yet.</p>
+      {% endif %}
+    </div>
+    <div class="card">
+      <h3>3. Verify Worker tracking</h3>
+      <p><span class="pill purple">{{ active_adapter.connection_type }}</span></p>
+      <form method="post" action="/settings/workers/{{ active_adapter.id }}/verify">
+        <label>Model</label>
+        <select name="model">
+          {% for model in active_adapter.supported_models %}<option value="{{ model }}">{{ model }}</option>{% endfor %}
+          {% if not active_adapter.supported_models %}<option value="">Discover models first</option>{% endif %}
+        </select>
+        <label>Tracking mode</label>
+        <select name="tracking_mode">
+          {% for mode in active_adapter.tracking_mode_options %}<option value="{{ mode.mode }}">{{ mode.label }}</option>{% endfor %}
+        </select>
+        <p class="muted"><strong>CLI Worker</strong> means the harness launches a local command and can only trust token usage after the CLI emits native usage evidence. <strong>API / Proxy Worker</strong> means the Worker sends OpenAI-compatible API traffic to the Harness Proxy URL before the provider, enabling live runtime guardrails.</p>
+        {% if 'proxy_governed' in active_adapter.tracking_modes %}
+        <!-- Proxy settings are only meaningful when Worker traffic can route through the harness. -->
+        <details style="margin:10px 0" open>
+          <summary>API / Proxy settings</summary>
+          <label>Proxy URL</label>
+          <input name="proxy_url" value="{{ default_proxy_url }}">
+          <p class="muted">Only used by API / Proxy mode. CLI native usage mode does not use this URL unless that CLI is explicitly configured to call it.</p>
+        </details>
+        {% else %}
+        <input type="hidden" name="proxy_url" value="{{ default_proxy_url }}">
+        <p class="muted">Proxy URL hidden: this adapter is currently treated as a CLI Worker, not an API / Proxy Worker.</p>
+        {% endif %}
+        <button type="submit">Verify tracking</button>
+      </form>
+    </div>
+    <div class="card">
+      <h3>4. Launch readiness</h3>
+      <p><span class="pill {% if active_adapter.configured %}green{% else %}yellow{% endif %}">{% if active_adapter.configured %}configured{% else %}unconfigured{% endif %}</span></p>
+      <p><span class="pill {% if active_adapter.verification_status == 'verified' %}green{% elif active_adapter.verification_status == 'failed' %}red{% else %}yellow{% endif %}">{{ active_adapter.verification_status }}</span></p>
+      <p><span class="pill blue">{{ active_adapter.tracking_label }}</span></p>
+      <p class="muted">Runtime request guardrails: {{ active_adapter.tracking.runtime_request_guardrails }} · Accounting: {{ active_adapter.tracking.accounting }}</p>
+      {% if active_adapter.verification_diagnostic %}
+      <section class="notice warning" style="margin:10px 0">
+        <strong>{{ active_adapter.verification_diagnostic.summary }}</strong>
+        {% if active_adapter.verification_diagnostic.next_action %}<p>{{ active_adapter.verification_diagnostic.next_action }}</p>{% endif %}
+        {% if active_adapter.verification_diagnostic.setup_href %}<p><a href="{{ active_adapter.verification_diagnostic.setup_href }}">Open Worker Setup</a></p>{% endif %}
+      </section>
+      {% endif %}
+      {% if active_adapter.discovered_models and not active_adapter.supported_models %}<p class="muted">Allow at least one discovered Worker model before launch.</p>{% endif %}
+      <p><span class="pill {% if active_adapter.launchable %}green{% else %}yellow{% endif %}">{% if active_adapter.launchable %}launchable{% else %}not launchable{% endif %}</span></p>
+      {% if active_adapter.is_default %}<p><span class="pill blue">default</span></p>{% endif %}
+      {% if active_adapter.launchable %}<p><a class="btn primary" href="/board">Open board</a></p>{% endif %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-header"><h3>All adapters</h3></div>
+  <div class="panel-body tight">
+    <table>
+      <thead><tr><th>Adapter</th><th>Status</th><th>Models</th><th>Diagnostics</th><th>Advanced details</th></tr></thead>
+      <tbody>
+      {% for adapter in adapters %}
+      <tr>
+        <td><a href="/settings/workers?adapter_id={{ adapter.id }}">{{ adapter.name }}</a>{% if adapter.is_default %} <span class="pill blue">default</span>{% endif %}</td>
+        <td>
+          <span class="pill {% if adapter.configured %}green{% else %}yellow{% endif %}">{% if adapter.configured %}configured{% else %}unconfigured{% endif %}</span>
+          <span class="pill {% if adapter.verification_status == 'verified' %}green{% elif adapter.verification_status == 'failed' %}red{% else %}yellow{% endif %}">{{ adapter.verification_status }}</span>
+          <span class="pill blue">{{ adapter.tracking_label }}</span>
+          {% if adapter.launchable %}<span class="pill green">launchable</span>{% endif %}
+        </td>
+        <td>{{ adapter.supported_models|join(', ') if adapter.supported_models else 'No allowed models' }}</td>
+        <td>
+          <strong>{{ adapter.name }} diagnostics</strong><br>
+          {% if adapter.diagnostics %}
+          <span class="mono">{{ adapter.diagnostics.get('status', 'cached') }}</span>
+          {% else %}
+          <span class="muted">No cached diagnostics. Refresh to check PATH.</span>
+          {% endif %}
+          <form method="post" action="/settings/workers/{{ adapter.id }}/refresh-diagnostics" style="margin-top:6px"><button type="submit">Refresh diagnostics</button></form>
+        </td>
+        <td>
+          <details>
+            <summary>Advanced details</summary>
+            <div class="kv" style="margin-top:8px">
+              <div class="k">kind</div><div class="v">{{ adapter.kind }}</div>
+              <div class="k">project root</div><div class="v">managed by connected project workspace</div>
+              <div class="k">connection type</div><div class="v">{{ adapter.connection_type }}</div>
+              <div class="k">tracking modes</div><div class="v">{{ adapter.tracking_modes|join(', ') }}</div>
+              <div class="k">runtime guardrails</div><div class="v">{{ adapter.tracking.runtime_request_guardrails }}</div>
+              <div class="k">accounting</div><div class="v">{{ adapter.tracking.accounting }}</div>
+              <div class="k">model discovery</div><div class="v">{% if adapter.model_discovery %}{{ adapter.model_discovery_label }}: {{ adapter.model_discovery }}{% else %}not run{% endif %}</div>
+              <div class="k">verification evidence</div><div class="v"><pre>{{ adapter.verification_evidence }}</pre></div>
+            </div>
+          </details>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+<!-- Model filter script bulk-checks only the currently visible discovered models. -->
+<script>
+  document.querySelectorAll('[data-worker-model-filter]').forEach((filter) => {
+    const form = filter.closest('form');
+    if (!form) return;
+    const options = Array.from(form.querySelectorAll('[data-worker-model-option]'));
+    const visibleOptions = () => options.filter((option) => option.style.display !== 'none');
+    const applyFilter = () => {
+      const term = filter.value.trim().toLowerCase();
+      options.forEach((option) => {
+        option.style.display = !term || option.textContent.toLowerCase().includes(term) ? 'flex' : 'none';
+      });
+    };
+    filter.addEventListener('input', applyFilter);
+    form.querySelector('[data-worker-model-check-visible]')?.addEventListener('click', () => {
+      visibleOptions().forEach((option) => { option.querySelector('input[type="checkbox"]').checked = true; });
+    });
+    form.querySelector('[data-worker-model-uncheck-visible]')?.addEventListener('click', () => {
+      visibleOptions().forEach((option) => { option.querySelector('input[type="checkbox"]').checked = false; });
+    });
+  });
+</script>
+{% endblock %}

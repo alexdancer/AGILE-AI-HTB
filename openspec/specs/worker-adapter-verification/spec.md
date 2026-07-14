@@ -65,7 +65,7 @@ The system SHALL record adapter verification model usage as orchestration spend 
 - **THEN** the token ledger records the imported usage with source metadata identifying the Worker Harness and native tracking mode
 
 ### Requirement: Provider keys remain separated from Worker Harness native config
-The system SHALL keep AGILE-AI-HTB control-plane provider credentials separate from Worker Harness native credentials, SHALL only inject Harness Proxy credentials into Workers for proxy-governed tracking mode, and SHALL NOT expose real upstream provider API keys to Worker Adapter processes unless explicitly required by that Worker Harness's native configuration outside AGILE-AI-HTB.
+The system SHALL keep Foreman AI HQ control-plane provider credentials separate from Worker Harness native credentials, SHALL only inject Harness Proxy credentials into Workers for proxy-governed tracking mode, and SHALL NOT expose real upstream provider API keys to Worker Adapter processes unless explicitly required by that Worker Harness's native configuration outside Foreman AI HQ.
 
 #### Scenario: Proxy-governed Worker launch environment
 - **WHEN** the system launches or verifies a Worker Adapter in proxy-governed mode
@@ -76,8 +76,8 @@ The system SHALL keep AGILE-AI-HTB control-plane provider credentials separate f
 - **THEN** the Worker uses its native harness configuration and the system does not require a control-plane provider key, Harness Proxy URL, or session API key as Worker Harness auth
 
 #### Scenario: Direct provider clients used upstream
-- **WHEN** a proxy-governed Worker call reaches AGILE-AI-HTB's Harness Proxy
-- **THEN** AGILE-AI-HTB forwards the governed request upstream through its configured direct provider client without passing the upstream provider key to the Worker Adapter process
+- **WHEN** a proxy-governed Worker call reaches Foreman AI HQ's Harness Proxy
+- **THEN** Foreman AI HQ forwards the governed request upstream through its configured direct provider client without passing the upstream provider key to the Worker Adapter process
 
 ### Requirement: Native usage evidence must be trustworthy
 The system SHALL treat native Worker usage as budget-authoritative only when the evidence is machine-readable, token-complete, model-aware, exit-status-aware, and bound to the launched Worker Run.
@@ -139,7 +139,7 @@ The system SHALL verify Claude Code in `native_usage` mode when a non-interactiv
 #### Scenario: Claude Code native verification uses native auth only
 - **WHEN** the system verifies Claude Code in `native_usage` mode
 - **THEN** the command SHALL use Claude Code's native configuration and OAuth/auth state
-- **AND** the command SHALL NOT require Harness Proxy URL, Harness session API key, or AGILE-AI-HTB control-plane provider credentials
+- **AND** the command SHALL NOT require Harness Proxy URL, Harness session API key, or Foreman AI HQ control-plane provider credentials
 
 ### Requirement: Codex native usage verification
 The system SHALL verify Codex in `native_usage` mode when a non-interactive Codex sentinel run emits machine-readable, run-bound token usage evidence for the selected Codex Worker model.

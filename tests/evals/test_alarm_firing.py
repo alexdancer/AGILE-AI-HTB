@@ -8,16 +8,16 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from agile_ai_htb import db
-from agile_ai_htb.alarms import (
+from foreman_ai_hq import db
+from foreman_ai_hq.alarms import (
     alarm_for_checkpoint_failure,
     detect_budget_alarms,
     detect_loop,
     detect_session_timeout,
     detect_tool_category_bias,
 )
-from agile_ai_htb.app import create_app
-from agile_ai_htb.settings import Settings
+from foreman_ai_hq.app import create_app
+from foreman_ai_hq.settings import Settings
 
 ROOT = Path(__file__).resolve().parents[2]
 PORTAL_TOKEN = "test-portal-token"

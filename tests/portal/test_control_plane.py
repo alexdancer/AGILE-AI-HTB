@@ -3,10 +3,10 @@ import re
 
 from fastapi.testclient import TestClient
 
-from agile_ai_htb import db
-from agile_ai_htb.app import create_app
-from agile_ai_htb.operator_config import CONTROL_API_KEY_PLACEHOLDER, load_operator_config
-from agile_ai_htb.settings import Settings
+from foreman_ai_hq import db
+from foreman_ai_hq.app import create_app
+from foreman_ai_hq.operator_config import CONTROL_API_KEY_PLACEHOLDER, load_operator_config
+from foreman_ai_hq.settings import Settings
 from tests.portal.helpers import (
     ROOT,
     PORTAL_TOKEN,
@@ -36,12 +36,12 @@ def test_control_plane_save_persists_and_hot_swaps_settings(tmp_path, monkeypatc
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     for name in [
-        "AGILE_AI_HTB_CONTROL_PROVIDER",
-        "AGILE_AI_HTB_CONTROL_MODEL",
-        "AGILE_AI_HTB_CONTROL_BASE_URL",
-        "AGILE_AI_HTB_CONTROL_API_KEY_ENV",
-        "AGILE_AI_HTB_ESTIMATOR_MODEL",
-        "AGILE_AI_HTB_TASK_BREAKDOWN_MODEL",
+        "FOREMAN_AI_HQ_CONTROL_PROVIDER",
+        "FOREMAN_AI_HQ_CONTROL_MODEL",
+        "FOREMAN_AI_HQ_CONTROL_BASE_URL",
+        "FOREMAN_AI_HQ_CONTROL_API_KEY_ENV",
+        "FOREMAN_AI_HQ_ESTIMATOR_MODEL",
+        "FOREMAN_AI_HQ_TASK_BREAKDOWN_MODEL",
     ]:
         monkeypatch.delenv(name, raising=False)
 
@@ -52,9 +52,9 @@ def test_control_plane_save_persists_and_hot_swaps_settings(tmp_path, monkeypatc
 
         async def acompletion(self, request):
             self.requests.append(request)
-            return {"choices": [{"message": {"content": "AGILE_AI_HTB_CONTROL_PLANE_OK"}}]}
+            return {"choices": [{"message": {"content": "FOREMAN_AI_HQ_CONTROL_PLANE_OK"}}]}
 
-    from agile_ai_htb.routes import portal
+    from foreman_ai_hq.routes import portal
 
     monkeypatch.setattr(portal, "LLMClient", CapturingLLM)
     app = create_app(Settings(database_path=tmp_path / "harness.db", guardrails_path=ROOT / "guardrails.yaml"))
@@ -86,22 +86,22 @@ def test_control_plane_save_persists_and_hot_swaps_settings(tmp_path, monkeypatc
     assert llm.settings.control_plane_model == "claude-haiku-4-5"
     assert test_response.status_code == 200
     assert llm.requests[0]["model"] == "claude-haiku-4-5"
-    config = load_operator_config(tmp_path / ".htb" / "config.toml")
+    config = load_operator_config(tmp_path / ".foreman" / "config.toml")
     assert config["control_plane_provider"] == "anthropic"
     assert config["control_plane_model"] == "claude-haiku-4-5"
     assert config["estimator_model"] == "claude-haiku-4-5"
     assert config["task_breakdown_model"] == "claude-haiku-4-5"
     assert config["control_plane_api_key_env"] == "ANTHROPIC_API_KEY"
-    secrets_text = (tmp_path / ".htb" / "secrets.env").read_text(encoding="utf-8")
+    secrets_text = (tmp_path / ".foreman" / "secrets.env").read_text(encoding="utf-8")
     assert "ANTHROPIC_API_KEY" in secrets_text
     assert CONTROL_API_KEY_PLACEHOLDER in secrets_text
 
 def test_control_plane_save_updates_bootstrap_env_override(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    monkeypatch.setenv("AGILE_AI_HTB_CONTROL_PROVIDER", "openai")
-    monkeypatch.setenv("AGILE_AI_HTB_CONTROL_MODEL", "gpt-5.4")
-    monkeypatch.setenv("AGILE_AI_HTB_CONTROL_API_KEY_ENV", "AGILE_AI_HTB_CONTROL_API_KEY")
+    monkeypatch.setenv("FOREMAN_AI_HQ_CONTROL_PROVIDER", "openai")
+    monkeypatch.setenv("FOREMAN_AI_HQ_CONTROL_MODEL", "gpt-5.4")
+    monkeypatch.setenv("FOREMAN_AI_HQ_CONTROL_API_KEY_ENV", "FOREMAN_AI_HQ_CONTROL_API_KEY")
 
     app = create_app(Settings(database_path=tmp_path / "harness.db", guardrails_path=ROOT / "guardrails.yaml"))
     with TestClient(app) as client:
@@ -112,7 +112,7 @@ def test_control_plane_save_updates_bootstrap_env_override(tmp_path, monkeypatch
                 "control_plane_provider": "openai",
                 "control_plane_model": "gpt-5.5",
                 "control_plane_base_url": "",
-                "control_plane_api_key_env": "AGILE_AI_HTB_CONTROL_API_KEY",
+                "control_plane_api_key_env": "FOREMAN_AI_HQ_CONTROL_API_KEY",
                 "apply_to_estimator_breakdown": True,
             },
         )
@@ -121,14 +121,14 @@ def test_control_plane_save_updates_bootstrap_env_override(tmp_path, monkeypatch
     assert response.json()["settings"]["control_plane_model"] == "gpt-5.5"
     assert app.state.settings.control_plane_model == "gpt-5.5"
     assert app.state.settings.estimator_model == "gpt-5.5"
-    assert os.environ["AGILE_AI_HTB_CONTROL_MODEL"] == "gpt-5.5"
-    assert load_operator_config(tmp_path / ".htb" / "config.toml")["control_plane_model"] == "gpt-5.5"
+    assert os.environ["FOREMAN_AI_HQ_CONTROL_MODEL"] == "gpt-5.5"
+    assert load_operator_config(tmp_path / ".foreman" / "config.toml")["control_plane_model"] == "gpt-5.5"
 
 def test_control_plane_save_loads_existing_secret_env_for_new_key(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     monkeypatch.delenv("NEW_CONTROL_KEY", raising=False)
-    secrets_path = tmp_path / ".htb" / "secrets.env"
+    secrets_path = tmp_path / ".foreman" / "secrets.env"
     secrets_path.parent.mkdir()
     secrets_path.write_text("NEW_CONTROL_KEY='real-test-key'\n", encoding="utf-8")
 
@@ -171,8 +171,8 @@ def test_control_plane_save_writes_submitted_api_key_without_config_leak(tmp_pat
 
     assert response.status_code == 200
     assert os.getenv("ANTHROPIC_API_KEY") == "DEMO_KEY_VALUE_999"
-    config_text = (tmp_path / ".htb" / "config.toml").read_text(encoding="utf-8")
-    secrets_text = (tmp_path / ".htb" / "secrets.env").read_text(encoding="utf-8")
+    config_text = (tmp_path / ".foreman" / "config.toml").read_text(encoding="utf-8")
+    secrets_text = (tmp_path / ".foreman" / "secrets.env").read_text(encoding="utf-8")
     assert "DEMO_KEY_VALUE_999" not in config_text
     assert "ANTHROPIC_API_KEY=DEMO_KEY_VALUE_999" in secrets_text
     assert "DEMO_KEY_VALUE_999" not in str(response.json())
@@ -184,7 +184,7 @@ def test_control_plane_blank_api_key_preserves_existing_secret(tmp_path, monkeyp
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    secrets_path = tmp_path / ".htb" / "secrets.env"
+    secrets_path = tmp_path / ".foreman" / "secrets.env"
     secrets_path.parent.mkdir()
     secrets_path.write_text("ANTHROPIC_API_KEY='DEMO_KEY_VALUE_999'\n", encoding="utf-8")
 
@@ -264,7 +264,7 @@ def test_control_plane_save_rejects_blank_model_and_invalid_base_url(tmp_path, m
 def test_control_plane_save_failure_keeps_running_settings(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    from agile_ai_htb.routes import portal
+    from foreman_ai_hq.routes import portal
 
     def fail_write(**_updates):
         raise OSError("disk full")
@@ -359,7 +359,7 @@ def test_control_plane_settings_page_separates_control_model_from_worker_auth(tm
     _assert_not_selectable(_model_option(html, "gpt-5.4-mini"))
     _assert_not_selectable(_model_option(html, "gpt-5.5"))
     assert "TEST_CONTROL_PLANE_KEY" in html
-    assert "AGILE-AI-HTB orchestration model" in html
+    assert "Foreman AI HQ orchestration model" in html
     assert "Worker Harness" in html
     assert "sk_sho...nder" not in html
 
@@ -450,7 +450,7 @@ def test_control_plane_form_custom_model_submission_uses_custom_value(tmp_path, 
 
     assert response.status_code == 200
     assert custom_model in response.text
-    config = load_operator_config(tmp_path / ".htb" / "config.toml")
+    config = load_operator_config(tmp_path / ".foreman" / "config.toml")
     assert config["control_plane_provider"] == "openai-compatible"
     assert config["control_plane_model"] == custom_model
     assert config["estimator_model"] == custom_model

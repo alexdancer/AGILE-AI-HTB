@@ -18,7 +18,7 @@ Use the default triage vocabulary unless repo labels say otherwise:
 
 ### Domain docs
 
-This is a single-context repo. Read `CONTEXT.md` before making product, architecture, workflow, or terminology changes. Treat it as the source of truth for Harness, Control Plane, Worker Adapter, AGILE Board, budget governance, and demo vocabulary.
+This is a single-context repo. Read `CONTEXT.md` before making product, architecture, workflow, or terminology changes. Treat it as the source of truth for Harness, Control Plane, Worker Adapter, Orchestration Board, budget governance, and demo vocabulary.
 
 ## OpenSpec workflow
 

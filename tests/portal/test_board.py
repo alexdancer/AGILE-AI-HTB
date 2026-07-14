@@ -1,8 +1,8 @@
 from urllib.parse import unquote
 
-from agile_ai_htb import db
-from agile_ai_htb.board_automation import list_eligible_estimated_tasks
-from agile_ai_htb.project_context import project_task_metadata
+from foreman_ai_hq import db
+from foreman_ai_hq.board_automation import list_eligible_estimated_tasks
+from foreman_ai_hq.project_context import project_task_metadata
 from tests.portal.helpers import PORTAL_TOKEN, _client, _connect_project, _portal_headers, _project_metadata
 
 

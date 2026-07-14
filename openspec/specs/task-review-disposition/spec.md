@@ -39,7 +39,7 @@ The system SHALL let an operator save a specific review prompt or focus while a 
 - **AND** the Review task card displays the latest saved prompt
 
 ### Requirement: Agent Review uses control-plane model
-The system SHALL perform Agent Review using the AGILE-AI-HTB control-plane/orchestrator model and SHALL NOT use the Worker Adapter model/auth as the review mechanism.
+The system SHALL perform Agent Review using the Foreman AI HQ control-plane/orchestrator model and SHALL NOT use the Worker Adapter model/auth as the review mechanism.
 
 #### Scenario: Agent Review runs with task evidence
 - **WHEN** a task is in Review

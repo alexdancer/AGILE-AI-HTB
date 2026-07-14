@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Alarms | Foreman AI HQ{% endblock %}
+{% block content %}
+<h1 class="page-title">Alarms</h1>
+<p class="page-sub">guardrail violations · human-in-the-loop resolution</p>
+
+<section class="grid cols-4" style="margin-bottom:20px">
+  <div class="kpi"><div class="label">Open</div><div class="value mono">{{ open_alarms|length }}</div></div>
+  <div class="kpi"><div class="label">Critical</div><div class="value mono" style="color:var(--danger)">{{ critical_count }}</div></div>
+  <div class="kpi"><div class="label">Warning</div><div class="value mono" style="color:var(--warn)">{{ warning_count }}</div></div>
+  <div class="kpi"><div class="label">Audit</div><div class="value mono" style="color:var(--accent)">kept</div></div>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h3>Open</h3>
+  </div>
+  <div class="panel-body">
+    <!-- alarm_card.html keeps severity and resolve controls identical across pages. -->
+    {% for alarm in open_alarms %}
+    {% include "alarm_card.html" %}
+    {% else %}
+    <div class="muted">No open alarms.</div>
+    {% endfor %}
+  </div>
+</section>
+
+{% endblock %}

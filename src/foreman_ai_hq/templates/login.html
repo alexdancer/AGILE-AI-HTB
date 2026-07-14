@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Login | Foreman AI HQ{% endblock %}
+{% block content %}
+<h1 class="page-title">Operator login</h1>
+<p class="page-sub">portal token · signed cookie · operator-only controls</p>
+<section class="panel" style="max-width:520px">
+  <div class="panel-header"><h3>Open portal</h3></div>
+  <div class="panel-body">
+    <p class="muted">Enter token from <code>TOKEN_TRACKER_PORTAL_TOKEN</code>.</p>
+    <form action="/login" method="post">
+      <label for="token">Portal token</label>
+      <input id="token" name="token" type="password" required autofocus>
+      <div style="margin-top:12px"><button class="primary" type="submit">Open portal</button></div>
+    </form>
+  </div>
+</section>
+{% endblock %}

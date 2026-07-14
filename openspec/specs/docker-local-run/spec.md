@@ -12,11 +12,11 @@ The Docker local run documentation SHALL provide a no-secret trial path that pro
 - **AND** it SHALL state that model-powered estimates, real provider tests, and real Worker verification require later credential setup
 
 ### Requirement: Docker Compose local Control Plane runtime
-The system SHALL provide a Docker Compose local runtime that builds and starts the AGILE-AI-HTB Control Plane/Portal as a single app service.
+The system SHALL provide a Docker Compose local runtime that builds and starts the Foreman AI HQ Control Plane/Portal as a single app service.
 
 #### Scenario: Start local Docker service
 - **WHEN** an operator runs the documented Docker Compose startup command from the repo root
-- **THEN** the system SHALL build the local AGILE-AI-HTB image
+- **THEN** the system SHALL build the local Foreman AI HQ image
 - **AND** expose the Portal/API on host port 8000
 
 #### Scenario: Health endpoint succeeds
@@ -28,7 +28,7 @@ The system SHALL provide a Docker Compose local runtime that builds and starts t
 - **THEN** `GET /login` on the published port SHALL return the Portal login page
 
 ### Requirement: Docker SQLite persistence
-The Docker runtime SHALL persist AGILE-AI-HTB SQLite state outside the container filesystem.
+The Docker runtime SHALL persist Foreman AI HQ SQLite state outside the container filesystem.
 
 #### Scenario: Default database path uses data volume
 - **WHEN** the Docker service starts with default Compose settings
@@ -37,7 +37,7 @@ The Docker runtime SHALL persist AGILE-AI-HTB SQLite state outside the container
 
 #### Scenario: Service creates persisted database
 - **WHEN** the Docker service starts with default Compose settings
-- **THEN** AGILE-AI-HTB SHALL create `/data/harness.db` during app startup
+- **THEN** Foreman AI HQ SHALL create `/data/harness.db` during app startup
 
 ### Requirement: Docker guardrails path
 The Docker runtime SHALL make the repository guardrails configuration available inside the container at the app's configured guardrails path.
@@ -71,7 +71,7 @@ Docker documentation SHALL distinguish containerized Control Plane readiness fro
 
 #### Scenario: Docker quickstart preserves model-layer split
 - **WHEN** Docker docs describe control-plane provider/model/API-key configuration
-- **THEN** they SHALL identify those settings as Control Plane settings for AGILE-AI-HTB estimation, planning, summaries, and reports
+- **THEN** they SHALL identify those settings as Control Plane settings for Foreman AI HQ estimation, planning, summaries, and reports
 - **AND** they SHALL state that native Worker CLI auth is separate from Docker control-plane env vars
 
 ### Requirement: Docker local run documents Portal auth boundary

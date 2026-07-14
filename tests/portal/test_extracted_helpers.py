@@ -1,6 +1,6 @@
-from agile_ai_htb.board_workspace import board_counts
-from agile_ai_htb.evidence_reporting import safe_evidence, token_totals
-from agile_ai_htb.worker_setup_view import active_adapter_for_request, worker_setup_next_action
+from foreman_ai_hq.board_workspace import board_counts
+from foreman_ai_hq.evidence_reporting import safe_evidence, token_totals
+from foreman_ai_hq.worker_setup_view import active_adapter_for_request, worker_setup_next_action
 
 
 def test_extracted_portal_helpers_keep_board_worker_and_evidence_contracts():

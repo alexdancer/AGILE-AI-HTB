@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}Dashboard | Foreman AI HQ{% endblock %}
+{% block content %}
+<h1 class="page-title">Dashboard</h1>
+<p class="page-sub">overview · daily budget · active sessions · recent alarms</p>
+
+<section class="panel">
+  <div class="panel-header"><h3>Operator next actions</h3></div>
+  <div class="panel-body">
+    <div class="grid cols-4">
+      {% for action in next_actions %}
+      <a class="card surface-link action-card" href="{{ action.href }}">
+        <span class="pill {{ action.tone }}">Action</span>
+        <h3>{{ action.label }}</h3>
+        <p class="muted">{{ action.detail }}</p>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+{% set categories = token_breakdown.by_category %}
+{% set review_reporting_tokens = categories.get('reporting_summary', 0) %}
+{% set planning_tokens = categories.get('task_breakdown', 0) + categories.get('control_plane', 0) %}
+{% set setup_tokens = categories.get('adapter_verification', 0) %}
+{% set other_tokens = categories.get('other', 0) %}
+<!-- Derived categories group ledger rows into operator-facing budget buckets. -->
+<section class="grid cols-3" style="margin-bottom:20px">
+  <article class="kpi">
+    <div class="label">Daily governed budget</div>
+    <div class="value mono">{{ "{:,}".format(budget_token_total) }}{% if daily_cap %} / {{ "{:,}".format(daily_cap) }}{% endif %}</div>
+    <div class="sub">zone: {{ current_zone }} · normalized governed model spend since {{ budget_since }}</div>
+    {% if daily_cap %}<div class="bar"><span style="width:{{ [100, ((budget_token_total / daily_cap) * 100)|round(1)]|min }}%"></span></div>{% endif %}
+  </article>
+  <article class="kpi">
+    <div class="label">Open alarms</div>
+    <div class="value mono">{{ open_alarm_count }}</div>
+    <div class="sub">{{ critical_alarm_count }} critical</div>
+  </article>
+  <article class="kpi">
+    <div class="label">Worker execution tokens</div>
+    <div class="value mono">{{ "{:,}".format(worker_token_total) }}</div>
+    <div class="sub">Worker-only normalized task actuals and coding harness evidence</div>
+  </article>
+</section>
+
+<section class="panel">
+  <div class="panel-header"><h3>Budget spend breakdown</h3></div>
+  <div class="panel-body grid cols-4">
+    <article class="kpi">
+      <div class="label">Worker execution</div>
+      <div class="value mono">{{ "{:,}".format(worker_token_total) }}</div>
+      <div class="sub">Worker-only normalized actuals · completed {{ "{:,}".format(worker_token_summary.status_split.completed) }} · failed/retry {{ "{:,}".format(worker_token_summary.status_split.failed_retry) }}{% if worker_token_summary.status_split.unknown %} · unknown {{ "{:,}".format(worker_token_summary.status_split.unknown) }}{% endif %}</div>
+    </article>
+    <article class="kpi">
+      <div class="label">Agent Review/reporting</div>
+      <div class="value mono">{{ "{:,}".format(review_reporting_tokens) }}</div>
+      <div class="sub">review and report orchestration</div>
+    </article>
+    <article class="kpi">
+      <div class="label">Planning/estimation</div>
+      <div class="value mono">{{ "{:,}".format(planning_tokens) }}</div>
+      <div class="sub">task breakdown and estimator spend</div>
+    </article>
+    <article class="kpi">
+      <div class="label">Setup/verification</div>
+      <div class="value mono">{{ "{:,}".format(setup_tokens) }}</div>
+      <div class="sub">adapter verification spend</div>
+    </article>
+    {% if other_tokens %}
+    <article class="kpi">
+      <div class="label">Other tracked spend</div>
+      <div class="value mono">{{ "{:,}".format(other_tokens) }}</div>
+      <div class="sub">uncategorized governed spend</div>
+    </article>
+    {% endif %}
+  </div>
+  <div class="panel-body" style="padding-top:0">
+    <details class="task-details">
+      <summary>Worker token component breakdown</summary>
+      {% if worker_token_summary.components.available %}
+      <div class="kv">
+        {% for item in worker_token_summary.components["items"] %}
+        <div class="k">{{ item.label }}</div><div class="v">{{ "{:,}".format(item.value) }}</div>
+        {% endfor %}
+        {% if worker_token_summary.components.cost is not none %}<div class="k">reported cost</div><div class="v">${{ "%.4f"|format(worker_token_summary.components.cost) }}</div>{% endif %}
+      </div>
+      {% else %}
+      <p class="muted mono">Component breakdown unavailable for these token rows; showing provider totals only.</p>
+      {% endif %}
+    </details>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h3>Active sessions</h3>
+    <a href="/sessions" class="muted mono" style="font-size:12px">view all →</a>
+  </div>
+  <div class="panel-body tight">
+    <table>
+      <thead>
+        <tr><th>session</th><th>task</th><th>model</th><th>status</th></tr>
+      </thead>
+      <tbody>
+        {% for session in active_sessions %}
+        <tr>
+          <td class="mono muted"><a href="/sessions/{{ session.id }}">{{ session.id }}</a></td>
+          <td>{{ session.task_description }}</td>
+          <td class="mono">{{ session.model }}</td>
+          <td><span class="pill blue">{{ session.status }}</span></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4"><div class="empty-state">No active sessions.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h3>Recent alarms</h3>
+    <a href="/alarms" class="muted mono" style="font-size:12px">view all →</a>
+  </div>
+  <div class="panel-body">
+    {% for alarm in recent_alarms %}
+    {% set sev = (alarm.severity or 'info')|lower %}
+    <div class="alarm {{ sev }}">
+      <div class="head">
+        <div class="flex"><span class="pill {% if sev in ['critical','high'] %}red{% elif sev in ['warning','medium'] %}yellow{% else %}blue{% endif %}">{{ alarm.severity }}</span><span class="mono">{{ alarm.type }}</span></div>
+        <div class="id mono">{{ alarm.id }}</div>
+      </div>
+      <div class="body">Session <a href="/sessions/{{ alarm.session_id }}">{{ alarm.session_id }}</a></div>
+      <div class="reco">→ {{ alarm.recommended_action }}</div>
+    </div>
+    {% else %}
+    <div class="empty-state">No open alarms.</div>
+    {% endfor %}
+  </div>
+</section>
+
+{% if estimation_accuracy.completed_count is not none %}
+<!-- Accuracy is shown only after enough completed tasks make the signal meaningful. -->
+<section class="panel">
+  <div class="panel-header"><h3>Estimation accuracy</h3></div>
+  <div class="panel-body">
+    {% if estimation_accuracy.completed_count >= 3 %}
+    <div class="grid cols-3">
+      <article class="kpi">
+        <div class="label">Completed tasks tracked</div>
+        <div class="value mono">{{ estimation_accuracy.completed_count }}</div>
+        <div class="sub">with both estimate and actual tokens</div>
+      </article>
+      <article class="kpi">
+        <div class="label">Median error ratio</div>
+        <div class="value mono">{{ "%.2f"|format(estimation_accuracy.median_error_ratio) }}×</div>
+        <div class="sub">
+          {% if estimation_accuracy.median_error_ratio > 1.05 %}estimates are optimistic{% elif estimation_accuracy.median_error_ratio < 0.95 %}estimates are conservative{% else %}estimates are accurate{% endif %}
+        </div>
+      </article>
+      <article class="kpi">
+        <div class="label">Within 2× estimate</div>
+        <div class="value mono">{{ "%.0f"|format(estimation_accuracy.within_2x_pct) }}%</div>
+        <div class="sub">tasks where 0.5× ≤ actual ≤ 2.0×</div>
+      </article>
+    </div>
+    {% else %}
+    <div class="empty-state">Not enough completed tasks for accuracy tracking ({{ estimation_accuracy.completed_count }} of 3 needed).</div>
+    {% endif %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}
+

@@ -35,13 +35,13 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 cleanup
-compose up -d --build agile-ai-htb
+compose up -d --build foreman-ai-hq
 wait_for_health
 curl -fsS http://localhost:8000/login >/dev/null
-compose exec -T agile-ai-htb test -s /data/harness.db
+compose exec -T foreman-ai-hq test -s /data/harness.db
 compose down >/dev/null
-compose up -d --no-build agile-ai-htb
+compose up -d --no-build foreman-ai-hq
 wait_for_health
-compose exec -T agile-ai-htb test -s /data/harness.db
+compose exec -T foreman-ai-hq test -s /data/harness.db
 
 echo "docker smoke ok"

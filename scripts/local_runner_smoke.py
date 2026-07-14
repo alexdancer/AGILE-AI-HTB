@@ -7,10 +7,10 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from agile_ai_htb import db
-from agile_ai_htb.execution_backend import LocalExecutionBackend
-from agile_ai_htb.task_launch import TaskLaunchBlocked, launch_task
-from agile_ai_htb.worker_adapters import detect_worker_adapter
+from foreman_ai_hq import db
+from foreman_ai_hq.execution_backend import LocalExecutionBackend
+from foreman_ai_hq.task_launch import TaskLaunchBlocked, launch_task
+from foreman_ai_hq.worker_adapters import detect_worker_adapter
 
 
 def _run(command: list[str], cwd: Path) -> None:
@@ -59,13 +59,13 @@ def _edit_docs_and_record_tokens(database_path: Path, repo: Path):
 
 
 def run_smoke(require_opencode: bool = True) -> int:
-    with tempfile.TemporaryDirectory(prefix="agile-ai-htb-local-smoke-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="foreman-ai-hq-local-smoke-") as tmp:
         root = Path(tmp)
         repo = root / "repo"
         repo.mkdir()
         _run(["git", "init"], repo)
         _run(["git", "config", "user.email", "smoke@example.invalid"], repo)
-        _run(["git", "config", "user.name", "AGILE-AI-HTB Smoke"], repo)
+        _run(["git", "config", "user.name", "Foreman AI HQ Smoke"], repo)
         (repo / "README.md").write_text("# DEMO local runner smoke\n", encoding="utf-8")
         _run(["git", "add", "README.md"], repo)
         _run(["git", "commit", "-m", "seed smoke repo"], repo)
@@ -93,7 +93,7 @@ def run_smoke(require_opencode: bool = True) -> int:
                 "smoke": "synthetic-local-runner",
                 "executable": opencode.get("executable"),
                 "version": opencode.get("version"),
-                "sentinel": "AGILE_AI_HTB_ADAPTER_OK",
+                "sentinel": "FOREMAN_AI_HQ_ADAPTER_OK",
             },
         )
 

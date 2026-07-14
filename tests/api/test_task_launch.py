@@ -5,12 +5,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from agile_ai_htb import db
-from agile_ai_htb.app import create_app
-from agile_ai_htb.project_context import project_task_metadata
-from agile_ai_htb.routes import portal as portal_routes
-from agile_ai_htb.settings import Settings
-from agile_ai_htb.task_launch import refresh_task_from_session
+from foreman_ai_hq import db
+from foreman_ai_hq.app import create_app
+from foreman_ai_hq.project_context import project_task_metadata
+from foreman_ai_hq.routes import portal as portal_routes
+from foreman_ai_hq.settings import Settings
+from foreman_ai_hq.task_launch import refresh_task_from_session
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -408,7 +408,7 @@ def test_launch_verified_adapter_creates_running_session_and_redacts_raw_session
     assert launched["session_id"].startswith("sess_")
     assert len(runner_calls) == 1
     assert runner_calls[0].env["OPENAI_API_KEY"].startswith("sk_sess_")
-    assert runner_calls[0].env["AGILE_AI_HTB_SESSION_API_KEY"].startswith("sk_sess_")
+    assert runner_calls[0].env["FOREMAN_AI_HQ_SESSION_API_KEY"].startswith("sk_sess_")
     serialized = json.dumps({"response": response.json(), "board": board.text, "artifact": artifact})
     assert "sk_sess_" not in serialized
     assert "Session report" in board.text

@@ -1,7 +1,7 @@
 import pytest
 
-from agile_ai_htb.llm import LLMClient, LLMClientError, calculate_cost, extract_usage, final_stream_usage
-from agile_ai_htb.settings import Settings
+from foreman_ai_hq.llm import LLMClient, LLMClientError, calculate_cost, extract_usage, final_stream_usage
+from foreman_ai_hq.settings import Settings
 
 
 @pytest.mark.asyncio

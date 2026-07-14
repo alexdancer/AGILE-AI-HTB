@@ -20,6 +20,7 @@ let submitBoardAction;
 let WorkspaceState;
 let submitProjectRestore;
 let SessionsState;
+let AlarmsState;
 let SessionReportState;
 let TaskBreakdownReviewState;
 let TaskBreakdownReview;
@@ -42,6 +43,7 @@ before(async () => {
   ({ BoardState, mergeBoardStatus, pollBoardStatus, submitBoardAction } = await server.ssrLoadModule("/src/views/Board.jsx"));
   ({ WorkspaceState, submitProjectRestore } = await server.ssrLoadModule("/src/views/Workspace.jsx"));
   ({ SessionsState } = await server.ssrLoadModule("/src/views/Sessions.jsx"));
+  ({ AlarmsState } = await server.ssrLoadModule("/src/views/Alarms.jsx"));
   ({ SessionReportState } = await server.ssrLoadModule("/src/views/SessionReport.jsx"));
   ({
     default: TaskBreakdownReview,
@@ -152,7 +154,7 @@ function workspaceData(overrides = {}) {
         framework_hints: ["FastAPI", "React"],
         package_manager_hints: ["uv", "npm"],
         test_command: "uv run pytest",
-        run_command: "uv run htb serve",
+        run_command: "uv run foremanctl serve",
         relevant_docs: ["README.md", "CONTEXT.md"],
       },
     },
@@ -355,6 +357,7 @@ function reportData() {
 
 test("only exact React routes are parsed as owned views", () => {
   assert.deepEqual(parseRoute("/app"), { view: "dashboard" });
+  assert.deepEqual(parseRoute("/alarms"), { view: "alarms" });
   assert.deepEqual(parseRoute("/sessions"), { view: "sessions" });
   assert.deepEqual(parseRoute("/sessions/sess-demo-999"), {
     view: "sessionReport",
@@ -401,6 +404,50 @@ test("Sessions sidebar and list preserve compact scan, states, and pagination", 
   const populated = renderToStaticMarkup(React.createElement(SessionsState, { data, error: null, loading: false }));
   for (const text of ["Agent Review", "DEMO review task", "claude-demo-999", "10 prompt", "5 completion", "15 total", "1 runs", "2 events", "1 failed checks", "yellow zone", "1 alarms", "Active sessions refresh every 5 seconds", "Next sessions"]) assert.match(populated, new RegExp(text));
   assert.match(populated, /href="\/sessions\/sess-demo-999"/);
+});
+
+test("Alarms sidebar and list render from available_actions and bookmarkable filters", () => {
+  const sidebar = renderSidebar({ activeView: "alarms" });
+  assert.match(sidebar, /class="active" href="\/alarms">Alarms/);
+  assert.doesNotMatch(sidebar, /class="active" href="\/app">Dashboard/);
+
+  const data = {
+    filters: [
+      { label: "Open", value: "open", selected: true, count: 1 },
+      { label: "Resolved", value: "resolved", selected: false, count: 0 },
+      { label: "All", value: "all", selected: false, count: 1 },
+    ],
+    selected_filter: "open",
+    alarms: [{
+      id: "alarm-demo-999",
+      type: "DAILY_CAP_EXCEEDED",
+      severity: "HIGH",
+      session_id: "sess-demo-999",
+      session_href: "/sessions/sess-demo-999",
+      context: { text: "{\"daily_cap_tokens\":1000,\"daily_used_tokens\":900}", truncated: false },
+      recommended_action: "Raise budget.",
+      available_actions: [
+        { action: "continue" },
+        { action: "raise_budget", cap_key: "daily_cap_tokens", current_cap: 1000 },
+      ],
+      resolved_action: null,
+      resolved_payload_summary: null,
+      resolved_at: null,
+    }],
+  };
+  const loading = renderToStaticMarkup(React.createElement(AlarmsState, { data: null, error: null, loading: true, filter: "open", onFilter: () => {}, onRefresh: () => {}, retry: () => {} }));
+  assert.match(loading, /Loading Alarms/);
+
+  const failed = renderToStaticMarkup(React.createElement(AlarmsState, { data: null, error: "Alarms require sign-in.", loading: false, filter: "open", onFilter: () => {}, onRefresh: () => {}, retry: () => {} }));
+  assert.match(failed, /Alarms require sign-in/);
+
+  const populated = renderToStaticMarkup(React.createElement(AlarmsState, { data, error: null, loading: false, filter: "open", onFilter: () => {}, onRefresh: () => {}, retry: () => {} }));
+  for (const text of ["DAILY_CAP_EXCEEDED", "HIGH", "alarm-demo-999", "sess-demo-999", "Raise budget.", "Continue", "Raise Budget", "Open", "Resolved", "All", "1000"]) {
+    assert.match(populated, new RegExp(text));
+  }
+  assert.match(populated, /href="\/sessions\/sess-demo-999"/);
+  assert.doesNotMatch(populated, /Abort/);
+  assert.doesNotMatch(populated, /adjust_guardrail/);
 });
 
 test("Session Report renders compact governance plus every bounded evidence path", () => {
@@ -488,7 +535,7 @@ test("React workspace renders active summary, profile, and route-owned links", (
     "FastAPI, React",
     "uv, npm",
     "uv run pytest",
-    "uv run htb serve",
+    "uv run foremanctl serve",
     "README.md, CONTEXT.md",
   ]) assert.match(markup, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   for (const href of [

@@ -1,12 +1,12 @@
-# AGILE-AI-HTB Harness
+# Foreman AI HQ Harness
 
-AGILE-AI-HTB is a harness for governing AI coding agents. It keeps long-running coding work organized as scoped tasks, proves which worker runs consumed which tokens, and gives the operator review points before and after execution.
+Foreman AI HQ is a harness for governing AI coding agents. It keeps long-running coding work organized as scoped tasks, proves which worker runs consumed which tokens, and gives the operator review points before and after execution.
 
 The harness does **not** replace the coding agent. It wraps agents such as OpenCode, Claude Code, Codex, or a custom command with task intake, launch guardrails, budget tracking, evidence, alarms, and review.
 
 ## What the harness owns
 
-- **Control Plane** — the Portal, AGILE Board, setup flows, task breakdown, estimation, budget governance, token accounting, alarms, and reports.
+- **Control Plane** — the Portal, Orchestration Board, setup flows, task breakdown, estimation, budget governance, token accounting, alarms, and reports.
 - **Execution Plane** — the environment that can actually access a repository and launch a Worker Adapter. Today the proven local path is a Local Runner near the repo.
 - **Worker Adapter** — the integration that configures, verifies, launches, and observes a local coding-agent CLI.
 - **Session evidence** — persisted records for worker runs, token usage, launch metadata, stdout/stderr evidence, alarms, review decisions, and reports.
@@ -20,7 +20,7 @@ flowchart LR
     user[Operator] --> portal[Portal]
 
     subgraph control[Control Plane]
-        portal --> board[AGILE Board]
+        portal --> board[Orchestration Board]
         board --> breakdown[Task Breakdown Agent]
         board --> estimation[Task Estimation]
         breakdown -->|accepted candidates| estimation
@@ -59,7 +59,7 @@ Task Estimation produces token estimate, complexity evidence, and risks
         ↓
 Deterministic Model Routing selects or omits an adapter-compatible Worker model
         ↓
-AGILE Board shows Estimated tasks and launch readiness
+Orchestration Board shows Estimated tasks and launch readiness
         ↓
 Launch Guardrails verify adapter, project, model, and token tracking
         ↓
@@ -84,7 +84,7 @@ The harness tracks project capability explicitly:
 | Launch-ready via Hosted Workspace/Sandbox | A hosted execution environment is sandboxed, configured, and verified. |
 | Blocked | The project exists, but no backend satisfies launch requirements. |
 
-The current operator path is local-first: `htb init`, `htb serve`, connect a local project, configure the control-plane model, verify a Worker Adapter, then launch from the project board.
+The current operator path is local-first: `foremanctl init`, `foremanctl serve`, connect a local project, configure the control-plane model, verify a Worker Adapter, then launch from the project board.
 
 Hosted workspaces are useful for analysis and estimation before they are launch-ready. Hosted Worker execution requires a verified sandbox, credentials policy, and Worker Adapter installation before it should be presented as launchable.
 
@@ -101,7 +101,7 @@ The board is not a backlog dump. Work enters through **Estimate task**:
 
 For integrated work, the breakdown should include a final **Acceptance Verification** task. That task checks the combined result against the original source contract instead of rerunning the whole implementation as one large task.
 
-## AGILE Board lifecycle
+## Orchestration Board lifecycle
 
 The canonical task states are:
 
@@ -179,8 +179,8 @@ It does not auto-approve budget overrides, auto-mark tasks Done, run cross-proje
 
 ## Operator surfaces
 
-- **Portal** — primary user experience for setup, project connection, AGILE Board, dashboard, alarms, review, and reports.
-- **`htb` command** — administrative entrypoint for initialization, serving, checks, and demo setup.
+- **Portal** — primary user experience for setup, project connection, Orchestration Board, dashboard, alarms, review, and reports.
+- **`foremanctl` command** — administrative entrypoint for initialization, serving, checks, and demo setup.
 - **Settings** — source of truth for control-plane model connection, Worker Adapter setup, token budget, and project readiness.
 - **REST API** — backing API for sessions, tasks, guardrails, alarms, dashboard data, and reports.
 
@@ -194,6 +194,6 @@ Secrets are local and ignored. Operator config stores non-secret settings; provi
 | Web/API | FastAPI |
 | UI | Server-rendered HTML with Jinja2/HTMX patterns |
 | Storage | SQLite |
-| Packaging | `htb` CLI, `uv`, Docker packaging support |
+| Packaging | `foremanctl` CLI, `uv`, Docker packaging support |
 
 For exact product vocabulary, use `CONTEXT.md` as the source of truth. For operator setup, use `README.md`, `docs/GETTING_STARTED.md`, `docs/INSTALL.md`, and `docs/WORKER_ADAPTER_SETUP.md`.

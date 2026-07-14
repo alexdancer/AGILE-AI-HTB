@@ -15,10 +15,10 @@ The public onboarding documentation SHALL provide a Worker Adapter setup matrix 
 #### Scenario: Matrix distinguishes tracking modes
 - **WHEN** the matrix describes `proxy_governed`, `native_usage`, or `observed_only`
 - **THEN** it SHALL state whether runtime request guardrails are available and whether accounting is budget-authoritative
-- **AND** it SHALL state that `observed_only` is diagnostic-only and not launchable from the normal AGILE Board
+- **AND** it SHALL state that `observed_only` is diagnostic-only and not launchable from the normal Orchestration Board
 
 ### Requirement: Worker Setup presents one active adapter workflow
-The Worker Setup page SHALL present a guided setup workflow for one active Worker Adapter at a time while still exposing all supported adapter presets as selectable options. The workflow SHALL let the operator choose which discovered Worker models are allowed for governed AGILE recommendations and board launches, and SHALL provide filtering and visible bulk selection controls when the discovered model list is shown.
+The Worker Setup page SHALL present a guided setup workflow for one active Worker Adapter at a time while still exposing all supported adapter presets as selectable options. The workflow SHALL let the operator choose which discovered Worker models are allowed for governed Orchestration Board recommendations and board launches, and SHALL provide filtering and visible bulk selection controls when the discovered model list is shown.
 
 #### Scenario: Default adapter exists
 - **WHEN** an operator opens `/settings/workers`
@@ -66,7 +66,7 @@ The Worker Setup page SHALL show a single user-facing readiness summary for the 
 #### Scenario: Adapter is launch-ready
 - **WHEN** the active adapter is configured, has at least one allowed compatible model, and has passed token-tracking verification
 - **THEN** the page shows the adapter as launch-ready
-- **AND** the summary indicates the AGILE Board can launch governed work with this adapter
+- **AND** the summary indicates the Orchestration Board can launch governed work with this adapter
 
 #### Scenario: Connected project is not configured
 - **WHEN** no connected project exists
@@ -188,7 +188,7 @@ Worker Setup SHALL present Codex verification and readiness according to the sel
 - **WHEN** the active Worker Adapter is Codex
 - **AND** Codex has at least one operator-approved allowed model
 - **AND** Codex has passed `native_usage` verification with `tracking_authoritative=true`
-- **THEN** Worker Setup SHALL show Codex as launch-ready for normal governed AGILE Board tasks
+- **THEN** Worker Setup SHALL show Codex as launch-ready for normal governed Orchestration Board tasks
 - **AND** the readiness summary SHALL identify the mode as native usage tracking rather than Harness Proxy request governance
 
 #### Scenario: Codex observed-only success is not launch-ready

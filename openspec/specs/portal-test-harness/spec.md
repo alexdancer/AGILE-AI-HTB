@@ -18,7 +18,7 @@ The Portal test suite SHALL provide one shared test helper Module for repeated P
 - **THEN** the existing Portal tests pass without changing their production behavior assertions
 
 ### Requirement: Portal test harness extraction remains test-only
-The Portal test harness extraction MUST NOT change production Portal routes, templates, database schema, Worker Adapter behavior, Control Plane behavior, AGILE Board behavior, or public APIs.
+The Portal test harness extraction MUST NOT change production Portal routes, templates, database schema, Worker Adapter behavior, Control Plane behavior, Orchestration Board behavior, or public APIs.
 
 #### Scenario: Production code remains untouched
 - **WHEN** the Portal test harness Module is implemented

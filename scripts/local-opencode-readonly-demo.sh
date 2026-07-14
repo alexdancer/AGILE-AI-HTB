@@ -3,8 +3,8 @@ set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://127.0.0.1:8000}"
 PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 || command -v python || true)}"
-CONFIG_FILE="${HTB_CONFIG_FILE:-.htb/config.toml}"
-SECRETS_ENV="${HTB_SECRETS_ENV:-.htb/secrets.env}"
+CONFIG_FILE="${FOREMAN_CONFIG_FILE:-.foreman/config.toml}"
+SECRETS_ENV="${FOREMAN_SECRETS_ENV:-.foreman/secrets.env}"
 PORTAL_TOKEN_ENV="${PORTAL_TOKEN_ENV:-TOKEN_TRACKER_PORTAL_TOKEN}"
 if [[ -f "$CONFIG_FILE" && -n "$PYTHON_BIN" ]]; then
   CONFIG_PORTAL_TOKEN_ENV="$(
@@ -86,25 +86,25 @@ if not project.get("id"):
 print(project["id"])'
 }
 
-echo "1/4 Test AGILE-AI-HTB control-plane model connection"
-api POST /settings/control-plane/test >/tmp/agile_ai_htb_control_plane.json
-"$PYTHON_BIN" -c 'import json; p=json.load(open("/tmp/agile_ai_htb_control_plane.json")); print("passed=", p.get("passed"))'
+echo "1/4 Test Foreman AI HQ control-plane model connection"
+api POST /settings/control-plane/test >/tmp/foreman_ai_hq_control_plane.json
+"$PYTHON_BIN" -c 'import json; p=json.load(open("/tmp/foreman_ai_hq_control_plane.json")); print("passed=", p.get("passed"))'
 
 echo "2/4 Discover OpenCode Worker models"
-api POST /settings/workers/opencode/discover-models >/tmp/agile_ai_htb_models.json
+api POST /settings/workers/opencode/discover-models >/tmp/foreman_ai_hq_models.json
 if [[ -z "$VERIFY_MODEL" ]]; then
-  VERIFY_MODEL="$(pick_first_model </tmp/agile_ai_htb_models.json)"
+  VERIFY_MODEL="$(pick_first_model </tmp/foreman_ai_hq_models.json)"
 fi
 echo "worker_model=$VERIFY_MODEL"
 
 echo "3/4 Verify OpenCode native usage tracking"
-api POST /settings/workers/opencode/verify "{\"model\":\"$VERIFY_MODEL\",\"tracking_mode\":\"native_usage\"}" >/tmp/agile_ai_htb_verify.json
-"$PYTHON_BIN" -c 'import json; p=json.load(open("/tmp/agile_ai_htb_verify.json")); print("passed=", p.get("passed")); print("reasons=", p.get("reasons"))'
+api POST /settings/workers/opencode/verify "{\"model\":\"$VERIFY_MODEL\",\"tracking_mode\":\"native_usage\"}" >/tmp/foreman_ai_hq_verify.json
+"$PYTHON_BIN" -c 'import json; p=json.load(open("/tmp/foreman_ai_hq_verify.json")); print("passed=", p.get("passed")); print("reasons=", p.get("reasons"))'
 
 echo "4/4 Connect project + launch read-only proof"
-api POST /settings/project/connect "{\"root_path\":\"$PROJECT_ROOT\"}" >/tmp/agile_ai_htb_project.json
-PROJECT_ID="$(pick_project_id </tmp/agile_ai_htb_project.json)"
-api POST "/settings/project/$PROJECT_ID/read-only-proof" >/tmp/agile_ai_htb_readonly_proof.json
-"$PYTHON_BIN" -c 'import json; p=json.load(open("/tmp/agile_ai_htb_readonly_proof.json")); print("task=", (p.get("task") or {}).get("id")); print("session=", (p.get("session") or {}).get("id")); print("tracking_mode=", ((p.get("task") or {}).get("metadata") or {}).get("tracking_mode"))'
+api POST /settings/project/connect "{\"root_path\":\"$PROJECT_ROOT\"}" >/tmp/foreman_ai_hq_project.json
+PROJECT_ID="$(pick_project_id </tmp/foreman_ai_hq_project.json)"
+api POST "/settings/project/$PROJECT_ID/read-only-proof" >/tmp/foreman_ai_hq_readonly_proof.json
+"$PYTHON_BIN" -c 'import json; p=json.load(open("/tmp/foreman_ai_hq_readonly_proof.json")); print("task=", (p.get("task") or {}).get("id")); print("session=", (p.get("session") or {}).get("id")); print("tracking_mode=", ((p.get("task") or {}).get("metadata") or {}).get("tracking_mode"))'
 
 echo "Done. Open $BASE_URL/dashboard and /sessions for separated control-plane vs Worker spend."

@@ -1,27 +1,27 @@
 # task-breakdown-review Specification
 
 ## Purpose
-Define how Proposed Task Breakdown review preserves decomposition intent, global source-contract context, and acceptance-verification work before accepted candidates become estimated AGILE Board Tasks.
+Define how Proposed Task Breakdown review preserves decomposition intent, global source-contract context, and acceptance-verification work before accepted candidates become estimated Orchestration Board Tasks.
 ## Requirements
 ### Requirement: Durable task breakdown review records
-The system SHALL persist Task Breakdown Agent output as a durable Proposed Task Breakdown review record before creating AGILE Board Tasks from Markdown intake or oversized task intake.
+The system SHALL persist Task Breakdown Agent output as a durable Proposed Task Breakdown review record before creating Orchestration Board Tasks from Markdown intake or oversized task intake.
 
 #### Scenario: Markdown intake creates review record before tasks
 - **WHEN** the operator submits Markdown upload or Markdown paste that requires Task Breakdown Agent interpretation
 - **THEN** the system creates a durable Proposed Task Breakdown review record
-- **AND** no AGILE Board Task is created until the operator accepts one or more candidates from that review
+- **AND** no Orchestration Board Task is created until the operator accepts one or more candidates from that review
 
 #### Scenario: Review record preserves breakdown evidence
 - **WHEN** a Proposed Task Breakdown is created
 - **THEN** the record preserves source metadata, candidate tasks, rejected/non-task items, constraints, verification criteria, Task Breakdown Model identity, and linked orchestration token/session evidence when available
 
 ### Requirement: Breakdown review page
-The system SHALL provide a separate canonical review page for Proposed Task Breakdowns rather than representing breakdown review as an AGILE Board column or Task state. When the complete React build is available, `/task-breakdowns/{breakdown_id}/review` SHALL render inside the React Portal shell; when the build is missing or partial, the same canonical URL SHALL preserve the existing Jinja review.
+The system SHALL provide a separate canonical review page for Proposed Task Breakdowns rather than representing breakdown review as an Orchestration Board column or Task state. When the complete React build is available, `/task-breakdowns/{breakdown_id}/review` SHALL render inside the React Portal shell; when the build is missing or partial, the same canonical URL SHALL preserve the existing Jinja review.
 
 #### Scenario: Markdown intake redirects to review page
 - **WHEN** Markdown intake successfully produces a Proposed Task Breakdown
 - **THEN** the operator is directed to `/task-breakdowns/{breakdown_id}/review` for that durable review record
-- **AND** the AGILE Board remains limited to Task lifecycle columns
+- **AND** the Orchestration Board remains limited to Task lifecycle columns
 
 #### Scenario: Built canonical review opens in React
 - **WHEN** an authenticated operator opens an existing Task Breakdown Review while the complete frontend build is available
@@ -42,8 +42,8 @@ The system SHALL provide a separate canonical review page for Proposed Task Brea
 #### Scenario: Accepting review creates estimated tasks
 - **WHEN** the operator accepts one or more candidate tasks from the breakdown review page
 - **THEN** the system immediately sends the accepted candidates to Task Estimation
-- **AND** creates Estimated AGILE Board Tasks for successful estimates
-- **AND** returns the operator to the canonical project-scoped or global AGILE Board
+- **AND** creates Estimated Orchestration Board Tasks for successful estimates
+- **AND** returns the operator to the canonical project-scoped or global Orchestration Board
 
 ### Requirement: Review shows candidates and non-task classifications
 The breakdown review page SHALL show candidate vertical slices and explicitly show rejected or non-task source items with reasons. React SHALL preserve all source-contract and classification evidence visible in the Jinja review, while allowing dense slicing and Repo Context evidence to use progressive disclosure.
@@ -121,13 +121,13 @@ The system SHALL show an explicit breakdown-failed recovery state when the Task 
 - **WHEN** an operator activates Retry from a failed React review
 - **THEN** React SHALL call the existing Retry path with explicit JSON negotiation
 - **AND** a completed retry SHALL refetch and render the authoritative proposed or failed review state
-- **AND** it SHALL NOT create AGILE Board Tasks
+- **AND** it SHALL NOT create Orchestration Board Tasks
 
 #### Scenario: React creates manual recovery candidate
 - **WHEN** an operator submits a Manual Candidate from a failed React review
 - **THEN** React SHALL call the existing Manual Candidate path with explicit JSON negotiation
 - **AND** the resulting authoritative proposed review SHALL replace the failed state after a successful refetch
-- **AND** no AGILE Board Task SHALL exist until explicit acceptance
+- **AND** no Orchestration Board Task SHALL exist until explicit acceptance
 
 #### Scenario: Accepted review cannot be reopened by stale recovery
 - **WHEN** Retry or Manual Candidate is submitted for an already accepted review
@@ -207,17 +207,17 @@ The Task Breakdown Agent SHALL auto-propose an Acceptance Verification candidate
 - **AND** rejecting it does not prevent accepting other implementation candidates
 
 #### Scenario: Launch order is not hard-blocked
-- **WHEN** accepted candidates become Estimated AGILE Board Tasks
+- **WHEN** accepted candidates become Estimated Orchestration Board Tasks
 - **THEN** Acceptance Verification sequence is preserved as metadata or creation order
 - **AND** the first implementation does not require hard dependency blocking between created Tasks
 
 ### Requirement: Acceptance Verification is ordinary Worker work
-Acceptance Verification SHALL be an ordinary estimated AGILE Board Task rather than a hidden control-plane check.
+Acceptance Verification SHALL be an ordinary estimated Orchestration Board Task rather than a hidden control-plane check.
 
 #### Scenario: Accepted Acceptance Verification becomes estimated Task
 - **WHEN** the operator accepts an `acceptance_verification` candidate
 - **THEN** the system sends it through Task Estimation
-- **AND** creates an Estimated AGILE Board Task when estimation succeeds
+- **AND** creates an Estimated Orchestration Board Task when estimation succeeds
 - **AND** the Task has its own Token Budget, Worker Run, and Review Disposition lifecycle
 
 #### Scenario: Acceptance Verification verifies instead of rebuilding
@@ -271,10 +271,10 @@ The system SHALL preserve bounded repo-context evidence on Proposed Task Breakdo
 #### Scenario: Repo context failure does not block manual recovery
 - **WHEN** a connected project root is unavailable, unreadable, or otherwise fails while building repo context for Task Breakdown
 - **THEN** the system creates or retries the Proposed Task Breakdown without repo context
-- **AND** it does not create AGILE Board Tasks without the normal operator acceptance step
+- **AND** it does not create Orchestration Board Tasks without the normal operator acceptance step
 
 ### Requirement: Task Breakdown Agent follows Task Slicing Policy
-The Task Breakdown Agent SHALL apply a Harness-owned Task Slicing Policy before returning Proposed Task Breakdown candidates. The policy SHALL prefer the fewest useful independently launchable AGILE Board Tasks that preserve the original source contract, avoid speculative work, and include an executable proof or clearly labeled manual proof gap.
+The Task Breakdown Agent SHALL apply a Harness-owned Task Slicing Policy before returning Proposed Task Breakdown candidates. The policy SHALL prefer the fewest useful independently launchable Orchestration Board Tasks that preserve the original source contract, avoid speculative work, and include an executable proof or clearly labeled manual proof gap.
 
 #### Scenario: Policy rejects unnecessary board cards
 - **WHEN** source intake contains setup prose, context-only bullets, duplicate work, non-goals, constraints, verification notes, or speculative future-proofing
@@ -292,7 +292,7 @@ The Task Breakdown Agent SHALL apply a Harness-owned Task Slicing Policy before 
 - **AND** the candidate SHALL explain why the shared task is not smaller
 
 ### Requirement: Candidates include quality evidence
-Every Proposed Task Breakdown candidate SHALL include structured quality evidence that explains why it deserves an AGILE Board Task and how it can be verified.
+Every Proposed Task Breakdown candidate SHALL include structured quality evidence that explains why it deserves an Orchestration Board Task and how it can be verified.
 
 #### Scenario: Candidate carries slicing evidence
 - **WHEN** the Task Breakdown Agent returns a candidate
@@ -310,7 +310,7 @@ Every Proposed Task Breakdown candidate SHALL include structured quality evidenc
 - **AND** the Task description sent to Task Estimation SHALL include the execution-relevant objective, scope, acceptance criteria, constraints, dependencies, and verification proof
 
 ### Requirement: Candidates classify execution mode
-Every Proposed Task Breakdown candidate SHALL classify whether it is autonomous or human-in-the-loop before it becomes an AGILE Board Task.
+Every Proposed Task Breakdown candidate SHALL classify whether it is autonomous or human-in-the-loop before it becomes an Orchestration Board Task.
 
 #### Scenario: AFK candidate is independently executable
 - **WHEN** a candidate can be implemented and verified by a Worker without waiting for operator decisions, credentials, external approvals, or manual product judgment during execution
@@ -413,9 +413,9 @@ FastAPI SHALL remain the sole domain authority for review status, presence-aware
 #### Scenario: Retry replaces only pre-acceptance review evidence
 - **WHEN** Retry completes for a proposed or failed review
 - **THEN** FastAPI SHALL persist the authoritative new proposed or failed review result
-- **AND** it SHALL NOT create AGILE Board Tasks
+- **AND** it SHALL NOT create Orchestration Board Tasks
 
 #### Scenario: Manual Candidate creates review evidence before Tasks
 - **WHEN** Manual Candidate succeeds for a proposed or failed review
 - **THEN** FastAPI SHALL persist one proposed manual candidate with the existing manual HITL policy evidence
-- **AND** it SHALL NOT create an AGILE Board Task until later explicit acceptance
+- **AND** it SHALL NOT create an Orchestration Board Task until later explicit acceptance

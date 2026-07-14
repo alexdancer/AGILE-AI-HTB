@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} | Foreman AI HQ{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ project.name }}</h1>
+
+{% if error %}
+<section class="notice warning">{{ error }}</section>
+{% endif %}
+
+{% if project.archived_at %}
+<!-- Archived projects keep evidence visible but suppress active launch entry points. -->
+<section class="notice warning">
+  <strong>Archived project</strong>
+  <p class="muted mono" style="margin:6px 0 0">Archived {{ project.archived_at }}. History and evidence stay available, but active board launch controls are hidden until restore.</p>
+  <form method="post" action="/projects/{{ project.id }}/restore" style="margin-top:10px">
+    <button type="submit" class="primary">Restore project</button>
+  </form>
+</section>
+{% endif %}
+
+<section class="status-toolbar">
+  <div class="status-group">
+    <span class="pill {% if project.archived_at %}muted{% elif summary.launch_ready %}green{% else %}yellow{% endif %}">{% if project.archived_at %}archived{% elif summary.launch_ready %}launch ready{% else %}setup needed{% endif %}</span>
+    <span class="status-item">{{ summary.total_tasks }} tasks</span>
+    <span class="status-item">{{ summary.counts.Estimated }} estimated</span>
+    <span class="status-item">{{ summary.counts.Review }} review</span>
+  </div>
+  <div class="status-group">
+    {% if project.archived_at %}
+    <span class="pill muted">archived</span>
+    {% elif project.capability.state == 'launch_ready' %}
+    <span class="pill green">{{ project.capability.label }}</span>
+    {% elif project.capability.state == 'analysis_ready' %}
+    <span class="pill blue">{{ project.capability.label }}</span>
+    {% else %}
+    <span class="pill red">{{ project.capability.label or 'Blocked' }}</span>
+    {% endif %}
+    {% if project.capability.reasons %}
+    <span class="status-item muted">{{ project.capability.reasons|join(' · ') }}</span>
+    {% endif %}
+  </div>
+</section>
+
+<nav class="workspace-nav" aria-label="Project workflows">
+  <!-- Board link is omitted for archived projects to prevent new launches. -->
+  {% if not project.archived_at %}<a href="/projects/{{ project.id }}/board">Task board</a>{% endif %}
+  <a href="/sessions">Sessions</a>
+  <a href="/projects/{{ project.id }}/task-history">Task history</a>
+  <a href="/settings/workers">Worker setup</a>
+  <a href="/settings/project">Project settings</a>
+</nav>
+
+{% if summary.attention_actions %}
+<section class="grid cols-3" style="margin-bottom:20px">
+  {% for action in summary.attention_actions %}
+  <a class="card surface-link action-card" href="{{ action.href }}">
+    <span class="pill {{ action.tone }}">attention</span>
+    <h3>{{ action.label }}</h3>
+    <p class="muted">{{ action.detail }}</p>
+  </a>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-header"><h3>Repo profile</h3></div>
+  <div class="panel-body">
+    <div class="kv">
+      <div class="k">Root</div><div class="v">{{ project.root_path }}</div>
+      <div class="k">Git branch</div><div class="v">{{ project.profile.git_branch or 'not detected' }}</div>
+      <div class="k">Languages</div><div class="v">{{ project.profile.language_hints|join(', ') or 'not detected' }}</div>
+      <div class="k">Frameworks</div><div class="v">{{ project.profile.framework_hints|join(', ') or 'not detected' }}</div>
+      <div class="k">Package managers</div><div class="v">{{ project.profile.package_manager_hints|join(', ') or 'not detected' }}</div>
+      <div class="k">Test command</div><div class="v">{{ project.profile.test_command or 'not detected' }}</div>
+      <div class="k">Run command</div><div class="v">{{ project.profile.run_command or 'not detected' }}</div>
+      <div class="k">Docs</div><div class="v">{{ project.profile.relevant_docs|join(', ') or 'none' }}</div>
+    </div>
+  </div>
+</section>
+{% endblock %}

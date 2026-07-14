@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from agile_ai_htb import db
-from agile_ai_htb.board_automation import (
+from foreman_ai_hq import db
+from foreman_ai_hq.board_automation import (
     QUEUE_STATUS_RUNNING,
     QUEUE_STATUS_STOPPED,
     RUN_QUEUE_SOURCE,
@@ -12,7 +12,7 @@ from agile_ai_htb.board_automation import (
     start_run_automation,
     stop_run_automation,
 )
-from agile_ai_htb.project_context import project_task_metadata
+from foreman_ai_hq.project_context import project_task_metadata
 
 
 def _init_db(tmp_path: Path) -> Path:
@@ -173,7 +173,7 @@ def test_task_automation_event_preserves_concurrent_launch_metadata(tmp_path, mo
         )
         return original_update_task_metadata(path, task_id, updater)
 
-    monkeypatch.setattr("agile_ai_htb.board_automation.db.update_task_metadata", concurrent_update)
+    monkeypatch.setattr("foreman_ai_hq.board_automation.db.update_task_metadata", concurrent_update)
 
     record_automation_event(
         db_path,

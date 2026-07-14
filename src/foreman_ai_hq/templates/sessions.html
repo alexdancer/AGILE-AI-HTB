@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Sessions | Foreman AI HQ{% endblock %}
+{% block content %}
+<h1 class="page-title">Sessions</h1>
+<p class="page-sub">all sessions · click through for token usage + checkpoints</p>
+
+<section class="panel">
+  <div class="panel-header"><h3>All sessions</h3><span class="mono muted">summary before raw report</span></div>
+  <div class="panel-body tight table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>session</th><th>kind</th><th>task</th><th>model</th><th>status</th><th class="right">prompt</th><th class="right">completion</th><th class="right">total</th><th>evidence</th><th>zone</th><th>alarms</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in sessions %}
+        <!-- Task previews keep the index compact; report links expose full evidence. -->
+        {% set task_text = item.session.task_description or '' %}
+        {% set task_preview = task_text[:160] ~ ('…' if task_text|length > 160 else '') %}
+        <tr>
+          <td class="mono muted"><a href="/sessions/{{ item.session.id }}">{{ item.session.id }}</a></td>
+          <td><span class="pill {% if item.evidence_summary.session_kind == 'Agent Review' %}blue{% else %}muted{% endif %}">{{ item.evidence_summary.session_kind }}</span></td>
+          <td><div class="compact-text lines-2">{{ task_preview }}</div></td>
+          <td class="mono">{{ item.session.model }}</td>
+          <td><span class="pill {% if item.session.status in ['active', 'running'] %}blue{% elif item.session.status == 'completed' %}green{% else %}muted{% endif %}">{{ item.session.status }}</span></td>
+          <td class="mono right">{{ "{:,}".format(item.token_totals.prompt_tokens) }}</td>
+          <td class="mono right">{{ "{:,}".format(item.token_totals.completion_tokens) }}</td>
+          <td class="mono right">{{ "{:,}".format(item.token_totals.total_tokens) }}</td>
+          <td class="mono">{{ item.evidence_summary.worker_runs }} runs · {{ item.evidence_summary.worker_events }} events · {{ item.evidence_summary.failed_checkpoints }} failed checks</td>
+          <td><span class="pill {% if item.current_zone == 'green' %}green{% elif item.current_zone == 'yellow' %}yellow{% elif item.current_zone == 'red' %}red{% else %}muted{% endif %}">zone: {{ item.current_zone }}</span></td>
+          <td><span class="pill {% if item.alarms|length %}red{% else %}muted{% endif %}">{{ item.alarms|length }}</span></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="11"><div class="empty-state">No sessions yet. Launch a task from a project board to create evidence.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

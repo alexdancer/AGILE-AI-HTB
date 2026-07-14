@@ -1,9 +1,9 @@
 {
-  "name": "agile-ai-htb-frontend",
+  "name": "foreman-ai-hq-frontend",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "React/Vite Portal shell for AGILE-AI-HTB, served statically by the FastAPI app.",
+  "description": "React/Vite Portal shell for Foreman AI HQ, served statically by the FastAPI app.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

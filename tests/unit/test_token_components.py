@@ -1,5 +1,5 @@
-from agile_ai_htb import db
-from agile_ai_htb.native_usage import token_usage_components
+from foreman_ai_hq import db
+from foreman_ai_hq.native_usage import token_usage_components
 
 
 def test_token_usage_components_normalizes_provider_aliases():

@@ -9,6 +9,7 @@ import Sessions from "./views/Sessions.jsx";
 import SessionReport from "./views/SessionReport.jsx";
 import TaskBreakdownReview from "./views/TaskBreakdownReview.jsx";
 import TaskHistory from "./views/TaskHistory.jsx";
+import Alarms from "./views/Alarms.jsx";
 import { NavigationGuardContext } from "./nav.jsx";
 
 // The shell is served under /app. Client routes mirror the Jinja URLs so the
@@ -19,6 +20,7 @@ import { NavigationGuardContext } from "./nav.jsx";
 export function parseRoute(pathname) {
   const normalized = pathname.replace(/\/$/, "");
   if (normalized === "/app") return { view: "dashboard" };
+  if (normalized === "/alarms") return { view: "alarms" };
   if (normalized === "/sessions") return { view: "sessions" };
 
   const report = normalized.match(/^\/sessions\/([^/]+)$/);
@@ -90,6 +92,8 @@ export default function App() {
     content = <Board projectId={route.projectId} />;
   } else if (route.view === "dashboard") {
     content = <Dashboard />;
+  } else if (route.view === "alarms") {
+    content = <Alarms />;
   } else if (route.view === "sessions") {
     content = <Sessions />;
   } else if (route.view === "sessionReport") {

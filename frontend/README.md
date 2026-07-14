@@ -1,4 +1,4 @@
-# AGILE-AI-HTB Portal frontend
+# Foreman AI HQ Portal frontend
 
 A minimal [Vite](https://vitejs.dev/) + React shell for the Portal. It owns the
 **home / project picker**, the project **workspace**, and the project **board
@@ -13,7 +13,7 @@ does not re-implement any of those rules.
 
 ## Build
 
-The build writes static assets into `../src/agile_ai_htb/static/react/`, which
+The build writes static assets into `../src/foreman_ai_hq/static/react/`, which
 FastAPI serves under `/static/react/`. No Node server runs in production.
 
 ```bash

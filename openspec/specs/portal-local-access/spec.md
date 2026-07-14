@@ -7,7 +7,7 @@ TBD - created by archiving change skip-local-portal-login. Update Purpose after 
 The system SHALL allow the default loopback local Portal run to be used without submitting a portal login token.
 
 #### Scenario: Default loopback root opens Portal landing
-- **WHEN** an operator starts the Portal through the default local `htb serve` loopback bind
+- **WHEN** an operator starts the Portal through the default local `foremanctl serve` loopback bind
 - **THEN** `GET /` SHALL redirect to the normal Portal landing page without requiring a login cookie or bearer token
 
 #### Scenario: Loopback protected page opens without cookie

@@ -1,4 +1,4 @@
-from agile_ai_htb import db
+from foreman_ai_hq import db
 from tests.portal.helpers import PORTAL_TOKEN, _client, _portal_headers
 
 def test_portal_routes_require_operator_bearer_token(tmp_path, monkeypatch):
@@ -23,7 +23,7 @@ def test_portal_login_sets_signed_http_only_cookie_and_logout_clears_it(tmp_path
         assert login.status_code == 303
         assert login.headers["location"] == "/projects"
         cookie = login.headers["set-cookie"]
-        assert "agile_ai_htb_portal=" in cookie
+        assert "foreman_ai_hq_portal=" in cookie
         assert "HttpOnly" in cookie
         assert "SameSite=lax" in cookie
         assert "Max-Age=43200" in cookie
@@ -34,7 +34,7 @@ def test_portal_login_sets_signed_http_only_cookie_and_logout_clears_it(tmp_path
         logout = client.post("/logout", follow_redirects=False)
         assert logout.status_code == 303
         assert logout.headers["location"] == "/login"
-        assert "agile_ai_htb_portal=\"\"" in logout.headers["set-cookie"]
+        assert "foreman_ai_hq_portal=\"\"" in logout.headers["set-cookie"]
         assert client.get("/dashboard").status_code == 401
 
 
@@ -60,7 +60,7 @@ def test_portal_auth_disabled_logout_clears_cookie_and_returns_to_landing(tmp_pa
 
     assert logout.status_code == 303
     assert logout.headers["location"] == "/projects"
-    assert "agile_ai_htb_portal=\"\"" in logout.headers["set-cookie"]
+    assert "foreman_ai_hq_portal=\"\"" in logout.headers["set-cookie"]
 
 def test_portal_login_redirects_to_most_recent_project(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
@@ -91,15 +91,15 @@ def test_portal_rejects_tampered_or_expired_login_cookie(tmp_path, monkeypatch):
     with _client(tmp_path) as client:
         login = client.post("/login", data={"token": PORTAL_TOKEN})
         assert login.status_code == 200
-        signed_cookie = client.cookies.get("agile_ai_htb_portal")
+        signed_cookie = client.cookies.get("foreman_ai_hq_portal")
         assert signed_cookie is not None
 
-        client.cookies.set("agile_ai_htb_portal", signed_cookie + "tampered")
+        client.cookies.set("foreman_ai_hq_portal", signed_cookie + "tampered")
         assert client.get("/dashboard").status_code == 401
 
-        from agile_ai_htb.auth import sign_portal_cookie
+        from foreman_ai_hq.auth import sign_portal_cookie
 
-        client.cookies.set("agile_ai_htb_portal", sign_portal_cookie(PORTAL_TOKEN, max_age_seconds=-1))
+        client.cookies.set("foreman_ai_hq_portal", sign_portal_cookie(PORTAL_TOKEN, max_age_seconds=-1))
         assert client.get("/dashboard").status_code == 401
 
 def test_portal_login_rejects_wrong_token(tmp_path, monkeypatch):

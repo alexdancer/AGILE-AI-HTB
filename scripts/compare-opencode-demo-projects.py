@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare direct vs AGILE-AI-HTB OpenCode DEMO 2099 project outputs.
+"""Compare direct vs Foreman AI HQ OpenCode DEMO 2099 project outputs.
 
 This is an external smoke check: same commands, same pass/fail criteria, no trust
 in either project's self-written tests.

@@ -7,7 +7,7 @@
 Build a local Python CLI project named `tag-retriever` (the "Hermes Tag Retriever"). This is a medium-sized coding task for comparing two execution paths:
 
 1. A coding agent (Claude Code, OpenCode, or Codex) run directly on this task file.
-2. The same coding agent launched through AGILE-AI-HTB using the same task file and a separately configured harness Worker budget.
+2. The same coding agent launched through Foreman AI HQ using the same task file and a separately configured harness Worker budget.
 
 This MEDIUM task should take roughly 5-12 turns. It is the middle anchor of the comparison set: enough real implementation work (subcommands, a SQLite schema, a hand-rolled YAML-ish parser, regex extraction, deterministic output) to produce meaningful token usage, while still being achievable in one sitting. The goal is to show what the harness adds on a moderate run: estimate visibility, budget gating, usage authority, launch evidence, alarms or overrides, and review-state evidence — versus a raw agent run that produces only code and a chat transcript.
 

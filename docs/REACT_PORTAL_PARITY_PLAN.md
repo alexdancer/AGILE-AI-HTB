@@ -1,12 +1,12 @@
 # React Portal Parity Migration Plan
 
-> **Status:** Portal chrome, Dashboard, project workspace, AGILE Board, Sessions/Session Report, Task Breakdown Review, Project Task History, and the React default-enable gate are complete. Remaining operator surfaces continue as full-page Jinja routes until migrated deliberately.
+> **Status:** Portal chrome, Dashboard, project workspace, Orchestration Board, Sessions/Session Report, Task Breakdown Review, Project Task History, and the React default-enable gate are complete. Remaining operator surfaces continue as full-page Jinja routes until migrated deliberately.
 
-**Goal:** Move AGILE-AI-HTB toward a coherent React authenticated operator console without leaving operators in a partial `/app` island that lacks the real Portal layout, dashboard, and AGILE Board behavior.
+**Goal:** Move Foreman AI HQ toward a coherent React authenticated operator console without leaving operators in a partial `/app` island that lacks the real Portal layout, dashboard, and Orchestration Board behavior.
 
 **Architecture:** FastAPI remains authoritative for authentication, persistence, task estimation, launch guardrails, Worker Run execution, token budget governance, review disposition, and audit evidence. React owns every normal user-facing route after each surface reaches parity. During migration, Jinja may continue implementing non-migrated surfaces. In the final state, only a minimal server-rendered Portal Recovery Surface remains for login and recovery when the React build is missing or partial; it is not a second operator console.
 
-**Current state:** A complete React build owns the authenticated front door, Dashboard, project workspace, normal governed AGILE Board loop, Sessions/Session Report, canonical Task Breakdown Review, and Project Task History. FastAPI selects the existing Jinja page when the React index or any referenced asset is missing. Alarms, Setup, and Settings remain ordinary full-page Jinja routes. Alarms inbox is the next bounded parity candidate.
+**Current state:** A complete React build owns the authenticated front door, Dashboard, project workspace, normal governed Orchestration Board loop, Sessions/Session Report, canonical Task Breakdown Review, and Project Task History. FastAPI selects the existing Jinja page when the React index or any referenced asset is missing. Alarms, Setup, and Settings remain ordinary full-page Jinja routes. Alarms inbox is the next bounded parity candidate.
 
 ---
 
@@ -29,7 +29,7 @@ Target end state:
    ├─ Dashboard
    ├─ Projects
    ├─ Project workspace
-   ├─ AGILE Board
+   ├─ Orchestration Board
    ├─ Sessions
    ├─ Alarms
    ├─ Setup
@@ -61,8 +61,8 @@ Non-goals:
 
 **Likely files:**
 
-- Modify: `src/agile_ai_htb/routes/portal.py`
-- Modify: `src/agile_ai_htb/routes/react_shell.py` if build-aware helper behavior needs adjustment
+- Modify: `src/foreman_ai_hq/routes/portal.py`
+- Modify: `src/foreman_ai_hq/routes/react_shell.py` if build-aware helper behavior needs adjustment
 - Test: `tests/portal/test_react_shell.py`
 
 **Verification:**
@@ -87,7 +87,7 @@ git diff --check
 
 **Objective:** Make the React shell feel like the same app before adding more React surfaces.
 
-React shell must preserve the Jinja layout contract from `src/agile_ai_htb/templates/base.html`:
+React shell must preserve the Jinja layout contract from `src/foreman_ai_hq/templates/base.html`:
 
 - top brand
 - sidebar
@@ -128,7 +128,7 @@ React navigation may use client-side routing for React-owned paths, but links to
 
 **Objective:** `/app` should become a real dashboard-equivalent front door, not only a project picker.
 
-React dashboard should include the same operator intent as `src/agile_ai_htb/templates/dashboard.html`:
+React dashboard should include the same operator intent as `src/foreman_ai_hq/templates/dashboard.html`:
 
 - Operator next actions
 - Daily governed budget KPI
@@ -144,7 +144,7 @@ React dashboard should include the same operator intent as `src/agile_ai_htb/tem
 
 - Create/modify: `frontend/src/views/Dashboard.jsx`
 - Modify: `frontend/src/App.jsx`
-- Modify: `src/agile_ai_htb/routes/react_shell.py` or route module for dashboard JSON
+- Modify: `src/foreman_ai_hq/routes/react_shell.py` or route module for dashboard JSON
 - Reuse existing dashboard helper logic where available; do not duplicate domain rules in React
 - Test: JSON endpoint auth and shape
 - Test: source/contract assertions for React field names
@@ -158,11 +158,11 @@ React dashboard should include the same operator intent as `src/agile_ai_htb/tem
 
 ---
 
-## Phase 4: React AGILE Board Functional Parity
+## Phase 4: React Orchestration Board Functional Parity
 
 **Objective:** React board must not replace the Jinja board until it supports the real operator workflow.
 
-Parity with `src/agile_ai_htb/templates/board.html` must include:
+Parity with `src/foreman_ai_hq/templates/board.html` must include:
 
 - board status toolbar
 - project-scoped counts and history link
@@ -319,7 +319,7 @@ Default landing can return to React when:
 
 - React shell uses full Portal chrome.
 - React dashboard is dashboard-equivalent.
-- React AGILE Board is functionally equivalent for the normal governed task lifecycle.
+- React Orchestration Board is functionally equivalent for the normal governed task lifecycle.
 - Missing/partial build fallback is safe.
 - Non-migrated fallback links are explicit and not confusing.
 - Tests prove root/login routing behavior under auth-required and auth-disabled modes.
@@ -362,7 +362,7 @@ Recommended sequence:
    - Make `/app` a dashboard-equivalent home.
 
 4. `react-board-functional-parity`
-   - Port the AGILE Board workflow fully enough to replace Jinja board.
+   - Port the Orchestration Board workflow fully enough to replace Jinja board.
 
 5. `react-portal-default-enable`
    - Make React default only after parity tests pass.
@@ -407,7 +407,7 @@ git diff --check
 
 ## Decision Log
 
-- React is the right long-term direction for the authenticated operator console because AGILE-AI-HTB is becoming an interactive control plane: dashboard next actions, project switching, board controls, setup workflows, queue state, review controls, evidence panels, and future live updates are app-like interactions.
+- React is the right long-term direction for the authenticated operator console because Foreman AI HQ is becoming an interactive control plane: dashboard next actions, project switching, board controls, setup workflows, queue state, review controls, evidence panels, and future live updates are app-like interactions.
 - React should not be an incomplete separate `/app` island.
 - Backend authority remains in FastAPI. React is a presentation/client-state layer, not a duplicate workflow engine.
 - The existing Jinja Portal remains the reliable fallback until each React surface reaches parity.
@@ -424,7 +424,7 @@ git diff --check
 - Setup `Ready to launch` requires at least one launch-ready Connected Project; React must not copy the current optional-project drift.
 - Correct the current Jinja Setup readiness claim in a small verified change before starting Sessions migration.
 - React Settings actions remain on-page with inline outcomes and refreshed authoritative state; successful saves do not force navigation to Setup.
-- Task Breakdown Review and Project Task History migrate before Alarms and Settings because they are direct branches of the primary React AGILE Board workflow.
+- Task Breakdown Review and Project Task History migrate before Alarms and Settings because they are direct branches of the primary React Orchestration Board workflow.
 - React Task Breakdown Review keeps full editable contract parity while using progressive disclosure for dense slicing evidence.
 - Task Breakdown Review keeps pre-acceptance edits browser-local, warns before leaving, and persists only on explicit acceptance.
 - React Login is a standalone branded screen; authenticated Portal chrome appears only after login.

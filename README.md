@@ -1,6 +1,6 @@
-# AGILE-AI-HTB
+# Foreman AI HQ
 
-AGILE-AI-HTB is a local, portal-first governance harness for AI coding agents.
+Foreman AI HQ is a local, portal-first governance harness for AI coding agents.
 
 It does **not** replace OpenCode, Claude Code, Codex, or another coding CLI. It wraps those tools with a board, budgets, launch checks, token evidence, session reports, and human review.
 
@@ -18,16 +18,16 @@ Use it when you want a coding agent workflow that is easier to inspect:
 Today the supported operator path is local all-in-one mode:
 
 ```text
-installed htb CLI
+installed foremanctl CLI
   -> local Portal / Control Plane
   -> local repo connection
   -> verified local Worker CLI, such as OpenCode
   -> session report and token evidence
 ```
 
-The Worker CLI keeps its own auth/config. AGILE-AI-HTB configures the control-plane model separately for estimates, planning, recommendations, summaries, and reports.
+The Worker CLI keeps its own auth/config. Foreman AI HQ configures the control-plane model separately for estimates, planning, recommendations, summaries, and reports.
 
-AGILE-AI-HTB only governs work launched through its own board and a verified Worker Adapter. It does not govern arbitrary external agent spend.
+Foreman AI HQ only governs work launched through its own board and a verified Worker Adapter. It does not govern arbitrary external agent spend.
 
 ## Install
 
@@ -36,45 +36,45 @@ Recommended source install before PyPI release:
 ```bash
 pipx install "git+https://github.com/alexdancer/AGILE-AI-HTB.git"
 cd /path/to/your/repo
-htb init
-htb serve
+foremanctl init
+foremanctl serve
 ```
 
 One-line bootstrap alternative:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/alexdancer/AGILE-AI-HTB/main/install.sh | sh
-htb init
-htb serve
+foremanctl init
+foremanctl serve
 ```
 
 After the package is published to PyPI, the intended command is:
 
 ```bash
-pipx install agile-ai-htb
-htb init
-htb serve
+pipx install foreman-ai-hq
+foremanctl init
+foremanctl serve
 ```
 
 For contributors working from a checkout:
 
 ```bash
-uv run htb init
-uv run htb serve
+uv run foremanctl init
+uv run foremanctl serve
 ```
 
 More install detail: [docs/INSTALL.md](docs/INSTALL.md).
 
 To update an existing install before PyPI release, rerun the curl installer or
 `pipx install --force "git+https://github.com/alexdancer/AGILE-AI-HTB.git"`.
-This updates the global `htb` CLI and preserves repo-local `.htb/` state. See
-[docs/INSTALL.md](docs/INSTALL.md#updating-agile-ai-htb).
+This updates the global `foremanctl` CLI and preserves repo-local `.foreman/` state. See
+[docs/INSTALL.md](docs/INSTALL.md#updating-foreman-ai-hq).
 
 ## First run
 
 1. Start the Portal:
 ```bash
- htb serve
+ foremanctl serve
 ```
 2. Open `http://localhost:8000/`.
 3. Open `/settings/control-plane`.
@@ -84,25 +84,25 @@ This updates the global `htb` CLI and preserves repo-local `.htb/` state. See
 7. Launch a tiny task from the project board.
 8. Review the session report and token evidence before marking the task done.
 
-Default loopback `htb serve` opens the local Portal without a login token. If you bind the Portal to `0.0.0.0`, run it behind a proxy, or use Docker/shared access, keep the portal token from ignored `.htb/secrets.env` and sign in through `/login`.
+Default loopback `foremanctl serve` opens the local Portal without a login token. If you bind the Portal to `0.0.0.0`, run it behind a proxy, or use Docker/shared access, keep the portal token from ignored `.foreman/secrets.env` and sign in through `/login`.
 
 For redacted support status:
 
 ```bash
-htb check
+foremanctl check
 ```
 
 ## Portal UI
 
 Representative local Portal screens using synthetic/public-safe data:
 
-![AGILE-AI-HTB dashboard UI](docs/assets/screenshots/dashboard-overview.png)
+![Foreman AI HQ dashboard UI](docs/assets/screenshots/dashboard-overview.png)
 
-![AGILE-AI-HTB project board UI](docs/assets/screenshots/project-board-review-workflow.png)
+![Foreman AI HQ project board UI](docs/assets/screenshots/project-board-review-workflow.png)
 
-![AGILE-AI-HTB worker adapter setup UI](docs/assets/screenshots/worker-adapter-setup.png)
+![Foreman AI HQ worker adapter setup UI](docs/assets/screenshots/worker-adapter-setup.png)
 
-![AGILE-AI-HTB sessions and token ledger UI](docs/assets/screenshots/sessions-token-ledger.png)
+![Foreman AI HQ sessions and token ledger UI](docs/assets/screenshots/sessions-token-ledger.png)
 
 
 ## How the workflow works
@@ -138,7 +138,7 @@ The Harness keeps the full source Markdown in the review record. Each Worker get
 
 ## Basic architecture
 
-AGILE-AI-HTB has four main pieces:
+Foreman AI HQ has four main pieces:
 
 
 | Piece                        | Role                                                                                                                                                                                     |
@@ -162,16 +162,16 @@ Pasting a control-plane API key does not configure OpenCode, Claude Code, Codex,
 
 ## Local files and configuration
 
-`htb init` creates local-only state under `.htb/`:
+`foremanctl init` creates local-only state under `.foreman/`:
 
-Run it from the repository you want AGILE-AI-HTB to govern. If you run it from a Git subdirectory, it initializes the Git repository root; outside Git, it initializes the current directory.
+Run it from the repository you want Foreman AI HQ to govern. If you run it from a Git subdirectory, it initializes the Git repository root; outside Git, it initializes the current directory.
 
 | File                   | Purpose                                                        |
 | ---------------------- | -------------------------------------------------------------- |
-| `.htb/config.toml`     | non-secret local config                                        |
-| `.htb/secrets.env`     | ignored portal token and control-plane API key storage         |
-| `.htb/guardrails.yaml` | ignored default guardrail config                               |
-| `.htb/harness.db`      | default SQLite database, created or migrated by `htb init`     |
+| `.foreman/config.toml`     | non-secret local config                                        |
+| `.foreman/secrets.env`     | ignored portal token and control-plane API key storage         |
+| `.foreman/guardrails.yaml` | ignored default guardrail config                               |
+| `.foreman/harness.db`      | default SQLite database, created or migrated by `foremanctl init`     |
 
 
 For normal local use, prefer the Portal settings screens. Environment variables are mainly for CI, headless runs, or compatibility.
@@ -182,10 +182,10 @@ Common environment variables:
 | Variable                        | Purpose                                                                       |
 | ------------------------------- | ----------------------------------------------------------------------------- |
 | `TOKEN_TRACKER_PORTAL_TOKEN`    | Portal login token for shared/non-loopback access                             |
-| `AGILE_AI_HTB_CONTROL_PROVIDER` | Control-plane provider, such as `openai`, `anthropic`, or `openai-compatible` |
-| `AGILE_AI_HTB_CONTROL_MODEL`    | Control-plane model                                                           |
-| `AGILE_AI_HTB_CONTROL_BASE_URL` | Base URL for OpenAI-compatible providers                                      |
-| `AGILE_AI_HTB_CONTROL_API_KEY`  | Control-plane provider API key                                                |
+| `FOREMAN_AI_HQ_CONTROL_PROVIDER` | Control-plane provider, such as `openai`, `anthropic`, or `openai-compatible` |
+| `FOREMAN_AI_HQ_CONTROL_MODEL`    | Control-plane model                                                           |
+| `FOREMAN_AI_HQ_CONTROL_BASE_URL` | Base URL for OpenAI-compatible providers                                      |
+| `FOREMAN_AI_HQ_CONTROL_API_KEY`  | Control-plane provider API key                                                |
 
 
 The Portal writes submitted API keys only to ignored local secret storage and does not display raw key values again.
@@ -215,7 +215,7 @@ uv run --extra test pytest -q
 Focused contributor checks:
 
 ```bash
-uv run htb --help
+uv run foremanctl --help
 uv run --extra test pytest tests/portal tests/api tests/workers -q
 uv run --extra test pytest tests/evals -v
 ```

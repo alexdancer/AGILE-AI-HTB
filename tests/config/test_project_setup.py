@@ -3,9 +3,9 @@ import time
 
 from fastapi.testclient import TestClient
 
-from agile_ai_htb import db
-from agile_ai_htb.app import create_app
-from agile_ai_htb.settings import Settings
+from foreman_ai_hq import db
+from foreman_ai_hq.app import create_app
+from foreman_ai_hq.settings import Settings
 
 ROOT = Path(__file__).resolve().parents[2]
 PORTAL_TOKEN = "test-portal-token"
@@ -55,8 +55,8 @@ def test_project_setup_rejects_disabled_local_runner(tmp_path, monkeypatch):
         )
 
     assert response.status_code == 409
-    assert "htb init" in response.json()["detail"]
-    assert "htb serve" in response.json()["detail"]
+    assert "foremanctl init" in response.json()["detail"]
+    assert "foremanctl serve" in response.json()["detail"]
 
 
 def test_project_pages_explain_current_local_runner_enablement_flow(tmp_path, monkeypatch):
@@ -69,10 +69,10 @@ def test_project_pages_explain_current_local_runner_enablement_flow(tmp_path, mo
     for response in (projects, settings_project):
         assert response.status_code == 200
         assert "enable Local Runner" in response.text
-        assert ".htb/config.toml" in response.text
-        assert "htb serve --enable-local-runner" in response.text
+        assert ".foreman/config.toml" in response.text
+        assert "foremanctl serve --enable-local-runner" in response.text
         assert "/settings/control-plane" in response.text
-        assert "edit <code>.htb/secrets.env</code>" not in response.text
+        assert "edit <code>.foreman/secrets.env</code>" not in response.text
 
 
 def test_project_setup_api_connects_valid_path_and_returns_detected_profile(tmp_path, monkeypatch):

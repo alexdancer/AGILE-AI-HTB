@@ -20,3 +20,25 @@ export async function getJSON(url) {
   }
   return res.json();
 }
+
+export async function postJSON(url, body) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify(body),
+  });
+  let outcome = null;
+  try {
+    outcome = await res.json();
+  } catch {
+    outcome = null;
+  }
+  if (!res.ok) {
+    const detail = outcome?.detail || outcome?.error || await res.text() || `Request failed (${res.status})`;
+    const error = new Error(detail);
+    error.status = res.status;
+    throw error;
+  }
+  return outcome;
+}

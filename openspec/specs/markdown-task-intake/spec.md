@@ -6,20 +6,20 @@ Define how operators can submit multi-line markdown task descriptions or markdow
 ## Requirements
 
 ### Requirement: Board accepts markdown task intake
-The board SHALL allow an operator to submit a task description as multi-line markdown text or as an uploaded `.md` file for estimation, including long demo task markdown artifacts used for OpenCode comparison runs. Board/form Markdown upload and Markdown paste SHALL be interpreted through Task Breakdown Review before any AGILE Board Task is created, even when the Task Breakdown Agent decides the Markdown describes one coherent Task. This review-first requirement applies to the board estimator form, not to the `/estimate` JSON API boundary; direct JSON estimation requests MAY continue to run the Estimator LLM without creating a Task Breakdown Review. Deterministic Markdown parsing MAY provide structure hints to the Task Breakdown Agent, but SHALL NOT directly create Tasks, serve as a fallback, or be exposed as a quick-import product path.
+The board SHALL allow an operator to submit a task description as multi-line markdown text or as an uploaded `.md` file for estimation, including long demo task markdown artifacts used for OpenCode comparison runs. Board/form Markdown upload and Markdown paste SHALL be interpreted through Task Breakdown Review before any Orchestration Board Task is created, even when the Task Breakdown Agent decides the Markdown describes one coherent Task. This review-first requirement applies to the board estimator form, not to the `/estimate` JSON API boundary; direct JSON estimation requests MAY continue to run the Estimator LLM without creating a Task Breakdown Review. Deterministic Markdown parsing MAY provide structure hints to the Task Breakdown Agent, but SHALL NOT directly create Tasks, serve as a fallback, or be exposed as a quick-import product path.
 
 #### Scenario: Paste markdown into board estimator
 - **WHEN** the operator pastes a multi-line markdown task description into the board estimator
 - **AND** submits the estimate form
 - **THEN** the system creates or routes to a Proposed Task Breakdown review before estimation
-- **AND** no AGILE Board Task is created until the operator accepts one or more reviewed candidates
+- **AND** no Orchestration Board Task is created until the operator accepts one or more reviewed candidates
 - **AND** the review preserves enough source context to show it came from markdown intake
 
 #### Scenario: Upload markdown file into board estimator
 - **WHEN** the operator uploads a `.md` file to the board estimator
 - **AND** submits the estimate form
 - **THEN** the system decodes the file content and creates or routes to a Proposed Task Breakdown review before estimation
-- **AND** no AGILE Board Task is created until the operator accepts one or more reviewed candidates
+- **AND** no Orchestration Board Task is created until the operator accepts one or more reviewed candidates
 
 #### Scenario: Markdown checklist does not directly create task cards
 - **WHEN** the operator submits markdown containing multiple checklist task items

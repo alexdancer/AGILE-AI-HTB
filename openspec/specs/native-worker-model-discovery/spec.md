@@ -1,7 +1,7 @@
 # native-worker-model-discovery Specification
 
 ## Purpose
-Define how AGILE-AI-HTB discovers and records models available to local Worker Harnesses using the Worker Harness's native CLI and configuration.
+Define how Foreman AI HQ discovers and records models available to local Worker Harnesses using the Worker Harness's native CLI and configuration.
 ## Requirements
 ### Requirement: Native Worker model discovery
 The system SHALL discover models available to a local Worker Harness through that harness's native configuration and CLI capabilities.
@@ -20,7 +20,7 @@ The system SHALL persist discovered Worker Harness models with their adapter id,
 #### Scenario: Model inventory displayed
 - **WHEN** the User views Worker Harness settings
 - **THEN** the system shows discovered models for each adapter and indicates when discovery last succeeded or failed
-- **AND** the system indicates which discovered models are currently allowed for governed AGILE use
+- **AND** the system indicates which discovered models are currently allowed for governed Orchestration Board use
 
 #### Scenario: Discovery preserves curated allow-list
 - **WHEN** an adapter already has an operator-approved allowed model subset

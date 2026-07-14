@@ -2,11 +2,11 @@
 
 ## Purpose
 
-Define how AGILE Board operators can narrow visible task cards locally without changing server workflow state.
+Define how Orchestration Board operators can narrow visible task cards locally without changing server workflow state.
 ## Requirements
 ### Requirement: Board supports client-side text filtering
 
-The AGILE Board SHALL include a text input above the board columns. As the operator types, task cards SHALL be filtered to show only cards whose visible text content contains the query (case-insensitive). A match count indicator SHALL display the number of visible cards vs total cards. When the filter is empty, all cards SHALL be visible and the indicator SHALL be hidden.
+The Orchestration Board SHALL include a text input above the board columns. As the operator types, task cards SHALL be filtered to show only cards whose visible text content contains the query (case-insensitive). A match count indicator SHALL display the number of visible cards vs total cards. When the filter is empty, all cards SHALL be visible and the indicator SHALL be hidden.
 
 #### Scenario: Filter matches task title
 

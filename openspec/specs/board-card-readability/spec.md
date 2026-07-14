@@ -2,13 +2,13 @@
 
 ## Purpose
 
-Define how AGILE Board task cards remain compact and scannable while preserving full task, diagnostic, Worker timeline, log, review, and model provenance evidence for operator audit.
+Define how Orchestration Board task cards remain compact and scannable while preserving full task, diagnostic, Worker timeline, log, review, and model provenance evidence for operator audit.
 ## Requirements
 ### Requirement: Board cards are compact by default
 Board task cards SHALL show a compact default view suitable for scanning, including task title, status action, and key model/tokens metadata without rendering the full raw task or diagnostic payload by default.
 
 #### Scenario: Default board card is compact
-- **WHEN** an operator opens the AGILE Board page
+- **WHEN** an operator opens the Orchestration Board page
 - **THEN** each task card SHALL render task text, IDs, model fields, and diagnostic evidence in bounded/summary form
 - **AND** full task text and verbose diagnostics SHALL NOT be the only visible content in the card header by default
 - **AND** the card SHALL remain fully actionable (Run, Review, Done, Block, etc. buttons and links).
@@ -65,10 +65,10 @@ Board task cards SHALL NOT render a `Launch` details disclosure with no visible 
 - **AND** it SHALL NOT render an empty expanded section.
 
 ### Requirement: Board cards provide wider scan space
-The AGILE Board SHALL render task cards with a wider default column/card footprint than the cramped prior layout while preserving the existing compact card content, columns, and task actions.
+The Orchestration Board SHALL render task cards with a wider default column/card footprint than the cramped prior layout while preserving the existing compact card content, columns, and task actions.
 
 #### Scenario: Board cards use wider columns
-- **WHEN** an operator opens the AGILE Board on a viewport that requires horizontal board scrolling
+- **WHEN** an operator opens the Orchestration Board on a viewport that requires horizontal board scrolling
 - **THEN** each board column SHALL use a wider minimum width for task cards than the previous cramped default
 - **AND** the board SHALL preserve horizontal scrolling rather than wrapping columns into an unreadable narrow stack
 

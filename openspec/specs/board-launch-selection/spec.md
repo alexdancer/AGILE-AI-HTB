@@ -263,7 +263,7 @@ Board launch controls SHALL keep Worker Adapter selection, Worker model selectio
 - **THEN** the control SHALL show the Worker Adapter identity separately from the tracking label or usage-authority mode
 
 ### Requirement: Board shows actionable native CLI launch failures
-The AGILE Board SHALL show a concise, sanitized, user-facing diagnostic on the affected task card when a retryable Worker Run fails because the native Worker CLI reports an actionable authentication, trust, or configuration prerequisite.
+The Orchestration Board SHALL show a concise, sanitized, user-facing diagnostic on the affected task card when a retryable Worker Run fails because the native Worker CLI reports an actionable authentication, trust, or configuration prerequisite.
 
 #### Scenario: Codex trusted-directory failure shown on task card
 - **WHEN** an Estimated task is launched with the Codex Worker Adapter

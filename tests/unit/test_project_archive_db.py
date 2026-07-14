@@ -1,6 +1,6 @@
 import sqlite3
 
-from agile_ai_htb import db
+from foreman_ai_hq import db
 
 
 def test_connected_project_archive_columns_migrate_existing_rows(tmp_path):

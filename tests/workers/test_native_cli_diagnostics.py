@@ -1,6 +1,6 @@
 import json
 
-from agile_ai_htb.native_cli_diagnostics import native_cli_diagnostic, redact_native_cli_text
+from foreman_ai_hq.native_cli_diagnostics import native_cli_diagnostic, redact_native_cli_text
 
 
 def test_claude_code_login_failure_from_jsonl_is_actionable_and_redacted():

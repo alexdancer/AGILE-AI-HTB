@@ -7,9 +7,9 @@ __pycache__/
 build/
 dist/
 .demo/
-.htb/
+.foreman/
 .hermes/
 .cursor/
 .codegraph/
 frontend/node_modules/
-src/agile_ai_htb/static/react/
+src/foreman_ai_hq/static/react/

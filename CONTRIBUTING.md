@@ -1,6 +1,6 @@
 # Contributing
 
-AGILE-AI-HTB is a local, Portal-first Harness for governed coding agents. Keep changes small, reviewable, and easy to verify. If you touch product wording, workflow, architecture, tests, or demos, read `CONTEXT.md` first and use its vocabulary.
+Foreman AI HQ is a local, Portal-first Harness for governed coding agents. Keep changes small, reviewable, and easy to verify. If you touch product wording, workflow, architecture, tests, or demos, read `CONTEXT.md` first and use its vocabulary.
 
 ## Ground rules
 
@@ -53,14 +53,14 @@ Use the repo-managed `uv` environment:
 
 ```bash
 uv sync --extra test
-uv run htb --help
+uv run foremanctl --help
 ```
 
 For local product use from a checkout:
 
 ```bash
-uv run htb init
-uv run htb serve
+uv run foremanctl init
+uv run foremanctl serve
 ```
 
 See `docs/GETTING_STARTED.md`, `docs/INSTALL.md`, and `docs/SETUP_SUPPORT_CHECKLIST.md`.
@@ -70,7 +70,7 @@ See `docs/GETTING_STARTED.md`, `docs/INSTALL.md`, and `docs/SETUP_SUPPORT_CHECKL
 Run focused checks first when they save time, then run CI's full suite before calling a code change done:
 
 ```bash
-uv run htb --help
+uv run foremanctl --help
 uv run --extra test pytest tests/portal tests/api tests/workers -q
 uv run --extra test pytest tests/evals -v
 uv run --extra test pytest -q
@@ -114,7 +114,7 @@ Do not use customer data, private repo data, real email addresses, real tokens, 
 
 Never commit secrets or local runtime state, including:
 
-- `.htb/secrets.env`
+- `.foreman/secrets.env`
 - provider API keys
 - portal tokens
 - bearer tokens
@@ -122,10 +122,10 @@ Never commit secrets or local runtime state, including:
 - private repository contents
 - local databases, caches, logs, or build outputs unless they are intentional fixtures or evidence
 
-Use redacted `htb check` output for support. From a source checkout, run:
+Use redacted `foremanctl check` output for support. From a source checkout, run:
 
 ```bash
-uv run htb check
+uv run foremanctl check
 ```
 
 ## Generated files and cleanup
@@ -156,5 +156,5 @@ Before opening or merging a PR, confirm:
 - [ ] `uv run --extra test pytest -q` passed, or the blocker is documented.
 - [ ] Relevant OpenSpec validation passed for spec-driven changes.
 - [ ] README, docs, or changelog were updated if user-facing behavior changed.
-- [ ] No secrets or local `.htb/` state are included.
+- [ ] No secrets or local `.foreman/` state are included.
 - [ ] Generated files are intentional.

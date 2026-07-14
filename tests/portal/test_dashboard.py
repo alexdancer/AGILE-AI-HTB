@@ -1,8 +1,8 @@
 from fastapi.testclient import TestClient
 
-from agile_ai_htb import db
-from agile_ai_htb.app import create_app
-from agile_ai_htb.settings import Settings
+from foreman_ai_hq import db
+from foreman_ai_hq.app import create_app
+from foreman_ai_hq.settings import Settings
 from tests.portal.helpers import ROOT, PORTAL_TOKEN, _client, _portal_headers
 
 def test_dashboard_renders_budget_alarm_and_navigation_sections(tmp_path, monkeypatch):
@@ -54,7 +54,7 @@ def test_dashboard_renders_budget_alarm_and_navigation_sections(tmp_path, monkey
     assert "Active sessions" in html
     assert started["session_id"] in html
     assert "Build portal" in html
-    assert "AGILE-AI-HTB" in html
+    assert "Foreman AI HQ" in html
     assert "https://unpkg.com/htmx.org" not in html
     assert "https://cdn.jsdelivr.net/npm/chart.js" not in html
     assert "PROVIDER_API_KEY" not in html

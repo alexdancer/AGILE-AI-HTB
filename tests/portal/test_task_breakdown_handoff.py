@@ -6,9 +6,9 @@ import threading
 
 import pytest
 
-from agile_ai_htb import db
-from agile_ai_htb.routes import react_shell, tasks
-from agile_ai_htb.task_breakdown_handoff import redact_breakdown_text
+from foreman_ai_hq import db
+from foreman_ai_hq.routes import react_shell, tasks
+from foreman_ai_hq.task_breakdown_handoff import redact_breakdown_text
 from tests.portal.helpers import PORTAL_TOKEN, _client, _portal_headers
 
 

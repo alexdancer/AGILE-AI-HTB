@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-PACKAGE_SOURCE="${AGILE_AI_HTB_INSTALL_SOURCE:-git+https://github.com/alexdancer/AGILE-AI-HTB.git}"
+PACKAGE_SOURCE="${FOREMAN_AI_HQ_INSTALL_SOURCE:-git+https://github.com/alexdancer/AGILE-AI-HTB.git}"
 
 say() {
   printf '%s\n' "$1"
@@ -13,17 +13,17 @@ fail() {
 }
 
 path_help() {
-  say "Installed AGILE-AI-HTB, but 'htb' is not visible on PATH." >&2
+  say "Installed Foreman AI HQ, but 'foremanctl' is not visible on PATH." >&2
   if command -v uv >/dev/null 2>&1; then
     say "Try: uv tool update-shell" >&2
   fi
   if command -v pipx >/dev/null 2>&1; then
     say "Try: pipx ensurepath" >&2
   fi
-  say "Then restart your shell and run: htb init" >&2
+  say "Then restart your shell and run: foremanctl init" >&2
 }
 
-say "Installing AGILE-AI-HTB operator CLI..."
+say "Installing Foreman AI HQ operator CLI..."
 
 if command -v uv >/dev/null 2>&1; then
   say "Using uv tool install from: $PACKAGE_SOURCE"
@@ -35,10 +35,10 @@ else
   fail "Install uv or pipx first, then rerun this installer. macOS: 'brew install uv' or 'brew install pipx'."
 fi
 
-if command -v htb >/dev/null 2>&1; then
-  say "Installed AGILE-AI-HTB."
-  say "Next: htb init"
-  say "Then: htb serve"
+if command -v foremanctl >/dev/null 2>&1; then
+  say "Installed Foreman AI HQ."
+  say "Next: foremanctl init"
+  say "Then: foremanctl serve"
 else
   path_help
   exit 1

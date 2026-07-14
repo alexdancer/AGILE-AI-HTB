@@ -24,7 +24,7 @@ export default function Shell({ children, activeView, activeProjectId, refreshKe
     <div className="shell">
       <header className="topbar">
         <AppLink className="brand" to="/app">
-          AGILE-AI-HTB<span className="dot">·</span>
+          Foreman AI HQ<span className="dot">·</span>
           <span className="brand-portal">Portal</span>
         </AppLink>
       </header>
@@ -37,7 +37,7 @@ export default function Shell({ children, activeView, activeProjectId, refreshKe
       />
       <main className="main">{children}</main>
       <footer className="shell-footer">
-        AGILE-AI-HTB portal · operator-controlled budget governance
+        Foreman AI HQ portal · operator-controlled budget governance
       </footer>
     </div>
   );
@@ -106,7 +106,7 @@ export function Sidebar({ activeView, activeProjectId, data, error, loading }) {
             Dashboard
           </AppLink>
           <AppLink to="/sessions" className={activeView === "sessions" || activeView === "sessionReport" ? "active" : ""}>Sessions</AppLink>
-          <a href="/alarms">Alarms</a>
+          <AppLink to="/alarms" className={activeView === "alarms" ? "active" : ""}>Alarms</AppLink>
         </nav>
 
         {hasLoadedProjects && projects.length === 0 && (

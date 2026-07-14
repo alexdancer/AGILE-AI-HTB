@@ -1,31 +1,31 @@
 # control-plane-model-connection Specification
 
 ## Purpose
-Define the model connection AGILE-AI-HTB uses for its own control-plane work, separate from any Worker Harness model configuration or credentials.
+Define the model connection Foreman AI HQ uses for its own control-plane work, separate from any Worker Harness model configuration or credentials.
 ## Requirements
 ### Requirement: Control-plane model connection
-The system SHALL provide a distinct direct control-plane model connection for AGILE-AI-HTB's own orchestration work, separate from Worker Harness model access and without requiring LiteLLM.
+The system SHALL provide a distinct direct control-plane model connection for Foreman AI HQ's own orchestration work, separate from Worker Harness model access and without requiring LiteLLM.
 
 #### Scenario: Control-plane model configured
 - **WHEN** the operator configures a control-plane provider, model, and required credentials or endpoint
-- **THEN** AGILE-AI-HTB uses that direct provider API connection for task estimation, planning, recommendation, summaries, and reports
+- **THEN** Foreman AI HQ uses that direct provider API connection for task estimation, planning, recommendation, summaries, and reports
 
 #### Scenario: Control-plane model missing
 - **WHEN** no valid control-plane model connection is configured
-- **THEN** AGILE-AI-HTB keeps local board and manual task workflows available but marks model-powered estimation, planning, and reporting as unavailable with a clear setup reason
+- **THEN** Foreman AI HQ keeps local board and manual task workflows available but marks model-powered estimation, planning, and reporting as unavailable with a clear setup reason
 
 ### Requirement: Control-plane setup language
-The system SHALL describe the AGILE-AI-HTB model connection as the control-plane model in UI and documentation rather than presenting it as a Worker Harness provider key.
+The system SHALL describe the Foreman AI HQ model connection as the control-plane model in UI and documentation rather than presenting it as a Worker Harness provider key.
 
 #### Scenario: User views model setup
 - **WHEN** the User opens settings or local setup documentation
-- **THEN** the system distinguishes AGILE-AI-HTB control-plane model setup from OpenCode, Claude Code, Codex, or other Worker Harness setup
+- **THEN** the system distinguishes Foreman AI HQ control-plane model setup from OpenCode, Claude Code, Codex, or other Worker Harness setup
 
 ### Requirement: Backward-compatible provider key aliases
 The system SHALL preserve existing provider key environment aliases where practical while treating explicit control-plane model settings as the canonical configuration and SHALL NOT copy one control-plane key into unrelated provider-specific environment variables.
 
 #### Scenario: Explicit control-plane key exists
-- **WHEN** `AGILE_AI_HTB_CONTROL_API_KEY` is present
+- **WHEN** `FOREMAN_AI_HQ_CONTROL_API_KEY` is present
 - **THEN** the system uses it only for the configured control-plane/upstream provider client
 
 #### Scenario: Legacy provider key env exists
@@ -153,7 +153,7 @@ The system SHALL provide a separately configurable Task Breakdown Model for Task
 
 #### Scenario: Task Breakdown Model configured
 - **WHEN** the operator configures a Task Breakdown Model
-- **THEN** AGILE-AI-HTB uses that model for semantic task breakdown and proposed vertical-slice review generation
+- **THEN** Foreman AI HQ uses that model for semantic task breakdown and proposed vertical-slice review generation
 - **AND** usage is recorded as `task_breakdown` Orchestration Tokens rather than Worker execution spend
 
 #### Scenario: Task Breakdown Model not explicitly configured
@@ -166,12 +166,12 @@ The system SHALL provide a separately configurable Task Breakdown Model for Task
 - **THEN** the system does not use OpenCode, Claude Code, Codex, Hermes, or other Worker Adapter model configuration as the Task Breakdown Model unless explicitly configured as a control-plane model connection
 
 ### Requirement: Portal-managed control-plane API key entry
-The system SHALL allow an authenticated operator to provide the control-plane API key value from the control-plane model settings portal without requiring manual environment variable export or manual `.htb/secrets.env` editing for the common local setup path.
+The system SHALL allow an authenticated operator to provide the control-plane API key value from the control-plane model settings portal without requiring manual environment variable export or manual `.foreman/secrets.env` editing for the common local setup path.
 
 #### Scenario: Operator saves a new control-plane key
 - **WHEN** an authenticated operator enters provider/model settings and a non-empty control-plane API key value in the portal
 - **THEN** the system SHALL store the key value in ignored local secret storage for the configured control-plane API key name
-- **AND** the system SHALL NOT store the key value in `.htb/config.toml`
+- **AND** the system SHALL NOT store the key value in `.foreman/config.toml`
 - **AND** subsequent control-plane requests SHALL be able to load the saved key without a server restart
 
 #### Scenario: Operator leaves key blank

@@ -1,4 +1,4 @@
-from agile_ai_htb import db
+from foreman_ai_hq import db
 from tests.portal.helpers import PORTAL_TOKEN, _client, _connect_project, _portal_headers, _project_metadata
 
 
@@ -18,7 +18,7 @@ class _CapabilityBackend:
 
 
 def _prepare_ready_setup(database_path, workdir, monkeypatch):
-    monkeypatch.setenv("AGILE_AI_HTB_CONTROL_API_KEY", "test-control-plane-key")
+    monkeypatch.setenv("FOREMAN_AI_HQ_CONTROL_API_KEY", "test-control-plane-key")
     db.set_token_budget_settings(database_path, daily_cap_tokens=999000, session_cap_tokens=111000)
     db.update_worker_adapter(
         database_path,
@@ -85,7 +85,7 @@ def test_setup_rejects_blocked_project_and_preserves_earlier_blocker_priority(tm
         _prepare_ready_setup(database_path, tmp_path, monkeypatch)
         _connect_invalid_project(database_path, tmp_path / "missing-project")
         blocked = client.get("/setup", headers=_portal_headers())
-        monkeypatch.delenv("AGILE_AI_HTB_CONTROL_API_KEY")
+        monkeypatch.delenv("FOREMAN_AI_HQ_CONTROL_API_KEY")
         earlier_blocker = client.get("/setup", headers=_portal_headers())
 
     assert blocked.status_code == 200

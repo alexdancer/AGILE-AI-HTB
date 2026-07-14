@@ -1,4 +1,4 @@
-from agile_ai_htb import db
+from foreman_ai_hq import db
 from tests.portal.helpers import PORTAL_TOKEN, _client, _portal_headers
 
 def test_alarms_browser_accept_dismisses_open_alarm_without_breaking_json_api(tmp_path, monkeypatch):

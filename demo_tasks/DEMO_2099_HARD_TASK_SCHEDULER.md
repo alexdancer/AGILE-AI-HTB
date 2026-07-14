@@ -7,9 +7,9 @@
 Build a local Python CLI project named `taskrunner`. This is a deliberately large coding task for comparing two execution paths:
 
 1. A coding agent (Claude Code, OpenCode, or Codex) run directly on this task file.
-2. The same coding agent launched through AGILE-AI-HTB using the same task file and a separately configured harness Worker budget.
+2. The same coding agent launched through Foreman AI HQ using the same task file and a separately configured harness Worker budget.
 
-This HARD task should take roughly 15-30+ turns and may push a raw agent toward its context limit. It is the high-end anchor of the comparison set. It tests whether the agent can design a non-trivial DSL parser, implement topological sort and cycle detection from scratch, handle concurrent execution safely, produce deterministic output, and maintain test coverage across multiple modules — all while staying within a token budget that the AGILE-AI-HTB harness would govern. The goal is to show what the harness adds on a long, expensive run: estimate visibility, budget gating, usage authority, launch evidence, alarms or overrides, and review-state evidence — versus a raw agent run that produces only code and a chat transcript, with no budget ceiling and no evidence trail.
+This HARD task should take roughly 15-30+ turns and may push a raw agent toward its context limit. It is the high-end anchor of the comparison set. It tests whether the agent can design a non-trivial DSL parser, implement topological sort and cycle detection from scratch, handle concurrent execution safely, produce deterministic output, and maintain test coverage across multiple modules — all while staying within a token budget that the Foreman AI HQ harness would govern. The goal is to show what the harness adds on a long, expensive run: estimate visibility, budget gating, usage authority, launch evidence, alarms or overrides, and review-state evidence — versus a raw agent run that produces only code and a chat transcript, with no budget ceiling and no evidence trail.
 
 ## Starting Point for the Worker
 

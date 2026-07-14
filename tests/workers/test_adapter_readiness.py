@@ -1,4 +1,4 @@
-from agile_ai_htb.adapter_readiness import evaluate_adapter_readiness
+from foreman_ai_hq.adapter_readiness import evaluate_adapter_readiness
 
 
 def _adapter(**overrides):
