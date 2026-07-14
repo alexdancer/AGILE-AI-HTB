@@ -1,4 +1,5 @@
 import json
+import os
 from dataclasses import replace
 from pathlib import Path
 
@@ -6,12 +7,14 @@ import pytest
 
 from foreman_ai_hq import db
 from foreman_ai_hq.project_context import project_task_metadata
-from foreman_ai_hq.routes import react_shell
+from foreman_ai_hq.routes import portal, react_shell
 from tests.portal.helpers import (
     PORTAL_TOKEN,
     _client,
+    _client_with_control_plane_llm,
     _connect_project,
     _portal_headers,
+    FakeControlPlaneLLM,
 )
 
 
@@ -2227,3 +2230,906 @@ def test_react_alarms_source_contract():
     assert "raise_budget" in source
     assert "abort" not in source.lower()
     assert "adjust_guardrail" not in source
+
+
+def test_react_control_plane_settings_requires_auth(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.get("/api/settings/control-plane")
+    assert response.status_code == 401
+
+
+def test_react_control_plane_settings_json_uses_exact_contract_and_key_value_never_present(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    monkeypatch.setenv("TEST_CONTROL_PLANE_KEY", "sk_secret_value_999")
+    with _client_with_control_plane_llm(tmp_path, FakeControlPlaneLLM()) as client:
+        response = client.get("/api/settings/control-plane", headers=_portal_headers())
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {
+        "provider",
+        "model",
+        "base_url",
+        "api_key_env",
+        "api_key_present",
+        "estimator_model",
+        "task_breakdown_model",
+        "legacy_api_key_configured",
+        "shadowed_settings",
+        "curated_models",
+        "connection_status",
+    }
+    assert payload["provider"] == "anthropic"
+    assert payload["model"] == "claude-sonnet-4-6"
+    assert payload["base_url"] is None
+    assert payload["api_key_env"] == "TEST_CONTROL_PLANE_KEY"
+    assert payload["api_key_present"] is True
+    assert payload["estimator_model"] == "claude-sonnet-4-6"
+    assert payload["task_breakdown_model"] == "claude-sonnet-4-6"
+    assert payload["legacy_api_key_configured"] is False
+    assert isinstance(payload["shadowed_settings"], dict)
+    assert payload["curated_models"] == [
+        {"provider": provider, "model": model, "label": label}
+        for provider, model, label in portal.CURATED_CONTROL_PLANE_MODELS
+    ]
+    assert "sk_secret_value_999" not in str(payload)
+    assert "sk_secret_value_999" not in response.text
+    assert payload["connection_status"]["state"] == "offline"
+    assert payload["connection_status"]["checked_at"] is None
+    assert payload["connection_status"]["details"] is None
+
+
+def test_react_control_plane_connection_status_mapping(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeControlPlaneLLM()
+    with _client_with_control_plane_llm(tmp_path, llm) as client:
+        save = client.post(
+            "/settings/control-plane",
+            headers={**_portal_headers(), "Accept": "application/json"},
+            json={
+                "control_plane_provider": "anthropic",
+                "control_plane_model": "claude-sonnet-4-6",
+                "control_plane_base_url": "",
+                "control_plane_api_key_env": "TEST_CONTROL_PLANE_KEY",
+                "apply_to_estimator_breakdown": True,
+            },
+        )
+        assert save.status_code == 200
+        save_payload = save.json()
+        assert save_payload["ok"] is True
+        assert save_payload["status"]["state"] == "needs_test"
+
+        # save_control_plane_settings replaces llm_client with a real LLMClient;
+        # restore the fake so the test posts use the mock, not the network.
+        client.app.state.llm_client = llm
+
+        read = client.get("/api/settings/control-plane", headers=_portal_headers())
+        assert read.json()["connection_status"]["state"] == "needs_test"
+
+        passed = client.post(
+            "/settings/control-plane/test",
+            headers={**_portal_headers(), "Accept": "application/json"},
+            json={},
+        )
+        assert passed.status_code == 200
+        passed_payload = passed.json()
+        assert passed_payload["passed"] is True
+        assert passed_payload["status"]["state"] == "online"
+
+        read2 = client.get("/api/settings/control-plane", headers=_portal_headers())
+        assert read2.json()["connection_status"]["state"] == "online"
+
+        llm.exc = RuntimeError("secret sk_bad_key")
+        failed = client.post(
+            "/settings/control-plane/test",
+            headers={**_portal_headers(), "Accept": "application/json"},
+            json={},
+        )
+        assert failed.status_code == 503
+        failed_payload = failed.json()
+        assert failed_payload["passed"] is False
+        assert failed_payload["status"]["state"] == "offline"
+
+        read3 = client.get("/api/settings/control-plane", headers=_portal_headers())
+        read3_payload = read3.json()
+        assert read3_payload["connection_status"]["state"] == "offline"
+        assert "sk_bad_key" not in read3.text
+
+
+def test_react_control_plane_save_json_outcome_key_free_and_persistence(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    monkeypatch.setenv("TEST_CONTROL_PLANE_KEY", "sk_real_key_999")
+    with _client_with_control_plane_llm(tmp_path, FakeControlPlaneLLM()) as client:
+        response = client.post(
+            "/settings/control-plane",
+            headers={**_portal_headers(), "Accept": "application/json"},
+            json={
+                "control_plane_provider": "openai",
+                "control_plane_model": "gpt-5.5",
+                "control_plane_base_url": "",
+                "control_plane_api_key_env": "TEST_CONTROL_PLANE_KEY",
+                "control_plane_api_key": "sk_new_key_999",
+                "apply_to_estimator_breakdown": True,
+            },
+        )
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {"ok", "error", "settings", "status", "shadowed_settings"}
+    assert payload["ok"] is True
+    assert payload["error"] is None
+    assert payload["settings"]["control_plane_model"] == "gpt-5.5"
+    assert payload["status"]["state"] == "needs_test"
+    assert payload["shadowed_settings"] == {}
+    assert "sk_new_key_999" not in str(payload)
+    assert "sk_real_key_999" not in str(payload)
+    assert os.getenv("TEST_CONTROL_PLANE_KEY") == "sk_new_key_999"
+
+
+def test_react_control_plane_save_error_sanitized(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+
+    def fail_write(**_updates):
+        raise OSError("disk full at /secret/path")
+
+    monkeypatch.setattr(portal, "update_operator_config", fail_write)
+    with _client_with_control_plane_llm(tmp_path, FakeControlPlaneLLM()) as client:
+        response = client.post(
+            "/settings/control-plane",
+            headers={**_portal_headers(), "Accept": "application/json"},
+            json={
+                "control_plane_provider": "anthropic",
+                "control_plane_model": "claude-sonnet-4-6",
+                "control_plane_base_url": "",
+                "control_plane_api_key_env": "TEST_CONTROL_PLANE_KEY",
+            },
+        )
+    assert response.status_code == 500
+    payload = response.json()
+    assert set(payload) == {"ok", "error", "settings", "status", "shadowed_settings"}
+    assert payload["ok"] is False
+    assert payload["error"]
+    assert "secret" not in payload["error"]
+    assert "disk full" not in payload["error"].lower()
+    assert "/secret/path" not in str(payload)
+
+
+def test_react_control_plane_save_html_redirect_preserved(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/settings/control-plane",
+            headers={**_portal_headers(), "Accept": "text/html"},
+            data={
+                "control_plane_provider": "openai",
+                "control_plane_model": "gpt-5.5",
+                "control_plane_base_url": "",
+                "control_plane_api_key_env": "OPENAI_API_KEY",
+                "apply_to_estimator_breakdown": "on",
+            },
+            follow_redirects=False,
+        )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings/control-plane"
+
+
+def test_react_control_plane_test_html_redirect_preserved(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeControlPlaneLLM()
+    with _client_with_control_plane_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/settings/control-plane/test",
+            headers={**_portal_headers(), "Accept": "text/html"},
+            follow_redirects=False,
+        )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings/control-plane"
+
+
+def test_canonical_settings_control_plane_route_serves_react_when_built(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+    with _client(tmp_path) as client:
+        response = client.get("/settings/control-plane", headers=_portal_headers())
+    assert response.status_code == 200
+    assert 'id="root"' in response.text
+
+
+def test_canonical_settings_control_plane_route_keeps_jinja_fallback(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_partial_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+    with _client(tmp_path) as client:
+        response = client.get("/settings/control-plane", headers=_portal_headers())
+    assert response.status_code == 200
+    assert "Control plane model" in response.text
+
+
+def test_react_control_plane_curated_list_single_source(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    empty_dir = tmp_path / "no_build"
+    empty_dir.mkdir()
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: empty_dir)
+    with _client(tmp_path) as client:
+        json_response = client.get("/api/settings/control-plane", headers=_portal_headers())
+        html_response = client.get("/settings/control-plane", headers=_portal_headers())
+    assert json_response.status_code == 200
+    payload = json_response.json()
+    assert payload["curated_models"] == [
+        {"provider": provider, "model": model, "label": label}
+        for provider, model, label in portal.CURATED_CONTROL_PLANE_MODELS
+    ]
+    for _provider, model, label in portal.CURATED_CONTROL_PLANE_MODELS:
+        assert model in html_response.text
+        assert label in html_response.text
+
+
+def test_react_control_plane_settings_source_contract():
+    """Frontend ControlPlaneSettings view matches the backend contract and route wiring."""
+    app_source = Path("frontend/src/App.jsx").read_text(encoding="utf-8")
+    shell_source = Path("frontend/src/components/Shell.jsx").read_text(encoding="utf-8")
+    source = Path("frontend/src/views/ControlPlaneSettings.jsx").read_text(encoding="utf-8")
+    api_source = Path("frontend/src/api.js").read_text(encoding="utf-8")
+
+    assert 'view: "controlPlaneSettings"' in app_source
+    assert "<ControlPlaneSettings />" in app_source
+    assert 'activeView === "controlPlaneSettings"' in shell_source
+    assert 'href="/settings/control-plane"' in shell_source
+    assert 'useResource("/api/settings/control-plane"' in source
+    assert 'postJSON("/settings/control-plane"' in source
+    assert 'postJSON("/settings/control-plane/test"' in source
+    for field in (
+        "provider",
+        "model",
+        "base_url",
+        "api_key_env",
+        "api_key_present",
+        "estimator_model",
+        "task_breakdown_model",
+        "legacy_api_key_configured",
+        "shadowed_settings",
+        "curated_models",
+        "connection_status",
+    ):
+        assert field in source, f"{field} missing from ControlPlaneSettings.jsx"
+    assert "aria-live" in source
+    assert "htmlFor" in source
+    assert "Save before testing" in source
+    assert "Test control-plane connection" in source
+    assert "disabled={busy || isDirty}" in source
+    assert 'Accept: "application/json"' in api_source
+
+
+def _seeded_adapter(database_path, adapter_id):
+    """Return the seeded worker adapter after ensuring it exists."""
+    return db.get_worker_adapter(database_path, adapter_id)
+
+
+@pytest.fixture
+def _workers_json_headers():
+    return {**_portal_headers(), "Accept": "application/json"}
+
+
+def test_react_worker_settings_requires_auth(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.get("/api/settings/workers")
+    assert response.status_code == 401
+
+
+def test_react_worker_settings_json_uses_exact_contract_and_no_path_leakage(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        adapter = db.get_worker_adapter(database_path, "codex")
+        db.update_worker_adapter(
+            database_path,
+            "codex",
+            config={
+                **(adapter.get("config") or {}),
+                "_diagnostics": {
+                    "installed": True,
+                    "callable": True,
+                    "command": "codex",
+                    "executable": "/secret/path/to/codex",
+                    "version": "1.0.0",
+                    "failure_reason": None,
+                },
+            },
+        )
+        response = client.get("/api/settings/workers", headers=_portal_headers())
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {"adapters", "active_adapter_id", "next_action"}
+    assert set(payload["next_action"]) == {"label", "detail", "href"}
+    assert len(payload["adapters"]) == 3
+    adapter = next((a for a in payload["adapters"] if a["id"] == "codex"), None)
+    assert adapter is not None
+    assert set(adapter) == {
+        "id",
+        "kind",
+        "configured",
+        "is_default",
+        "connection_type",
+        "tracking",
+        "tracking_mode_options",
+        "discovered_models",
+        "supported_models",
+        "launchable",
+        "diagnostics",
+        "verification_evidence",
+        "verification_diagnostic",
+        "model_discovery_label",
+    }
+    assert adapter["diagnostics"] is not None
+    assert "executable" not in adapter["diagnostics"]
+    assert "/secret/path" not in response.text
+    assert adapter["verification_evidence"] is None
+    assert adapter["verification_diagnostic"] is None
+    assert adapter["supported_models"] == []
+    assert adapter["discovered_models"]
+
+
+def test_react_worker_settings_query_param_selects_active_adapter(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.get(
+            "/api/settings/workers?adapter_id=opencode", headers=_portal_headers()
+        )
+    assert response.status_code == 200
+    assert response.json()["active_adapter_id"] == "opencode"
+
+
+def test_react_worker_settings_mutation_json_set_default(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    headers = {**_portal_headers(), "Accept": "application/json"}
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/settings/workers/codex/configure",
+            headers=headers,
+            json={"is_default": True},
+        )
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {"ok", "error"}
+    assert payload["ok"] is True
+    assert payload["error"] is None
+    adapter = db.get_worker_adapter(database_path, "codex")
+    assert adapter["is_default"] is True
+
+
+def test_react_worker_settings_mutation_html_set_default_redirect_preserved(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/settings/workers/codex/configure",
+            headers=_portal_headers(),
+            data={"is_default": "1"},
+            follow_redirects=False,
+        )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings/workers?adapter_id=codex"
+
+
+def test_react_worker_settings_mutation_json_allowed_models_success_and_rejection(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    headers = {**_portal_headers(), "Accept": "application/json"}
+    with _client(tmp_path) as client:
+        success = client.post(
+            "/settings/workers/codex/allowed-models",
+            headers=headers,
+            json={"allowed_models": ["gpt-5.4"]},
+        )
+        reject = client.post(
+            "/settings/workers/codex/allowed-models",
+            headers=headers,
+            json={"allowed_models": ["not-discovered-model"]},
+        )
+    assert success.status_code == 200
+    assert success.json()["ok"] is True
+    assert success.json()["error"] is None
+    adapter = db.get_worker_adapter(database_path, "codex")
+    assert adapter["supported_models"] == ["gpt-5.4"]
+
+    assert reject.status_code == 200
+    assert reject.json()["ok"] is False
+    assert reject.json()["error"]
+    assert "Traceback" not in reject.json()["error"]
+
+
+def test_react_worker_settings_mutation_html_allowed_models_redirect_preserved(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        success = client.post(
+            "/settings/workers/codex/allowed-models",
+            headers=_portal_headers(),
+            data={"allowed_models": "gpt-5.4"},
+            follow_redirects=False,
+        )
+        reject = client.post(
+            "/settings/workers/codex/allowed-models",
+            headers=_portal_headers(),
+            data={"allowed_models": "not-discovered-model"},
+            follow_redirects=False,
+        )
+    assert success.status_code == 303
+    assert success.headers["location"] == "/settings/workers?adapter_id=codex"
+    assert reject.status_code == 303
+    assert reject.headers["location"].startswith("/settings/workers?adapter_id=codex")
+    assert "error=" in reject.headers["location"]
+
+
+def test_react_worker_settings_mutation_json_refresh_diagnostics_success_and_sanitized_error(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    headers = {**_portal_headers(), "Accept": "application/json"}
+
+    def fail_detect(_adapter):
+        raise OSError("disk full at /secret/path")
+
+    monkeypatch.setattr(portal, "detect_worker_adapter", fail_detect)
+    with _client(tmp_path) as client:
+        error = client.post(
+            "/settings/workers/codex/refresh-diagnostics",
+            headers=headers,
+            json={},
+        )
+    assert error.status_code == 200
+    payload = error.json()
+    assert set(payload) == {"ok", "error"}
+    assert payload["ok"] is False
+    assert payload["error"]
+    assert "/secret/path" not in str(payload)
+    assert "Traceback" not in payload["error"]
+
+    def ok_detect(_adapter):
+        return {
+            "installed": True,
+            "callable": True,
+            "command": "codex",
+            "executable": "/secret/path/to/codex",
+            "version": "1.0.0",
+            "failure_reason": None,
+        }
+
+    monkeypatch.setattr(portal, "detect_worker_adapter", ok_detect)
+    with _client(tmp_path) as client:
+        success = client.post(
+            "/settings/workers/codex/refresh-diagnostics",
+            headers=headers,
+            json={},
+        )
+    assert success.status_code == 200
+    assert success.json()["ok"] is True
+    adapter = db.get_worker_adapter(database_path, "codex")
+    assert adapter["config"]["_diagnostics"]["command"] == "codex"
+
+
+def test_react_worker_settings_mutation_html_refresh_diagnostics_redirect_preserved(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+
+    def ok_detect(_adapter):
+        return {
+            "installed": True,
+            "callable": True,
+            "command": "codex",
+            "executable": None,
+            "version": "1.0.0",
+            "failure_reason": None,
+        }
+
+    monkeypatch.setattr(portal, "detect_worker_adapter", ok_detect)
+    with _client(tmp_path) as client:
+        success = client.post(
+            "/settings/workers/codex/refresh-diagnostics",
+            headers=_portal_headers(),
+            follow_redirects=False,
+        )
+    assert success.status_code == 303
+    assert success.headers["location"] == "/settings/workers?adapter_id=codex"
+
+
+def test_react_worker_settings_verify_json_shape_unchanged(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    headers = {**_portal_headers(), "Accept": "application/json"}
+
+    fake_result = type(
+        "VerificationResult",
+        (),
+        {
+            "passed": True,
+            "adapter_id": "codex",
+            "session_id": "sess-123",
+            "reasons": [],
+            "evidence": {"safe": "evidence"},
+        },
+    )()
+    monkeypatch.setattr(portal, "verify_worker_adapter", lambda *args, **kwargs: fake_result)
+    with _client(tmp_path) as client:
+        db.update_worker_adapter(
+            database_path,
+            "codex",
+            config={"allowed_models_configured": True},
+            supported_models=["gpt-5.4"],
+        )
+        response = client.post(
+            "/settings/workers/codex/verify",
+            headers=headers,
+            json={"model": "gpt-5.4", "tracking_mode": "native_usage"},
+        )
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {"passed", "adapter_id", "session_id", "reasons", "evidence"}
+    assert payload["passed"] is True
+    assert payload["adapter_id"] == "codex"
+    assert payload["session_id"] == "sess-123"
+    assert payload["evidence"] == {"safe": "evidence"}
+
+
+def test_react_worker_settings_discover_models_json_shape_unchanged(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    headers = {**_portal_headers(), "Accept": "application/json"}
+
+    fake_result = type(
+        "ModelDiscoveryResult",
+        (),
+        {
+            "passed": True,
+            "adapter_id": "opencode",
+            "models": ["opencode/gpt-5.1"],
+            "reasons": [],
+            "evidence": {"safe": "evidence"},
+        },
+    )()
+    monkeypatch.setattr(portal, "discover_worker_models", lambda *args, **kwargs: fake_result)
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/settings/workers/opencode/discover-models",
+            headers=headers,
+            json={},
+        )
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {"passed", "adapter_id", "models", "reasons", "evidence"}
+    assert payload["passed"] is True
+    assert payload["adapter_id"] == "opencode"
+    assert payload["models"] == ["opencode/gpt-5.1"]
+
+
+def test_canonical_settings_workers_route_serves_react_when_built(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+    with _client(tmp_path) as client:
+        response = client.get("/settings/workers", headers=_portal_headers())
+    assert response.status_code == 200
+    assert 'id="root"' in response.text
+
+
+def test_canonical_settings_workers_route_keeps_jinja_fallback(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_partial_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+    with _client(tmp_path) as client:
+        response = client.get("/settings/workers", headers=_portal_headers())
+    assert response.status_code == 200
+    assert "Worker adapters" in response.text
+
+
+def test_react_worker_settings_source_contract():
+    """Frontend WorkerSettings view matches the backend contract and route wiring."""
+    app_source = Path("frontend/src/App.jsx").read_text(encoding="utf-8")
+    shell_source = Path("frontend/src/components/Shell.jsx").read_text(encoding="utf-8")
+    source = Path("frontend/src/views/WorkerSettings.jsx").read_text(encoding="utf-8")
+    api_source = Path("frontend/src/api.js").read_text(encoding="utf-8")
+
+    assert 'view: "workerSettings"' in app_source
+    assert "<WorkerSettings />" in app_source
+    assert 'activeView === "workerSettings"' in shell_source
+    assert 'href="/settings/workers"' in shell_source
+    assert 'useResource("/api/settings/workers"' in source
+    assert 'postJSON(`/settings/workers/${' in source
+    assert '/configure' in source
+    assert '/allowed-models' in source
+    assert '/refresh-diagnostics' in source
+    assert '/verify' in source
+    assert '/discover-models' in source
+    for field in (
+        "adapters",
+        "active_adapter_id",
+        "next_action",
+        "kind",
+        "configured",
+        "is_default",
+        "connection_type",
+        "tracking_mode_options",
+        "discovered_models",
+        "supported_models",
+        "launchable",
+        "diagnostics",
+        "verification_evidence",
+        "verification_diagnostic",
+        "model_discovery_label",
+    ):
+        assert field in source, f"{field} missing from WorkerSettings.jsx"
+    assert "aria-live" in source
+    assert "htmlFor" in source
+    assert "discovered_models" in source
+    assert "supported_models" in source
+    assert 'Accept: "application/json"' in api_source
+
+
+def test_react_project_settings_requires_auth(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.get("/api/settings/project")
+    assert response.status_code == 401
+
+
+def test_react_project_settings_json_uses_exact_contract_and_null_defaults(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "project-settings-repo")
+        response = client.get("/api/settings/project", headers=_portal_headers())
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {
+        "local_runner_enabled",
+        "backend_status",
+        "connected_projects",
+        "archived_projects",
+        "error",
+    }
+    assert payload["local_runner_enabled"] is True
+    assert payload["error"] is None
+    assert payload["archived_projects"] == []
+    assert len(payload["connected_projects"]) == 1
+    assert payload["connected_projects"][0]["id"] == project["id"]
+    assert payload["connected_projects"][0]["name"] == project["name"]
+    assert payload["connected_projects"][0]["root_path"] == project["root_path"]
+    assert set(payload["connected_projects"][0]["capability"]) == {"state", "reasons"}
+    assert payload["backend_status"] is not None
+    assert payload["backend_status"]["online"] is True
+    assert "Traceback" not in response.text
+
+
+def test_react_project_settings_sanitizes_backend_and_capability_failures(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "project-settings-repo")
+        client.app.state.execution_backend = None
+        monkeypatch.setattr(
+            "foreman_ai_hq.execution_backend.LocalExecutionBackend.status",
+            lambda self: (_ for _ in ()).throw(RuntimeError("Traceback: secret sk_abc123")),
+        )
+        monkeypatch.setattr(
+            "foreman_ai_hq.execution_backend.LocalExecutionBackend.project_capability",
+            lambda self, project: (_ for _ in ()).throw(RuntimeError("Traceback: leaked-token")),
+        )
+        response = client.get("/api/settings/project", headers=_portal_headers())
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["backend_status"] is None
+    assert len(payload["connected_projects"]) == 1
+    assert payload["connected_projects"][0]["capability"]["state"] == "unknown"
+    assert "Traceback" not in response.text
+    assert "sk_abc123" not in response.text
+    assert "leaked-token" not in response.text
+    assert "sk_" not in response.text
+
+
+def test_react_project_settings_json_returns_sanitized_forwarded_error(tmp_path, monkeypatch):
+    """The blocked-archive redirect's ?error= survives to React, sanitized.
+
+    HTML archive callers (the Jinja /projects list) are redirected to
+    /settings/project?error=<block reason>, which now serves React. React
+    forwards the param to this endpoint so the reason is not silently dropped.
+    """
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.get(
+            "/api/settings/project",
+            params={"error": "Running work blocks archiving."},
+            headers=_portal_headers(),
+        )
+        leaky = client.get(
+            "/api/settings/project",
+            params={"error": "Traceback: secret sk_abc123"},
+            headers=_portal_headers(),
+        )
+    assert response.status_code == 200
+    assert response.json()["error"] == "Running work blocks archiving."
+    assert leaky.status_code == 200
+    assert "sk_abc123" not in leaky.text
+    assert "sk_" not in leaky.text
+
+
+def test_react_project_settings_archive_json_success_and_block_reason(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    headers = {**_portal_headers(), "Accept": "application/json"}
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "archive-repo")
+        success = client.post(f"/projects/{project['id']}/archive", headers=headers)
+
+        other = _connect_project(database_path, tmp_path / "archive-block-repo")
+        db.create_task(
+            database_path,
+            description="running task",
+            status="Running",
+            metadata={"connected_project_id": other["id"]},
+        )
+        blocked = client.post(f"/projects/{other['id']}/archive", headers=headers)
+
+    assert success.status_code == 200
+    assert success.json() == {"ok": True, "error": None}
+    assert db.get_connected_project(database_path, project["id"])["archived_at"] is not None
+
+    assert blocked.status_code == 200
+    blocked_payload = blocked.json()
+    assert set(blocked_payload) == {"ok", "error"}
+    assert blocked_payload["ok"] is False
+    assert blocked_payload["error"]
+    assert "Traceback" not in blocked_payload["error"]
+    assert "Running work" in blocked_payload["error"]
+
+
+def test_react_project_settings_archive_html_redirects_preserved(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "archive-html-repo")
+        success = client.post(
+            f"/projects/{project['id']}/archive",
+            headers=_portal_headers(),
+            follow_redirects=False,
+        )
+
+        other = _connect_project(database_path, tmp_path / "archive-block-html-repo")
+        db.create_task(
+            database_path,
+            description="running task",
+            status="Running",
+            metadata={"connected_project_id": other["id"]},
+        )
+        blocked = client.post(
+            f"/projects/{other['id']}/archive",
+            headers=_portal_headers(),
+            follow_redirects=False,
+        )
+
+    assert success.status_code == 303
+    assert success.headers["location"] == "/projects"
+    assert blocked.status_code == 303
+    assert blocked.headers["location"].startswith("/settings/project?error=")
+
+
+def test_react_project_settings_connect_restore_proof_json_shapes_unchanged(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    headers = {**_portal_headers(), "Accept": "application/json", "Content-Type": "application/json"}
+    with _client(tmp_path) as client:
+        new_root = tmp_path / "connect-repo"
+        new_root.mkdir()
+        connected = client.post(
+            "/settings/project/connect",
+            headers=headers,
+            json={"root_path": str(new_root)},
+        )
+        assert connected.status_code == 200
+        assert "project" in connected.json()
+        project = connected.json()["project"]
+
+        db.archive_connected_project(database_path, project["id"])
+        restored = client.post(
+            f"/projects/{project['id']}/restore",
+            headers=headers,
+        )
+        assert restored.status_code == 200
+        restored_payload = restored.json()
+        assert set(restored_payload) == {"ok", "error", "next_href", "retry_href", "project"}
+        assert restored_payload["ok"] is True
+        assert restored_payload["project"] == {"id": project["id"], "archived": False}
+
+        proof = client.post(
+            f"/settings/project/{project['id']}/read-only-proof",
+            headers=headers,
+        )
+        assert proof.status_code == 409
+        proof_payload = proof.json()
+        assert "detail" in proof_payload
+        assert "capability" in proof_payload
+
+
+def test_react_project_settings_build_aware_react_vs_jinja(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+    with _client(tmp_path) as client:
+        react = client.get("/settings/project", headers=_portal_headers())
+
+    partial_dir = _build_partial_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: partial_dir)
+    with _client(tmp_path) as client:
+        jinja = client.get("/settings/project", headers=_portal_headers())
+
+    assert react.status_code == 200
+    assert 'id="root"' in react.text
+    assert jinja.status_code == 200
+    assert 'id="root"' not in jinja.text
+    assert "Local Runner" in jinja.text
+
+
+def test_react_project_settings_source_contract():
+    """Frontend ProjectSettings view matches the backend contract and route wiring."""
+    app_source = Path("frontend/src/App.jsx").read_text(encoding="utf-8")
+    shell_source = Path("frontend/src/components/Shell.jsx").read_text(encoding="utf-8")
+    source = Path("frontend/src/views/ProjectSettings.jsx").read_text(encoding="utf-8")
+    api_source = Path("frontend/src/api.js").read_text(encoding="utf-8")
+
+    assert 'view: "projectSettings"' in app_source
+    assert "<ProjectSettings />" in app_source
+    assert 'activeView === "projectSettings"' in shell_source
+    assert 'href="/settings/project"' in shell_source
+    assert "/api/settings/project" in source
+    assert "useResource(url, refreshKey)" in source
+    # The blocked-archive redirect lands here as ?error=; React forwards it to
+    # the API so the backend sanitizes it rather than dropping it silently.
+    assert 'new URLSearchParams(window.location.search).get("error")' in source
+    assert "`/api/settings/project?error=${encodeURIComponent(errorParam)}`" in source
+    assert 'postJSON("/settings/project/connect"' in source
+    assert 'postJSON(`/projects/${' in source
+    assert 'postJSON(`/projects/${' in source
+    assert 'read-only-proof' in source
+    for field in (
+        "local_runner_enabled",
+        "backend_status",
+        "connected_projects",
+        "archived_projects",
+        "error",
+        "capability",
+        "state",
+        "reasons",
+        "root_path",
+    ):
+        assert field in source, f"{field} missing from ProjectSettings.jsx"
+    assert "aria-live" in source
+    assert "htmlFor" in source
+    assert 'Accept: "application/json"' in api_source

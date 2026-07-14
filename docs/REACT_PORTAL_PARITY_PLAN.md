@@ -1,12 +1,12 @@
 # React Portal Parity Migration Plan
 
-> **Status:** Portal chrome, Dashboard, project workspace, Orchestration Board, Sessions/Session Report, Task Breakdown Review, Project Task History, and the React default-enable gate are complete. Remaining operator surfaces continue as full-page Jinja routes until migrated deliberately.
+> **Status:** Portal chrome, Dashboard, project workspace, Orchestration Board, Sessions/Session Report, Task Breakdown Review, Project Task History, Alarms inbox, and the React default-enable gate are complete. Remaining operator surfaces (Settings group, Setup, Login) continue as full-page Jinja routes until migrated deliberately.
 
 **Goal:** Move Foreman AI HQ toward a coherent React authenticated operator console without leaving operators in a partial `/app` island that lacks the real Portal layout, dashboard, and Orchestration Board behavior.
 
 **Architecture:** FastAPI remains authoritative for authentication, persistence, task estimation, launch guardrails, Worker Run execution, token budget governance, review disposition, and audit evidence. React owns every normal user-facing route after each surface reaches parity. During migration, Jinja may continue implementing non-migrated surfaces. In the final state, only a minimal server-rendered Portal Recovery Surface remains for login and recovery when the React build is missing or partial; it is not a second operator console.
 
-**Current state:** A complete React build owns the authenticated front door, Dashboard, project workspace, normal governed Orchestration Board loop, Sessions/Session Report, canonical Task Breakdown Review, and Project Task History. FastAPI selects the existing Jinja page when the React index or any referenced asset is missing. Alarms, Setup, and Settings remain ordinary full-page Jinja routes. Alarms inbox is the next bounded parity candidate.
+**Current state:** A complete React build owns the authenticated front door, Dashboard, project workspace, normal governed Orchestration Board loop, Sessions/Session Report, canonical Task Breakdown Review, Project Task History, and the Alarms inbox. FastAPI selects the existing Jinja page when the React index or any referenced asset is missing. Budget Settings is React-owned. Setup and the remaining Settings surfaces (Control Plane, Worker, Project) remain ordinary full-page Jinja routes. Control Plane Settings is the next bounded parity candidate.
 
 ---
 
@@ -226,11 +226,11 @@ Candidate order:
 1. ✅ Sessions list and full Session Report as one read-only vertical slice
 2. ✅ Task Breakdown Review
 3. ✅ Project task history
-4. **Next:** Alarms inbox
-5. Budget settings
-6. Control-plane settings
-7. Worker settings
-8. Project settings
+4. ✅ Alarms inbox
+5. ✅ Budget settings
+6. ✅ Control-plane settings
+7. ✅ Worker settings
+8. **Next:** Project settings
 9. Setup overview after all four destination Settings surfaces are React
 10. Login and Portal Recovery Surface
 
@@ -244,11 +244,11 @@ Live record of each Phase 5 slice, the OpenSpec change that delivers it, and its
 | 1 | Sessions list + Session Report | `react-sessions-report-parity` | Archived |
 | 2 | Task Breakdown Review | `react-task-breakdown-review-parity` | Archived |
 | 3 | Project task history | `react-project-task-history` | Archived |
-| 4 | Alarms inbox | — | Not started |
-| 5 | Budget settings | — | Not started |
-| 6 | Control-plane settings | — | Not started |
-| 7 | Worker settings | — | Not started |
-| 8 | Project settings | — | Not started |
+| 4 | Alarms inbox | `react-alarms-inbox` | Archived |
+| 5 | Budget settings | `react-budget-settings-parity` | Archived |
+| 6 | Control-plane settings | `react-control-plane-settings-parity` | Archived |
+| 7 | Worker settings | `react-worker-settings-parity` | Archived |
+| 8 | Project settings | `react-project-settings-parity` | Proposed |
 | 9 | Setup overview | — | Not started |
 | 10 | Login + Portal Recovery Surface | — | Not started |
 | — | Final Jinja retirement | — | Not started |

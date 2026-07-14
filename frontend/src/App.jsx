@@ -11,6 +11,9 @@ import TaskBreakdownReview from "./views/TaskBreakdownReview.jsx";
 import TaskHistory from "./views/TaskHistory.jsx";
 import Alarms from "./views/Alarms.jsx";
 import BudgetSettings from "./views/BudgetSettings.jsx";
+import ControlPlaneSettings from "./views/ControlPlaneSettings.jsx";
+import ProjectSettings from "./views/ProjectSettings.jsx";
+import WorkerSettings from "./views/WorkerSettings.jsx";
 import { NavigationGuardContext } from "./nav.jsx";
 
 // The shell is served under /app. Client routes mirror the Jinja URLs so the
@@ -24,6 +27,9 @@ export function parseRoute(pathname) {
   if (normalized === "/alarms") return { view: "alarms" };
   if (normalized === "/sessions") return { view: "sessions" };
   if (normalized === "/settings/budget") return { view: "budgetSettings" };
+  if (normalized === "/settings/control-plane") return { view: "controlPlaneSettings" };
+  if (normalized === "/settings/project") return { view: "projectSettings" };
+  if (normalized === "/settings/workers") return { view: "workerSettings" };
 
   const report = normalized.match(/^\/sessions\/([^/]+)$/);
   if (report) return { view: "sessionReport", sessionId: decodeURIComponent(report[1]) };
@@ -110,6 +116,12 @@ export default function App() {
     content = <TaskHistory key={route.projectId} projectId={route.projectId} />;
   } else if (route.view === "budgetSettings") {
     content = <BudgetSettings />;
+  } else if (route.view === "controlPlaneSettings") {
+    content = <ControlPlaneSettings />;
+  } else if (route.view === "projectSettings") {
+    content = <ProjectSettings />;
+  } else if (route.view === "workerSettings") {
+    content = <WorkerSettings />;
   } else {
     content = (
       <div className="notice danger">

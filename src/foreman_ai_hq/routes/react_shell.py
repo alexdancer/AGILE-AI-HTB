@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -35,6 +36,11 @@ from foreman_ai_hq.board_workspace import (
 from foreman_ai_hq.evidence_reporting import safe_evidence
 from foreman_ai_hq.task_launch import DEFAULT_PROXY_URL
 from foreman_ai_hq.template_context import portal_template_context
+from foreman_ai_hq.worker_setup_view import (
+    active_adapter_for_request as _active_adapter_for_request,
+    worker_adapter_view_models as _worker_adapter_view_models,
+    worker_setup_next_action as _worker_setup_next_action,
+)
 
 router = APIRouter()
 
@@ -297,6 +303,196 @@ def react_budget_settings(request: Request):
         timezone=request.app.state.settings.timezone,
     )
     return _budget_json(budget)
+
+
+@router.get("/api/settings/workers", dependencies=[Depends(require_portal_auth)])
+def react_worker_settings(request: Request):
+    """Bounded, authenticated Worker Settings handoff for the React shell.
+
+    Reuses the same view-model builders and active-adapter selection that power
+    the Jinja ``workers.html`` page. The projection is allow-listed and already
+    sanitized through the shared evidence helpers so React never recomputes
+    Worker adapter rules.
+    """
+
+    database_path = request.app.state.settings.database_path
+    adapters = _worker_adapter_view_models(database_path)
+    active_adapter = _active_adapter_for_request(
+        adapters, request.query_params.get("adapter_id")
+    )
+    projects = db.list_connected_projects(database_path)
+    next_action = _worker_setup_next_action(active_adapter, bool(projects))
+    return {
+        "adapters": [_react_worker_settings_adapter(adapter) for adapter in adapters],
+        "active_adapter_id": active_adapter["id"] if active_adapter else None,
+        "next_action": {
+            "label": next_action["label"],
+            "detail": next_action["detail"],
+            "href": next_action["href"],
+        },
+    }
+
+
+@router.get("/api/settings/control-plane", dependencies=[Depends(require_portal_auth)])
+def react_control_plane_settings(request: Request):
+    """Bounded, authenticated control-plane setup state for the React shell.
+
+    Reuses the same settings and connection-status computation that powers the
+    Jinja control-plane page. The projection is placeholder-only: it never
+    serializes the API key value in any field.
+    """
+
+    from foreman_ai_hq.routes.portal import (
+        CURATED_CONTROL_PLANE_MODELS,
+        _control_plane_connection_details,
+        _control_plane_shadowed_settings,
+    )
+
+    settings = request.app.state.settings
+    try:
+        connection_status = db.get_execution_backend_status(
+            settings.database_path, "control_plane_model"
+        )
+    except KeyError:
+        connection_status = None
+    return {
+        "provider": settings.control_plane_provider,
+        "model": settings.control_plane_model,
+        "base_url": settings.control_plane_base_url or None,
+        "api_key_env": settings.control_plane_api_key_env,
+        "api_key_present": bool(os.getenv(settings.control_plane_api_key_env)),
+        "estimator_model": settings.estimator_model,
+        "task_breakdown_model": settings.task_breakdown_model,
+        "legacy_api_key_configured": bool(os.getenv(settings.provider_api_key_env)),
+        "shadowed_settings": _control_plane_shadowed_settings(settings),
+        "curated_models": [
+            {"provider": provider, "model": model, "label": label}
+            for provider, model, label in CURATED_CONTROL_PLANE_MODELS
+        ],
+        "connection_status": _control_plane_connection_details(connection_status),
+    }
+
+
+@router.get("/api/settings/project", dependencies=[Depends(require_portal_auth)])
+def react_project_settings(request: Request):
+    """Bounded, authenticated project settings handoff for the React shell.
+
+    Reuses the same Local Runner backend, project capability evaluation, and
+    connected/archived project listings that power the Jinja ``project.html``
+    page. The projection is allow-listed and sanitized so React never
+    recomputes project rules or leaks raw backend/capability evidence.
+    """
+
+    from foreman_ai_hq.routes.portal import _local_backend
+
+    database_path = request.app.state.settings.database_path
+    local_runner_enabled = request.app.state.settings.local_runner_enabled
+    backend = None
+    backend_status = None
+    if local_runner_enabled:
+        try:
+            backend = _local_backend(request)
+            backend_status = _react_project_settings_backend_status(backend)
+        except Exception:
+            # Never leak raw exception text for backend evaluation failures.
+            backend_status = None
+
+    connected_projects = _react_project_settings_list(
+        request, db.list_connected_projects(database_path), backend
+    )
+    archived_projects = _react_project_settings_list(
+        request, db.list_archived_connected_projects(database_path), backend
+    )
+
+    error = request.query_params.get("error") or None
+    if error:
+        error = str(safe_evidence(error, max_length=1000))[:1000] or None
+
+    return {
+        "local_runner_enabled": local_runner_enabled,
+        "backend_status": backend_status,
+        "connected_projects": connected_projects,
+        "archived_projects": archived_projects,
+        "error": error,
+    }
+
+
+def _react_project_settings_list(
+    request: Request, projects: list[dict[str, Any]], backend
+) -> list[dict[str, Any]]:
+    """Project list with bounded, sanitized capability projection."""
+
+    result = []
+    for project in projects:
+        try:
+            result.append(_react_project_settings_project(project, backend))
+        except Exception:
+            # Skip projects whose capability evaluation fails unexpectedly.
+            continue
+    return result
+
+
+def _react_project_settings_project(
+    project: dict[str, Any], backend
+) -> dict[str, Any]:
+    """Bounded project entry for the Project Settings React handoff."""
+
+    capability = _react_project_settings_capability(project, backend)
+    return {
+        "id": str(safe_evidence(project.get("id", ""), max_length=128))[:128],
+        "name": str(safe_evidence(project.get("name", ""), max_length=200))[:200],
+        "root_path": str(safe_evidence(project.get("root_path", ""), max_length=4096))[:4096],
+        "capability": capability,
+    }
+
+
+def _react_project_settings_capability(
+    project: dict[str, Any], backend
+) -> dict[str, Any]:
+    """Sanitized capability projection limited to state + reasons."""
+
+    raw = None
+    if backend is not None:
+        try:
+            raw = backend.project_capability(project)
+        except Exception:
+            raw = {"state": "unknown", "reasons": ["Could not evaluate project capability."]}
+    if raw is None:
+        raw = project.get("capability") or {}
+    if not isinstance(raw, dict):
+        raw = {}
+    state = raw.get("state")
+    if not isinstance(state, str) or not state:
+        state = "unknown"
+    reasons = raw.get("reasons")
+    if not isinstance(reasons, list):
+        reasons = []
+    safe_reasons = [
+        str(safe_evidence(reason, max_length=1000))[:1000]
+        for reason in reasons
+        if isinstance(reason, str)
+    ]
+    return {"state": state, "reasons": safe_reasons[:20]}
+
+
+def _react_project_settings_backend_status(backend) -> dict[str, Any] | None:
+    """Sanitized Local Runner backend status for the React handoff."""
+
+    if backend is None:
+        return None
+    try:
+        status = backend.status()
+    except Exception:
+        return None
+    if not isinstance(status, dict):
+        return None
+    safe = safe_evidence(status, max_length=2000)
+    return {
+        "online": bool(safe.get("online")),
+        "name": str(safe_evidence(safe.get("name", ""), max_length=200))[:200] or None,
+        "checked_at": str(safe_evidence(safe.get("checked_at", ""), max_length=64))[:64] or None,
+        "details": safe.get("details") if isinstance(safe.get("details"), dict) else None,
+    }
 
 
 def _dashboard_project_entry(request: Request, project: dict) -> dict:
@@ -706,6 +902,64 @@ def _react_adapter(adapter: dict) -> dict:
             "launchable_for_board": tracking.get("launchable_for_board"),
         },
     }
+
+
+def _react_worker_settings_adapter(adapter: dict) -> dict:
+    """Allow-listed, sanitized projection for the Worker Settings React handoff."""
+
+    tracking = adapter.get("tracking") or {}
+    diagnostics = _worker_settings_diagnostics(adapter.get("diagnostics") or {})
+    verification_evidence = adapter.get("verification_evidence") or {}
+    if not verification_evidence:
+        verification_evidence = None
+    verification_diagnostic = adapter.get("verification_diagnostic")
+    if not isinstance(verification_diagnostic, dict) or not verification_diagnostic:
+        verification_diagnostic = None
+    return {
+        "id": adapter.get("id"),
+        "kind": adapter.get("kind"),
+        "configured": bool(adapter.get("configured")),
+        "is_default": bool(adapter.get("is_default")),
+        "connection_type": adapter.get("connection_type"),
+        "tracking": {
+            "mode": tracking.get("mode"),
+            "label": adapter.get("tracking_label") or tracking.get("label"),
+            "runtime_request_guardrails": tracking.get("runtime_request_guardrails"),
+            "accounting": tracking.get("accounting"),
+            "budget_authoritative": tracking.get("budget_authoritative"),
+            "launchable_for_board": tracking.get("launchable_for_board"),
+        },
+        "tracking_mode_options": [
+            {
+                "mode": option.get("mode"),
+                "label": option.get("label"),
+                "runtime_request_guardrails": option.get("runtime_request_guardrails"),
+                "accounting": option.get("accounting"),
+                "budget_authoritative": option.get("budget_authoritative"),
+                "launchable_for_board": option.get("launchable_for_board"),
+            }
+            for option in (adapter.get("tracking_mode_options") or [])
+            if isinstance(option, dict)
+        ],
+        "discovered_models": list(adapter.get("discovered_models") or []),
+        "supported_models": list(adapter.get("supported_models") or []),
+        "launchable": bool(adapter.get("launchable")),
+        "diagnostics": diagnostics,
+        "verification_evidence": verification_evidence,
+        "verification_diagnostic": verification_diagnostic,
+        "model_discovery_label": adapter.get("model_discovery_label"),
+    }
+
+
+def _worker_settings_diagnostics(diagnostics: dict) -> dict | None:
+    """Return sanitized diagnostics without raw filesystem paths or exception text."""
+
+    safe = safe_evidence(diagnostics)
+    if not safe:
+        return None
+    # Never leak raw executable filesystem paths; command name alone is safe.
+    safe.pop("executable", None)
+    return safe
 
 
 def _bounded_text(value, limit: int) -> dict:

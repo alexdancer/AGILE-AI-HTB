@@ -6,16 +6,6 @@
 
 {% if error %}<p class="pill red">{{ error }}</p>{% endif %}
 <!-- Curated model list drives the dropdown; Custom covers compatible endpoints and future IDs. -->
-{% set curated_control_plane_models = [
-  ('openai', 'gpt-5.4', 'OpenAI · gpt-5.4'),
-  ('openai', 'gpt-5.4-mini', 'OpenAI · gpt-5.4-mini'),
-  ('openai', 'gpt-5.5', 'OpenAI · gpt-5.5'),
-  ('anthropic', 'claude-fable-5', 'Anthropic · Claude Fable 5'),
-  ('anthropic', 'claude-sonnet-5', 'Anthropic · Claude Sonnet 5'),
-  ('anthropic', 'claude-opus-4-8', 'Anthropic · Claude Opus 4.8'),
-  ('anthropic', 'claude-sonnet-4-6', 'Anthropic · Claude Sonnet 4.6'),
-  ('anthropic', 'claude-haiku-4-5', 'Anthropic · Claude Haiku 4.5'),
-] %}
 {% set curated_state = namespace(is_current=false) %}
 {% for provider, model, label in curated_control_plane_models %}
   {% if settings.control_plane_provider == provider and settings.control_plane_model == model %}

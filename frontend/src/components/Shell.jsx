@@ -120,10 +120,10 @@ export function Sidebar({ activeView, activeProjectId, data, error, loading }) {
 
         <div className="group">Settings</div>
         <nav>
-          <a href="/settings/control-plane">Control plane model</a>
+          <a href="/settings/control-plane" className={activeView === "controlPlaneSettings" ? "active" : ""}>Control plane model</a>
           <a href="/settings/budget" className={activeView === "budgetSettings" ? "active" : ""}>Token budget</a>
-          <a href="/settings/project">Projects</a>
-          <a href="/settings/workers">Worker adapters</a>
+          <a href="/settings/project" className={activeView === "projectSettings" ? "active" : ""}>Projects</a>
+          <a href="/settings/workers" className={activeView === "workerSettings" ? "active" : ""}>Worker adapters</a>
         </nav>
 
         {portalAuthRequired && (

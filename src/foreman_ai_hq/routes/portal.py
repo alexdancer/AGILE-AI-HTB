@@ -123,6 +123,23 @@ def _react_budget_outcome(
     )
 
 
+def _react_worker_settings_outcome(
+    *,
+    ok: bool,
+    error: str | None = None,
+    status_code: int = 200,
+) -> JSONResponse:
+    """Bounded JSON outcome for the Worker Settings redirect-only mutations."""
+
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "ok": ok,
+            "error": str(_safe_worker_evidence(error))[:1000] if error else None,
+        },
+    )
+
+
 def _react_restore_outcome(
     *,
     ok: bool,
@@ -231,6 +248,21 @@ class ControlPlaneSettingsRequest(BaseModel):
         if self.control_plane_provider == "openai-compatible" and not self.control_plane_base_url:
             raise ValueError("openai-compatible provider requires a base URL")
         return self
+
+
+# Authoritative curated control-plane provider/model choices. Every renderer
+# (Jinja settings page, JSON handoff, React shell) consumes this list so the
+# dropdown cannot drift between surfaces.
+CURATED_CONTROL_PLANE_MODELS: tuple[tuple[str, str, str], ...] = (
+    ("openai", "gpt-5.4", "OpenAI · gpt-5.4"),
+    ("openai", "gpt-5.4-mini", "OpenAI · gpt-5.4-mini"),
+    ("openai", "gpt-5.5", "OpenAI · gpt-5.5"),
+    ("anthropic", "claude-fable-5", "Anthropic · Claude Fable 5"),
+    ("anthropic", "claude-sonnet-5", "Anthropic · Claude Sonnet 5"),
+    ("anthropic", "claude-opus-4-8", "Anthropic · Claude Opus 4.8"),
+    ("anthropic", "claude-sonnet-4-6", "Anthropic · Claude Sonnet 4.6"),
+    ("anthropic", "claude-haiku-4-5", "Anthropic · Claude Haiku 4.5"),
+)
 
 
 @router.get("/")
@@ -605,11 +637,16 @@ def archive_project(project_id: str, request: Request):
     _ensure_project(database_path, project_id)
     block_reason = _project_archive_block_reason(database_path, project_id)
     if block_reason:
+        safe_error = str(_safe_worker_evidence(block_reason))[:1000]
+        if _wants_react_json(request):
+            return JSONResponse(status_code=200, content={"ok": False, "error": safe_error})
         return RedirectResponse(
-            f"/settings/project?error={quote(block_reason)}",
+            f"/settings/project?error={quote(safe_error)}",
             status_code=status.HTTP_303_SEE_OTHER,
         )
     db.archive_connected_project(database_path, project_id)
+    if _wants_react_json(request):
+        return JSONResponse(status_code=200, content={"ok": True, "error": None})
     return RedirectResponse("/projects", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -1143,6 +1180,11 @@ def _automation_stop_reason(task: dict[str, Any], reasons: list[str]) -> str:
 
 @router.get("/settings/workers", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def worker_settings(request: Request):
+    from foreman_ai_hq.routes.react_shell import _react_index
+
+    index = _react_index()
+    if index is not None:
+        return FileResponse(index)
     database_path = request.app.state.settings.database_path
     adapters = _worker_adapter_view_models(database_path)
     active_adapter = _active_adapter_for_request(adapters, request.query_params.get("adapter_id"))
@@ -1182,6 +1224,8 @@ async def configure_worker_adapter(adapter_id: str, request: Request):
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="worker adapter not found") from exc
+    if _wants_react_json(request):
+        return _react_worker_settings_outcome(ok=True)
     return RedirectResponse(_worker_settings_url(adapter_id), status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -1193,15 +1237,25 @@ async def configure_worker_allowed_models(adapter_id: str, request: Request):
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="worker adapter not found") from exc
 
-    form = await request.form()
-    allowed_models = [str(model) for model in form.getlist("allowed_models")]
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        raw = await request.json()
+        allowed_models = [str(model) for model in (raw or {}).get("allowed_models", []) if model]
+    else:
+        form = await request.form()
+        allowed_models = [str(model) for model in form.getlist("allowed_models")]
     discovered_models = discovered_worker_model_ids(adapter)
     invalid = [model for model in allowed_models if model not in discovered_models]
     if invalid:
-        raise HTTPException(status_code=422, detail=f"Allowed models must be discovered first: {', '.join(invalid)}")
+        safe_error = "Allowed models must be discovered first."
+        if _wants_react_json(request):
+            return _react_worker_settings_outcome(ok=False, error=safe_error)
+        return RedirectResponse(_worker_settings_url(adapter_id, error=safe_error), status_code=status.HTTP_303_SEE_OTHER)
 
     config = {**(adapter.get("config") or {}), "allowed_models_configured": True}
     db.update_worker_adapter(database_path, adapter_id, config=config, supported_models=allowed_models)
+    if _wants_react_json(request):
+        return _react_worker_settings_outcome(ok=True)
     return RedirectResponse(_worker_settings_url(adapter_id), status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -1214,15 +1268,28 @@ def refresh_worker_diagnostics(adapter_id: str, request: Request):
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="worker adapter not found") from exc
     config = dict(adapter.get("config") or {})
-    diag = detect_worker_adapter(adapter)
+    try:
+        diag = detect_worker_adapter(adapter)
+    except Exception as exc:
+        safe_error = "Could not refresh adapter diagnostics."
+        if _wants_react_json(request):
+            return _react_worker_settings_outcome(ok=False, error=safe_error)
+        return RedirectResponse(_worker_settings_url(adapter_id, error=safe_error), status_code=status.HTTP_303_SEE_OTHER)
     config["_diagnostics"] = diag
     config["_diagnostics_at"] = datetime.now(UTC).timestamp()
     db.update_worker_adapter(database_path, adapter_id, config=config)
+    if _wants_react_json(request):
+        return _react_worker_settings_outcome(ok=True)
     return RedirectResponse(_worker_settings_url(adapter_id), status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.get("/settings/control-plane", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def control_plane_settings(request: Request):
+    from foreman_ai_hq.routes.react_shell import _react_index
+
+    index = _react_index()
+    if index is not None:
+        return FileResponse(index)
     settings = request.app.state.settings
     try:
         connection_status = db.get_execution_backend_status(settings.database_path, "control_plane_model")
@@ -1238,6 +1305,7 @@ def control_plane_settings(request: Request):
             "legacy_api_key_configured": bool(os.getenv(settings.provider_api_key_env)),
             "connection_status": connection_status,
             "shadowed_settings": _control_plane_shadowed_settings(settings),
+            "curated_control_plane_models": CURATED_CONTROL_PLANE_MODELS,
         },
     )
 
@@ -1264,9 +1332,12 @@ async def save_control_plane_settings(request: Request):
             load_operator_secrets_env(config)
         _sync_control_plane_env(payload)
     except OSError as exc:
+        safe_message = "Could not save control-plane config."
         if wants_html:
-            return _control_plane_settings_with_error(request, f"Could not save control-plane config: {exc}")
-        return JSONResponse(status_code=500, content={"detail": f"could not save control-plane config: {exc}"})
+            return _control_plane_settings_with_error(request, safe_message)
+        if _wants_react_json(request):
+            return _react_control_plane_outcome(ok=False, error=safe_message, status_code=500)
+        return JSONResponse(status_code=500, content={"detail": safe_message})
 
     new_settings = Settings(
         database_path=current.database_path,
@@ -1294,18 +1365,27 @@ async def save_control_plane_settings(request: Request):
             "api_key_env": new_settings.control_plane_api_key_env,
         },
     )
+    status_with_state = {**status_record, "state": _control_plane_connection_state(status_record)}
+    settings_json = {
+        "control_plane_provider": new_settings.control_plane_provider,
+        "control_plane_model": new_settings.control_plane_model,
+        "control_plane_base_url": new_settings.control_plane_base_url,
+        "control_plane_api_key_env": new_settings.control_plane_api_key_env,
+        "estimator_model": new_settings.estimator_model,
+        "task_breakdown_model": new_settings.task_breakdown_model,
+    }
     if wants_html:
         return RedirectResponse("/settings/control-plane", status_code=status.HTTP_303_SEE_OTHER)
+    if _wants_react_json(request):
+        return _react_control_plane_outcome(
+            ok=True,
+            settings=settings_json,
+            status=status_with_state,
+            shadowed_settings=_control_plane_shadowed_settings(new_settings),
+        )
     return {
-        "settings": {
-            "control_plane_provider": new_settings.control_plane_provider,
-            "control_plane_model": new_settings.control_plane_model,
-            "control_plane_base_url": new_settings.control_plane_base_url,
-            "control_plane_api_key_env": new_settings.control_plane_api_key_env,
-            "estimator_model": new_settings.estimator_model,
-            "task_breakdown_model": new_settings.task_breakdown_model,
-        },
-        "status": status_record,
+        "settings": settings_json,
+        "status": status_with_state,
         "shadowed_settings": _control_plane_shadowed_settings(new_settings),
     }
 
@@ -1334,9 +1414,10 @@ async def test_control_plane_connection(request: Request):
                 "response": _safe_worker_evidence(response_to_dict(response)),
             },
         )
+        status_with_state = {**status_record, "state": _control_plane_connection_state(status_record)}
         if wants_html:
             return RedirectResponse("/settings/control-plane", status_code=status.HTTP_303_SEE_OTHER)
-        return JSONResponse(status_code=200, content={"passed": True, "status": status_record})
+        return JSONResponse(status_code=200, content={"passed": True, "status": status_with_state, "error": None})
     except Exception as exc:
         status_record = db.upsert_execution_backend_status(
             settings.database_path,
@@ -1351,13 +1432,21 @@ async def test_control_plane_connection(request: Request):
                 "error": _safe_worker_evidence(str(exc)),
             },
         )
+        status_with_state = {**status_record, "state": _control_plane_connection_state(status_record)}
         if wants_html:
             return RedirectResponse("/settings/control-plane", status_code=status.HTTP_303_SEE_OTHER)
-        return JSONResponse(status_code=503, content={"passed": False, "status": status_record})
+        error_summary = (status_with_state.get("details") or {}).get("error") or "control-plane connection test failed"
+        return JSONResponse(status_code=503, content={"passed": False, "status": status_with_state, "error": error_summary})
 
 
 @router.get("/settings/project", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def project_settings(request: Request):
+    from foreman_ai_hq.routes.react_shell import _react_index
+
+    index = _react_index()
+    if index is not None:
+        return FileResponse(index)
+
     database_path = request.app.state.settings.database_path
     backend = _local_backend(request)
     projects = []
@@ -1609,6 +1698,51 @@ def _control_plane_setup_state(settings: Settings, control_status: dict[str, Any
     return "needs setup"
 
 
+def _control_plane_connection_state(control_status: dict[str, Any] | None) -> str:
+    if control_status is None:
+        return "offline"
+    details = control_status.get("details") or {}
+    if details.get("status") == "needs_test":
+        return "needs_test"
+    if control_status.get("online"):
+        return "online"
+    return "offline"
+
+
+def _control_plane_connection_details(control_status: dict[str, Any] | None) -> dict[str, Any] | None:
+    if control_status is None:
+        return {"state": "offline", "checked_at": None, "details": None}
+    details = _safe_worker_evidence(control_status.get("details") or {})
+    return {
+        "state": _control_plane_connection_state(control_status),
+        "checked_at": control_status.get("checked_at"),
+        "details": details,
+    }
+
+
+def _react_control_plane_outcome(
+    *,
+    ok: bool,
+    settings: dict[str, Any] | None = None,
+    status: dict[str, Any] | None = None,
+    shadowed_settings: dict[str, str] | None = None,
+    error: str | None = None,
+    status_code: int = 200,
+) -> JSONResponse:
+    """Bounded, key-free JSON outcome for control-plane save/test actions."""
+
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "ok": ok,
+            "error": str(_safe_worker_evidence(error)) if error else None,
+            "settings": settings,
+            "status": status,
+            "shadowed_settings": shadowed_settings,
+        },
+    )
+
+
 def _control_plane_shadowed_settings(settings: Settings) -> dict[str, str]:
     shadowed: dict[str, str] = {}
     checks = {
@@ -1665,6 +1799,7 @@ def _control_plane_settings_with_error(request: Request, error: str):
             "legacy_api_key_configured": bool(os.getenv(settings.provider_api_key_env)),
             "connection_status": connection_status,
             "shadowed_settings": _control_plane_shadowed_settings(settings),
+            "curated_control_plane_models": CURATED_CONTROL_PLANE_MODELS,
             "error": error,
         },
         status_code=500,

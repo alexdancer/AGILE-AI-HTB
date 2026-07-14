@@ -733,3 +733,211 @@ React SHALL render Project Task History inside the shared Portal chrome with boo
 - **WHEN** an operator uses the Back to board link from React Project Task History
 - **THEN** React SHALL navigate to the project board inside the shared Portal chrome without a full-page transition to Jinja when the build is complete
 
+### Requirement: React Budget Settings JSON is authenticated, exact, and bounded
+FastAPI SHALL expose a new authenticated JSON handoff for Budget Settings that requires Portal authentication and reuses the existing effective-budget helper. The response SHALL preserve every field the operator needs to configure caps and read today's counter without recomputing budget domain values in the frontend.
+
+#### Scenario: Budget handoff requires authentication
+- **WHEN** an unauthenticated caller requests the authenticated React Budget Settings JSON handoff while portal auth is required
+- **THEN** FastAPI SHALL reject the request using the Portal authentication boundary
+- **AND** SHALL NOT return budget setting data
+
+#### Scenario: Budget JSON uses exact fields derived from existing helpers
+- **WHEN** an authenticated caller requests the React Budget Settings JSON handoff
+- **THEN** the response SHALL be derived from the existing effective-budget-settings helper without duplicating budget rules in frontend code
+- **AND** it SHALL include exactly the daily cap, per-session Worker cap, current-window used tokens, current-window remaining tokens, `budget_since`, and last daily-usage reset timestamp
+- **AND** absent cap or counter values SHALL be typed `null` rather than fabricated zeros
+
+### Requirement: React negotiates the budget save and reset outcomes
+The existing `POST /settings/budget` and `POST /settings/budget/reset` actions SHALL return a bounded JSON outcome to React/JSON callers while preserving the current Jinja redirects for HTML callers. Backend validation of cap values SHALL remain authoritative for both caller types.
+
+#### Scenario: React caller receives a JSON save outcome
+- **WHEN** a React/JSON caller submits valid daily and per-session caps to the budget save action
+- **THEN** FastAPI SHALL persist the budget using the existing authoritative behavior
+- **AND** SHALL return a bounded JSON outcome sufficient for React to refresh authoritative budget state
+- **AND** the outcome SHALL NOT force navigation to `/setup`
+
+#### Scenario: React caller receives a sanitized rejection
+- **WHEN** a React/JSON caller submits an invalid or non-positive cap value
+- **THEN** FastAPI SHALL return a sanitized error outcome envelope for the caller to surface
+- **AND** raw exception text SHALL NOT reach the operator
+- **AND** the saved budget SHALL remain unchanged
+
+#### Scenario: React caller receives a JSON reset outcome
+- **WHEN** a React/JSON caller submits the daily-counter reset action
+- **THEN** FastAPI SHALL reset the daily counter using the existing soft-reset behavior that preserves ledger, session, and task evidence
+- **AND** SHALL return a bounded JSON outcome sufficient for React to refresh the counter state
+
+#### Scenario: HTML callers keep the redirects
+- **WHEN** a browser form caller submits the budget save or reset action without negotiating `application/json`
+- **THEN** FastAPI SHALL preserve the existing redirect behavior for that action
+- **AND** the negotiated JSON path SHALL NOT alter that HTML behavior
+
+### Requirement: React Budget Settings navigates inside the shell
+React SHALL render Budget Settings inside the shared Portal chrome on the canonical `/settings/budget` URL when the complete build is available, keep `Back to setup` as an ordinary full-page link, and require confirmation before the destructive counter reset. When the React build is missing or partial, FastAPI SHALL render the existing Jinja budget page at the same canonical URL.
+
+#### Scenario: Built canonical route opens React Budget Settings in-shell
+- **WHEN** an authenticated operator opens `/settings/budget` while the complete React build is available
+- **THEN** FastAPI SHALL serve the React shell and render Budget Settings inside the full Portal chrome
+- **AND** React SHALL request the authenticated Budget Settings JSON for its form and counter
+
+#### Scenario: Missing or partial build keeps canonical Budget Settings in Jinja
+- **WHEN** an authenticated operator opens `/settings/budget` while the React build is missing or partial
+- **THEN** FastAPI SHALL render the existing Jinja budget page at the same canonical URL
+- **AND** it SHALL NOT return a blank shell or require an alternate fallback URL
+
+#### Scenario: Save stays on page with inline outcome and authoritative refetch
+- **WHEN** an operator saves caps from the React Budget Settings view and the save succeeds
+- **THEN** React SHALL show an inline success outcome without leaving the Budget Settings page
+- **AND** React SHALL refetch authoritative budget state rather than optimistically trusting the submitted values
+
+#### Scenario: Reset requires confirmation
+- **WHEN** an operator triggers the daily-counter reset from the React Budget Settings view
+- **THEN** React SHALL require an explicit confirmation before submitting the reset
+- **AND** it SHALL surface the outcome inline and refetch authoritative counter state
+
+### Requirement: React Control Plane Settings JSON is authenticated, exact, and bounded
+FastAPI SHALL expose a new authenticated JSON handoff for Control Plane Settings that requires Portal authentication and reuses the existing settings and connection-status computation. The response SHALL be placeholder-only and preserve every field the operator needs to configure the connection and read its test status without recomputing control-plane rules in the frontend.
+
+#### Scenario: Control-plane handoff requires authentication
+- **WHEN** an unauthenticated caller requests the authenticated React Control Plane Settings JSON handoff while portal auth is required
+- **THEN** FastAPI SHALL reject the request using the Portal authentication boundary
+- **AND** SHALL NOT return control-plane settings data
+
+#### Scenario: Control-plane JSON is placeholder-only and exact
+- **WHEN** an authenticated caller requests the React Control Plane Settings JSON handoff
+- **THEN** the response SHALL include provider, model, base URL, api-key env name, `api_key_present` boolean, estimator model, task-breakdown model, legacy-env presence, environment-shadowed settings, the curated model list from the authoritative source, and a sanitized connection status carrying its `online`/`needs_test`/`offline` state
+- **AND** it SHALL NOT include the control-plane API key value in any field
+- **AND** absent optional values SHALL be typed `null` rather than fabricated defaults
+
+### Requirement: React negotiates the control-plane save and test outcomes
+The existing `POST /settings/control-plane` and `POST /settings/control-plane/test` actions SHALL return a bounded, sanitized JSON outcome to React/JSON callers while preserving the current Jinja redirects for HTML callers. Config persistence, secret storage, live apply, stale-test marking, and the connection test SHALL remain authoritative for both caller types.
+
+#### Scenario: React caller receives a JSON save outcome
+- **WHEN** a React/JSON caller submits valid control-plane settings
+- **THEN** FastAPI SHALL persist and apply them using the existing authoritative behavior and mark prior test evidence as needing a new test
+- **AND** SHALL return a bounded JSON outcome sufficient for React to refresh authoritative state
+- **AND** the outcome SHALL NOT contain the control-plane API key value
+
+#### Scenario: React save error is sanitized
+- **WHEN** a React/JSON caller's save fails while writing config or secret storage
+- **THEN** FastAPI SHALL return a sanitized error outcome envelope
+- **AND** raw filesystem paths or exception detail SHALL NOT reach the operator
+
+#### Scenario: React caller receives a JSON test outcome
+- **WHEN** a React/JSON caller runs the control-plane connection test
+- **THEN** FastAPI SHALL execute the existing test against the last-saved-and-applied config and record sanitized success or failure evidence
+- **AND** SHALL return a bounded JSON outcome carrying the resulting `online` or `offline` status
+
+#### Scenario: HTML callers keep the redirects
+- **WHEN** a browser form caller submits the save or test action without negotiating `application/json`
+- **THEN** FastAPI SHALL preserve the existing redirect behavior for that action
+- **AND** the negotiated JSON path SHALL NOT alter that HTML behavior
+
+### Requirement: React Control Plane Settings navigates inside the shell
+React SHALL render Control Plane Settings inside the shared Portal chrome on the canonical `/settings/control-plane` URL when the complete build is available, and FastAPI SHALL render the existing Jinja page at the same URL when the build is missing or partial. The view SHALL preserve provider-filtered curated model selection with a custom-model path, placeholder-only key entry, the three-state connection status, and the environment-shadow warning.
+
+#### Scenario: Built canonical route opens React Control Plane Settings in-shell
+- **WHEN** an authenticated operator opens `/settings/control-plane` while the complete React build is available
+- **THEN** FastAPI SHALL serve the React shell and render Control Plane Settings inside the full Portal chrome
+- **AND** React SHALL request the authenticated control-plane JSON for its form and status
+
+#### Scenario: Missing or partial build keeps canonical Control Plane Settings in Jinja
+- **WHEN** an authenticated operator opens `/settings/control-plane` while the React build is missing or partial
+- **THEN** FastAPI SHALL render the existing Jinja control-plane page at the same canonical URL
+- **AND** it SHALL NOT return a blank shell or require an alternate fallback URL
+
+#### Scenario: Key input is placeholder-only and blank keeps the existing key
+- **WHEN** the React Control Plane Settings form renders
+- **THEN** the API key input SHALL be a password field that is empty by default and never prefilled with the stored key
+- **AND** submitting the form with the key field blank SHALL preserve the existing stored key through the existing backend behavior
+
+#### Scenario: Dirty form disables the connection test
+- **WHEN** the operator has unsaved edits in the React Control Plane Settings form
+- **THEN** React SHALL disable the Test action and show an inline hint to save before testing
+- **AND** after a successful save the form SHALL become pristine and the Test action SHALL re-enable with status shown as `needs_test`
+
+#### Scenario: Provider selection filters the curated model dropdown
+- **WHEN** the operator changes the provider in the React form
+- **THEN** the curated model dropdown SHALL show only that provider's curated choices and otherwise expose the custom-model path
+- **AND** an existing saved model outside the curated choices SHALL be preserved through the custom-model path
+
+#### Scenario: Save stays on page with inline outcome and authoritative refetch
+- **WHEN** an operator saves control-plane settings from the React view and the save succeeds
+- **THEN** React SHALL show an inline success outcome without leaving the page
+- **AND** React SHALL refetch authoritative control-plane state rather than optimistically trusting the submitted values
+
+### Requirement: React Worker Settings JSON is authenticated, exact, and bounded
+FastAPI SHALL expose a new authenticated JSON handoff for Worker Settings that requires Portal authentication and reuses the existing adapter view-model, active-adapter selection, and next-action computation. The response SHALL be bounded and sanitized so the frontend can render adapter configuration, the discover→approve model workflow, readiness, and evidence without recomputing Worker-adapter rules in the browser.
+
+#### Scenario: Worker Settings handoff requires authentication
+- **WHEN** an unauthenticated caller requests the authenticated React Worker Settings JSON handoff while portal auth is required
+- **THEN** FastAPI SHALL reject the request using the Portal authentication boundary
+- **AND** SHALL NOT return Worker Settings data
+
+#### Scenario: Worker Settings JSON is bounded and exact
+- **WHEN** an authenticated caller requests the React Worker Settings JSON handoff
+- **THEN** the response SHALL include, for each adapter, an allow-listed projection of id, kind, `configured`, `is_default`, connection type, available tracking modes with their view options, discovered models, operator-approved supported models, launchability, sanitized diagnostics, sanitized verification evidence and diagnostic, and the model-discovery label
+- **AND** it SHALL include the selected active adapter identifier and a single next-action derived from the same computation the Jinja page uses
+- **AND** absent optional values SHALL be typed `null` rather than fabricated defaults
+
+#### Scenario: Worker Settings JSON never leaks raw failure detail
+- **WHEN** the Worker Settings JSON handoff serializes diagnostics or verification evidence for an adapter whose detection or verification failed
+- **THEN** the response SHALL carry only sanitized evidence bounded by the existing evidence-safety helper
+- **AND** it SHALL NOT include raw filesystem paths or raw exception text
+
+### Requirement: React negotiates the redirect-only Worker Settings mutations and consumes the live actions
+The existing `POST /settings/workers/{id}/configure`, `POST /settings/workers/{id}/allowed-models`, and `POST /settings/workers/{id}/refresh-diagnostics` actions SHALL return a bounded, sanitized JSON outcome to React/JSON callers while preserving the current Jinja redirects for HTML callers. The existing live `POST /settings/workers/{id}/verify` and `POST /settings/workers/{id}/discover-models` actions SHALL keep their current negotiated JSON outcomes unchanged. Adapter configuration, model discovery, allow-listing, and live verification SHALL remain authoritative for both caller types.
+
+#### Scenario: React caller receives a JSON set-default outcome
+- **WHEN** a React/JSON caller marks an adapter as the active default
+- **THEN** FastAPI SHALL persist the change using the existing authoritative behavior
+- **AND** SHALL return a bounded JSON outcome sufficient for React to refresh authoritative state
+
+#### Scenario: React caller receives a JSON model-approval outcome
+- **WHEN** a React/JSON caller approves a subset of discovered models for an adapter
+- **THEN** FastAPI SHALL apply the approved subset using the existing behavior that rejects models not yet discovered
+- **AND** SHALL return a bounded JSON outcome on success and a sanitized error outcome when approval is rejected
+
+#### Scenario: React refresh-diagnostics error is sanitized
+- **WHEN** a React/JSON caller re-detects an adapter binary and detection fails
+- **THEN** FastAPI SHALL return a sanitized error outcome envelope
+- **AND** raw filesystem paths or exception detail SHALL NOT reach the operator
+
+#### Scenario: React consumes the live verify and discover outcomes unchanged
+- **WHEN** a React/JSON caller runs the connection verification or model discovery for an adapter
+- **THEN** FastAPI SHALL execute the existing live action and return its existing bounded outcome carrying pass/fail, sanitized reasons, and sanitized evidence
+- **AND** the negotiated JSON path SHALL NOT alter those existing action shapes
+
+#### Scenario: HTML callers keep the redirects
+- **WHEN** a browser form caller submits any Worker Settings mutation without negotiating `application/json`
+- **THEN** FastAPI SHALL preserve the existing redirect behavior for that action, including the existing error query for a rejected model approval
+- **AND** the negotiated JSON path SHALL NOT alter that HTML behavior
+
+### Requirement: React Worker Settings navigates inside the shell
+React SHALL render Worker Settings inside the shared Portal chrome on the canonical `/settings/workers` URL when the complete build is available, and FastAPI SHALL render the existing Jinja page at the same URL when the build is missing or partial. The view SHALL preserve adapter selection, per-adapter configuration and evidence, the discover→approve model workflow, the live Verify and Discover actions, and the readiness next-action.
+
+#### Scenario: Built canonical route opens React Worker Settings in-shell
+- **WHEN** an authenticated operator opens `/settings/workers` while the complete React build is available
+- **THEN** FastAPI SHALL serve the React shell and render Worker Settings inside the full Portal chrome
+- **AND** React SHALL request the authenticated Worker Settings JSON for its adapters, selection, and next-action
+
+#### Scenario: Missing or partial build keeps canonical Worker Settings in Jinja
+- **WHEN** an authenticated operator opens `/settings/workers` while the React build is missing or partial
+- **THEN** FastAPI SHALL render the existing Jinja workers page at the same canonical URL
+- **AND** it SHALL NOT return a blank shell or require an alternate fallback URL
+
+#### Scenario: Approval is gated behind discovery
+- **WHEN** the React Worker Settings view renders an adapter that has no discovered models
+- **THEN** the model-approval control SHALL offer only discovered models and SHALL be unavailable until discovery has run for that adapter
+- **AND** this SHALL mirror the existing server rule that rejects approval of models not yet discovered
+
+#### Scenario: Live action stays on page with inline outcome and authoritative refetch
+- **WHEN** an operator runs Verify or Discover models from the React view
+- **THEN** React SHALL show the inline pass/fail outcome and sanitized reasons without leaving the page
+- **AND** React SHALL refetch authoritative Worker Settings state and keep the operator on the adapter they were editing rather than resetting to the default adapter
+
+#### Scenario: Set-default and approval stay on page with inline outcome
+- **WHEN** an operator marks an adapter as default or approves models from the React view and the action succeeds
+- **THEN** React SHALL show an inline success outcome without leaving the page
+- **AND** React SHALL refetch authoritative Worker Settings state rather than optimistically trusting the submitted values
+

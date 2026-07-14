@@ -128,7 +128,9 @@ def test_worker_allowed_models_route_saves_only_discovered_models(tmp_path, monk
 
     assert response.status_code == 303
     assert db.get_worker_adapter(database_path, "opencode")["supported_models"] == ["opencode/big-pickle"]
-    assert rejected.status_code == 422
+    assert rejected.status_code == 303
+    assert rejected.headers["location"].startswith("/settings/workers?adapter_id=opencode")
+    assert "error=" in rejected.headers["location"]
     assert db.get_worker_adapter(database_path, "opencode")["supported_models"] == ["opencode/big-pickle"]
 
 
