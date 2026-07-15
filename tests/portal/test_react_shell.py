@@ -3110,6 +3110,10 @@ def test_react_project_settings_source_contract():
     assert 'href="/settings/project"' in shell_source
     assert "/api/settings/project" in source
     assert "useResource(url, refreshKey)" in source
+    # Errors must read as errors, not as success text: the Jinja oracle renders
+    # the block reason in an `alarm high` section, so React styles it distinctly.
+    assert 'className="notice danger"' in source
+    assert 'aria-live="polite"' in source
     # The blocked-archive redirect lands here as ?error=; React forwards it to
     # the API so the backend sanitizes it rather than dropping it silently.
     assert 'new URLSearchParams(window.location.search).get("error")' in source

@@ -10,7 +10,7 @@
     <!-- Repo connect redirects to the workspace after validation succeeds. -->
     {% if not local_runner_enabled %}
       <span class="pill yellow">Local Runner disabled</span>
-      <p class="muted mono">Run <code>foremanctl init</code>, enable Local Runner in <code>.foreman/config.toml</code> or with <code>foremanctl serve --enable-local-runner</code>, then add the control-plane key in <code>/settings/control-plane</code> if needed.</p>
+      <p class="muted mono">Run <code>foremanctl init</code>, enable Local Runner in <code>.foreman/config.toml</code> or with <code>foremanctl serve --local-runner</code>, then add the control-plane key in <code>/settings/control-plane</code> if needed.</p>
     {% endif %}
     <form method="post" action="/settings/project/connect?redirect=workspace">
       <label class="mono" for="root-path">Local repository path</label>

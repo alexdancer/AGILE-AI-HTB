@@ -20,7 +20,7 @@
       {% if backend_status and backend_status.online %}<span class="pill green">online</span>{% endif %}
     {% else %}
       <span class="pill yellow">disabled</span>
-      <p class="muted mono">Run <code>foremanctl init</code>, enable Local Runner in <code>.foreman/config.toml</code> or with <code>foremanctl serve --enable-local-runner</code>, then add the control-plane key in <code>/settings/control-plane</code> if needed.</p>
+      <p class="muted mono">Run <code>foremanctl init</code>, enable Local Runner in <code>.foreman/config.toml</code> or with <code>foremanctl serve --local-runner</code>, then add the control-plane key in <code>/settings/control-plane</code> if needed.</p>
     {% endif %}
   </div>
 </section>

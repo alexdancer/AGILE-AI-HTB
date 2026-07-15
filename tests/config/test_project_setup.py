@@ -70,7 +70,9 @@ def test_project_pages_explain_current_local_runner_enablement_flow(tmp_path, mo
         assert response.status_code == 200
         assert "enable Local Runner" in response.text
         assert ".foreman/config.toml" in response.text
-        assert "foremanctl serve --enable-local-runner" in response.text
+        # Must match the flag argparse actually accepts; --enable-local-runner
+        # is rejected as an unrecognized argument.
+        assert "foremanctl serve --local-runner" in response.text
         assert "/settings/control-plane" in response.text
         assert "edit <code>.foreman/secrets.env</code>" not in response.text
 

@@ -178,8 +178,13 @@ export function ProjectSettingsState({ data, error, loading, onRefresh }) {
       <h1 className="page-title">Projects</h1>
       <p className="page-sub">connect local repo · detect project profile · show local runner capability</p>
 
+      {/* Wrapper stays mounted so aria-live announces whatever replaces it. */}
       <div className="live-notice" aria-live="polite">
-        {inlineError || status || ""}
+        {inlineError ? (
+          <p className="notice danger">{inlineError}</p>
+        ) : status ? (
+          <p className="notice">{status}</p>
+        ) : null}
       </div>
 
       <section className="panel">
@@ -197,7 +202,7 @@ export function ProjectSettingsState({ data, error, loading, onRefresh }) {
               <p className="muted mono">
                 Run <code>foremanctl init</code>, enable Local Runner in{" "}
                 <code>.foreman/config.toml</code> or with{" "}
-                <code>foremanctl serve --enable-local-runner</code>, then add the control-plane key in{" "}
+                <code>foremanctl serve --local-runner</code>, then add the control-plane key in{" "}
                 <code>/settings/control-plane</code> if needed.
               </p>
             </>
