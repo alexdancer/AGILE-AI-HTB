@@ -1,14 +1,14 @@
-# e2e-governance-smoke Specification
+# governance-integration-smoke Specification
 
 ## Purpose
 
-Define the synthetic end-to-end smoke coverage that proves the local governance loop without external provider or Worker dependencies.
+Define the synthetic service-level integration coverage that proves the local governance loop without a browser, external provider, or Worker dependency.
 
 ## Requirements
 
-### Requirement: Pytest smoke test proves the governance loop
+### Requirement: Governance integration smoke test proves the governance loop
 
-The test suite SHALL include a smoke test that exercises the full governance loop: project connection → task creation → Worker launch simulation → token turn recording → task transition to Review. The test SHALL use only synthetic data and SHALL NOT require network access, real Worker CLI installations, or provider API keys.
+The test suite SHALL include a service-level pytest smoke test that exercises the full governance loop: project connection → task creation → Worker launch simulation → token turn recording → task transition to Review. The test SHALL use only synthetic data and SHALL NOT require a browser, network access, real Worker CLI installations, or provider API keys. This test SHALL be identified as a Governance Integration Smoke Test rather than a Portal E2E Test.
 
 #### Scenario: Full governance loop completes
 

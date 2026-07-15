@@ -1,4 +1,4 @@
-"""E2E smoke test: project → task → launch → Worker Run → token ledger → Review.
+"""Governance integration smoke: project → task → launch → token ledger → Review.
 
 Uses synthetic data only — zero network, zero subprocess, zero real Worker CLI.
 """
@@ -16,8 +16,8 @@ ROOT = Path(__file__).resolve().parents[2]
 PORTAL_TOKEN = "test-portal-token"
 
 
-def test_full_governance_loop_project_to_review(tmp_path, monkeypatch):
-    """Prove the full governance loop works end-to-end:
+def test_governance_integration_loop_project_to_review(tmp_path, monkeypatch):
+    """Prove the full governance loop works across service-level components:
     project connect → task create → Worker Run → token ledger → Review.
     """
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)

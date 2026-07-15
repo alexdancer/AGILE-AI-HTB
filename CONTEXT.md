@@ -15,6 +15,16 @@
 **Properties**: Provides only login, load-failure explanation, and recovery guidance. It is not a second operator console and does not duplicate Dashboard, Orchestration Board, Setup, Settings, Session, Alarm, or report workflows.
 **Relationships**: Supports the Portal Login Token workflow. Remains available independently of the normal authenticated operator-console frontend.
 
+## Portal E2E Test
+**Definition**: A Playwright browser test that exercises the production-shaped Portal through its real HTTP and browser boundaries.
+**Properties**: Builds the React frontend, starts the FastAPI application with isolated test state, and drives a supported browser against FastAPI-served Portal routes. Each Connected Project fixture uses a real, temporary Git repository with minimal obviously synthetic files and a dedicated database; it never points browser automation at the operator's working repository. The initial fixture is truthfully `analysis_ready` rather than `launch_ready` when no real Worker Adapter has been verified. Temporary project state is removed after the test. It does not replace service-level integration tests and must not depend on real providers, real Worker CLIs, or operator secrets unless a separately labeled external-system test explicitly requires them.
+**Relationships**: Verifies Portal authentication, navigation, browser behavior, and selected operator workflows across the React frontend and authoritative FastAPI backend. Distinct from a Governance Integration Smoke Test.
+
+## Governance Integration Smoke Test
+**Definition**: A service-level pytest smoke test that proves the local governance loop without a browser.
+**Properties**: May use direct application and persistence interfaces with synthetic data to exercise project connection, task creation, simulated Worker Run evidence, token accounting, and transition to Review. It is not called a Portal E2E test because it does not exercise the browser or production HTTP boundary end-to-end.
+**Relationships**: Complements Portal E2E Tests with fast, deterministic governance coverage and no external provider or Worker dependency.
+
 ## Control Plane
 **Definition**: The deployable Harness surface that owns the Portal, Orchestration Board, budget governance, orchestration workflows, proxy, token accounting, and reports.
 **Properties**: Can run as a hosted service. Coordinates work but does not itself guarantee access to a User's local repository or local coding-agent tools.
