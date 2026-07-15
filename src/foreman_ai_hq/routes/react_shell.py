@@ -20,6 +20,7 @@ import math
 import os
 from html.parser import HTMLParser
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, HTMLResponse
@@ -629,7 +630,15 @@ def react_projects_state(request: Request):
         view = _project_view_model(request, project)
         counts = project_board_counts(database_path, str(project["id"]))
         projects.append({**view, "counts": counts, "total_tasks": sum(counts.values())})
-    return {"projects": projects}
+    archived_projects = [
+        _react_projects_archived_project(request, project)
+        for project in db.list_archived_connected_projects(database_path)
+    ]
+    return {
+        "projects": projects,
+        "archived_projects": archived_projects,
+        "local_runner_enabled": request.app.state.settings.local_runner_enabled,
+    }
 
 
 @router.get(
@@ -1139,3 +1148,34 @@ def _project_view_model(request: Request, project: dict) -> dict:
     from foreman_ai_hq.routes.portal import _project_view_model as portal_view_model
 
     return portal_view_model(request, project)
+
+
+def _react_projects_archived_project(request: Request, project: dict) -> dict:
+    """Bounded, sanitized archived-project row for the Projects JSON handoff."""
+
+    view = _project_view_model(request, project)
+    capability = view.get("capability") or {}
+    if not isinstance(capability, dict):
+        capability = {}
+    raw_reasons = capability.get("reasons")
+    if not isinstance(raw_reasons, list):
+        raw_reasons = []
+    safe_reasons = [
+        str(safe_evidence(reason, max_length=1000))[:1000]
+        for reason in raw_reasons
+        if isinstance(reason, str)
+    ]
+    archived_at = project.get("archived_at")
+    if not isinstance(archived_at, str):
+        archived_at = None
+    return {
+        "id": str(safe_evidence(project.get("id", ""), max_length=128))[:128],
+        "name": str(safe_evidence(project.get("name", ""), max_length=200))[:200],
+        "root_path": str(safe_evidence(project.get("root_path", ""), max_length=4096))[:4096],
+        "archived_at": archived_at,
+        "capability": {
+            "state": str(safe_evidence(capability.get("state"), max_length=64))[:64] or "unknown",
+            "label": str(safe_evidence(capability.get("label"), max_length=200))[:200] or None,
+            "reasons": safe_reasons[:20] or None,
+        },
+    }

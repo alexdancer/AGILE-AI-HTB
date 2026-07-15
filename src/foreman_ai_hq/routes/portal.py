@@ -323,6 +323,9 @@ def logout(request: Request):
 
 @router.get("/dashboard", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def dashboard(request: Request):
+    index = _react_index()
+    if index is not None:
+        return FileResponse(index)
     return templates.TemplateResponse(request, "dashboard.html", _dashboard_context(request))
 
 
@@ -446,6 +449,9 @@ def _dashboard_next_actions(
 
 @router.get("/projects", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def projects(request: Request):
+    index = _react_index()
+    if index is not None:
+        return FileResponse(index)
     return templates.TemplateResponse(
         request,
         "projects.html",
@@ -1933,7 +1939,7 @@ def _local_backend(request: Request) -> LocalExecutionBackend | None:
 
 def _default_portal_landing(database_path: Path | str) -> str:
     if react_shell_available():
-        return "/app"
+        return "/dashboard"
     projects = db.list_connected_projects(database_path)
     if projects:
         return f"/projects/{projects[0]['id']}"

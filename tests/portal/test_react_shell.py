@@ -196,7 +196,7 @@ def test_auth_disabled_root_uses_react_when_built(tmp_path, monkeypatch):
         root = client.get("/", follow_redirects=False)
 
     assert root.status_code in (302, 307)
-    assert root.headers["location"] == "/app"
+    assert root.headers["location"] == "/dashboard"
 
 
 def test_auth_disabled_login_and_logout_use_react_when_built(tmp_path, monkeypatch):
@@ -213,9 +213,9 @@ def test_auth_disabled_login_and_logout_use_react_when_built(tmp_path, monkeypat
         )
         logout = client.post("/logout", follow_redirects=False)
 
-    assert login_form.headers["location"] == "/app"
-    assert login_submit.headers["location"] == "/app"
-    assert logout.headers["location"] == "/app"
+    assert login_form.headers["location"] == "/dashboard"
+    assert login_submit.headers["location"] == "/dashboard"
+    assert logout.headers["location"] == "/dashboard"
 
 
 def test_authenticated_root_uses_react_when_built(tmp_path, monkeypatch):
@@ -230,7 +230,7 @@ def test_authenticated_root_uses_react_when_built(tmp_path, monkeypatch):
 
     assert login.status_code == 303
     assert root.status_code in (302, 307)
-    assert root.headers["location"] == "/app"
+    assert root.headers["location"] == "/dashboard"
 
 
 @pytest.mark.parametrize(
@@ -309,7 +309,7 @@ def test_login_redirects_to_react_when_built(tmp_path, monkeypatch):
         )
 
     assert login.status_code == 303
-    assert login.headers["location"] == "/app"
+    assert login.headers["location"] == "/dashboard"
     assert "foreman_ai_hq_portal" in login.headers.get("set-cookie", "")
 
 
@@ -330,9 +330,9 @@ def test_built_react_and_valid_cookie_lands_on_app(tmp_path, monkeypatch):
         landing = client.get(root.headers["location"], follow_redirects=False)
 
     assert project["id"]
-    assert login.headers["location"] == "/app"
+    assert login.headers["location"] == "/dashboard"
     assert root.status_code in (302, 307)
-    assert root.headers["location"] == "/app"
+    assert root.headers["location"] == "/dashboard"
     assert landing.status_code == 200
     assert 'id="root"' in landing.text
 
@@ -346,6 +346,115 @@ def test_login_falls_back_to_jinja_when_build_missing(tmp_path, monkeypatch):
 
     assert login.status_code == 303
     assert login.headers["location"] == "/projects"
+
+
+def _build_missing_react_assets(tmp_path):
+    empty_dir = tmp_path / "no_build"
+    empty_dir.mkdir()
+    return empty_dir
+
+
+@pytest.mark.parametrize(
+    "build_helper,auth_required,expected_landing,expect_react",
+    [
+        (_build_react_assets, False, "/dashboard", True),
+        (_build_partial_react_assets, False, "first_project", False),
+        (_build_missing_react_assets, False, "first_project", False),
+        (_build_react_assets, True, "/dashboard", True),
+        (_build_partial_react_assets, True, "first_project", False),
+        (_build_missing_react_assets, True, "first_project", False),
+    ],
+)
+def test_canonical_routing_matrix(
+    build_helper,
+    auth_required,
+    expected_landing,
+    expect_react,
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = build_helper(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+    database_path = tmp_path / "harness.db"
+
+    client = _client(tmp_path, portal_auth_required=auth_required)
+    with client:
+        project = _connect_project(database_path, tmp_path / "routing-repo")
+        if auth_required:
+            login = client.post(
+                "/login", data={"token": PORTAL_TOKEN}, follow_redirects=False
+            )
+            assert login.status_code == 303
+            assert login.headers["location"] == (
+                "/dashboard" if expect_react else f"/projects/{project['id']}"
+            )
+        else:
+            login_form = client.get("/login", follow_redirects=False)
+            login_submit = client.post(
+                "/login",
+                data={"token": "unused-DEMO-999"},
+                follow_redirects=False,
+            )
+            logout = client.post("/logout", follow_redirects=False)
+            landing = "/dashboard" if expect_react else f"/projects/{project['id']}"
+            assert login_form.headers["location"] == landing
+            assert login_submit.headers["location"] == landing
+            assert logout.headers["location"] == landing
+
+        root = client.get("/", follow_redirects=False)
+        dashboard = client.get("/dashboard")
+        projects = client.get("/projects")
+
+    expected_root = (
+        "/dashboard" if expect_react else f"/projects/{project['id']}"
+    )
+    assert root.status_code in (302, 307)
+    assert root.headers["location"] == expected_root
+
+    if expect_react:
+        assert dashboard.status_code == 200
+        assert 'id="root"' in dashboard.text
+        assert projects.status_code == 200
+        assert 'id="root"' in projects.text
+    else:
+        assert dashboard.status_code == 200
+        assert 'id="root"' not in dashboard.text
+        assert "page-title" in dashboard.text
+        assert projects.status_code == 200
+        assert 'id="root"' not in projects.text
+        assert "page-title" in projects.text
+
+
+def test_fallback_landing_on_projects_renders_jinja(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    empty_dir = tmp_path / "no_build"
+    empty_dir.mkdir()
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: empty_dir)
+
+    with _client(tmp_path, portal_auth_required=False) as client:
+        root = client.get("/", follow_redirects=False)
+        landing = client.get(root.headers["location"])
+
+    assert root.headers["location"] == "/projects"
+    assert landing.status_code == 200
+    assert 'id="root"' not in landing.text
+    assert "page-title" in landing.text
+
+
+def test_board_redirect_unchanged(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+
+    with _client(tmp_path, portal_auth_required=False) as client:
+        no_project = client.get("/board", follow_redirects=False)
+        project = _connect_project(database_path, tmp_path / "repo")
+        with_project = client.get("/board", follow_redirects=False)
+
+    assert no_project.status_code in (302, 303, 307)
+    assert no_project.headers["location"] == "/projects"
+    assert with_project.status_code in (302, 303, 307)
+    assert with_project.headers["location"] == f"/projects/{project['id']}/board"
 
 
 def test_non_migrated_jinja_routes_remain_directly_reachable(tmp_path, monkeypatch):
@@ -433,7 +542,87 @@ def test_react_projects_endpoint_empty_list(tmp_path, monkeypatch):
         response = client.get("/api/projects", headers=_portal_headers())
 
     assert response.status_code == 200
-    assert response.json() == {"projects": []}
+    assert response.json() == {
+        "projects": [],
+        "archived_projects": [],
+        "local_runner_enabled": True,
+    }
+
+
+def test_react_projects_endpoint_includes_archived_and_local_runner_flag(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path, local_runner_enabled=False) as client:
+        active = _connect_project(database_path, tmp_path / "active-repo")
+        archived = _connect_project(database_path, tmp_path / "archived-repo")
+        db.archive_connected_project(database_path, archived["id"])
+        response = client.get("/api/projects", headers=_portal_headers())
+        jinja = client.get("/projects", headers=_portal_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {"projects", "archived_projects", "local_runner_enabled"}
+    assert payload["local_runner_enabled"] is False
+    assert len(payload["projects"]) == 1
+    assert len(payload["archived_projects"]) == 1
+    assert payload["projects"][0]["id"] == active["id"]
+    assert payload["archived_projects"][0]["id"] == archived["id"]
+    assert payload["archived_projects"][0]["archived_at"] is not None
+    assert set(payload["archived_projects"][0]) == {"id", "name", "root_path", "archived_at", "capability"}
+    assert set(payload["archived_projects"][0]["capability"]) == {"state", "label", "reasons"}
+    assert active["name"] in jinja.text
+    assert archived["name"] in jinja.text
+    assert "Local Runner disabled" in jinja.text
+
+
+def test_react_projects_endpoint_active_array_fields_unchanged(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "repo")
+        db.create_task(
+            database_path,
+            description="board task",
+            status="Estimated",
+            metadata={"connected_project_id": project["id"]},
+        )
+        response = client.get("/api/projects", headers=_portal_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["projects"][0]["id"] == project["id"]
+    assert set(payload["projects"][0]) == {
+        "id", "name", "root_path", "profile", "capability", "backend_id",
+        "archived_at", "archived_by", "created_at", "updated_at", "counts", "total_tasks",
+    }
+    assert set(payload["projects"][0]["counts"]) == {
+        "Estimated", "Running", "Review", "Done", "Blocked",
+    }
+    assert payload["projects"][0]["total_tasks"] == sum(payload["projects"][0]["counts"].values())
+
+
+def test_react_projects_endpoint_archived_capability_reasons_are_safe(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        archived = _connect_project(database_path, tmp_path / "archived-repo")
+        db.archive_connected_project(database_path, archived["id"])
+        monkeypatch.setattr(
+            "foreman_ai_hq.execution_backend.LocalExecutionBackend.project_capability",
+            lambda self, project: {
+                "state": "blocked",
+                "label": "Blocked",
+                "reasons": ["password=LEAKED_SECRET_999"],
+            },
+        )
+        response = client.get("/api/projects", headers=_portal_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["archived_projects"]) == 1
+    assert "LEAKED_SECRET_999" not in response.text
+    assert "***REDACTED***" in response.text
+    assert payload["archived_projects"][0]["capability"]["reasons"] == ["***REDACTED***"]
 
 
 def test_react_dashboard_endpoint_requires_auth(tmp_path, monkeypatch):

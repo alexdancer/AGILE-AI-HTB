@@ -15,6 +15,7 @@ let DashboardState;
 let BoardState;
 let mergeBoardStatus;
 let parseRoute;
+let ProjectsState;
 let pollBoardStatus;
 let submitBoardAction;
 let WorkspaceState;
@@ -41,6 +42,7 @@ before(async () => {
   });
   ({ Sidebar } = await server.ssrLoadModule("/src/components/Shell.jsx"));
   ({ DashboardState } = await server.ssrLoadModule("/src/views/Dashboard.jsx"));
+  ({ ProjectsState } = await server.ssrLoadModule("/src/views/Projects.jsx"));
   ({ BoardState, mergeBoardStatus, pollBoardStatus, submitBoardAction } = await server.ssrLoadModule("/src/views/Board.jsx"));
   ({ WorkspaceState, submitProjectRestore } = await server.ssrLoadModule("/src/views/Workspace.jsx"));
   ({ SessionsState } = await server.ssrLoadModule("/src/views/Sessions.jsx"));
@@ -359,6 +361,8 @@ function reportData() {
 
 test("only exact React routes are parsed as owned views", () => {
   assert.deepEqual(parseRoute("/app"), { view: "dashboard" });
+  assert.deepEqual(parseRoute("/dashboard"), { view: "dashboard" });
+  assert.deepEqual(parseRoute("/projects"), { view: "projects" });
   assert.deepEqual(parseRoute("/alarms"), { view: "alarms" });
   assert.deepEqual(parseRoute("/sessions"), { view: "sessions" });
   assert.deepEqual(parseRoute("/sessions/sess-demo-999"), {
@@ -378,9 +382,62 @@ test("only exact React routes are parsed as owned views", () => {
     "/app/not-a-migrated-route",
     "/app/projects/demo-999/extra",
     "/app/projects/demo-999/board/extra",
+    "/app/projects",
+    "/app/dashboard",
   ]) {
     assert.deepEqual(parseRoute(path), { view: "notFound" });
   }
+});
+
+test("Projects view renders empty, active, archived, and disabled runner states", () => {
+  const loading = renderToStaticMarkup(React.createElement(ProjectsState, { data: null, error: null, loading: true, onRefresh: () => {} }));
+  assert.match(loading, /Loading projects…/);
+
+  const failed = renderToStaticMarkup(React.createElement(ProjectsState, {
+    data: null,
+    error: new Error("offline"),
+    loading: false,
+    onRefresh: () => {},
+  }));
+  assert.match(failed, /Could not load projects/);
+  assert.match(failed, /href="\/projects"/);
+
+  const empty = renderToStaticMarkup(React.createElement(ProjectsState, {
+    data: { projects: [], archived_projects: [], local_runner_enabled: true },
+    error: null,
+    loading: false,
+    onRefresh: () => {},
+  }));
+  assert.match(empty, /No projects yet/);
+  assert.match(empty, /No archived projects/);
+
+  const disabled = renderToStaticMarkup(React.createElement(ProjectsState, {
+    data: { projects: [], archived_projects: [], local_runner_enabled: false },
+    error: null,
+    loading: false,
+    onRefresh: () => {},
+  }));
+  assert.match(disabled, /Local Runner disabled/);
+
+  const populated = renderToStaticMarkup(React.createElement(ProjectsState, {
+    data: {
+      projects: [
+        { id: "active-999", name: "Active Repo", root_path: "/active", capability: { state: "launch_ready", label: "Launch-ready", reasons: [] } },
+      ],
+      archived_projects: [
+        { id: "archived-999", name: "Archived Repo", root_path: "/archived", archived_at: "2099-01-01T00:00:00Z", capability: { state: "blocked", label: "Blocked", reasons: [] } },
+      ],
+      local_runner_enabled: true,
+    },
+    error: null,
+    loading: false,
+    onRefresh: () => {},
+  }));
+  assert.match(populated, /Active Repo/);
+  assert.match(populated, /Archived Repo/);
+  assert.match(populated, /Archived 2099-01-01T00:00:00Z/);
+  assert.match(populated, /href="\/app\/projects\/active-999"/);
+  assert.match(populated, /href="\/app\/projects\/archived-999"/);
 });
 
 test("Dashboard is the sole active home navigation item", () => {
@@ -525,13 +582,15 @@ test("dashboard renders loading, error, populated, and empty states", () => {
   assert.match(loading, /Loading dashboard…/);
 
   const failed = renderDashboard({ data: null, error: new Error("offline"), loading: false });
-  assert.match(failed, /Could not load dashboard: offline/);
+  assert.match(failed, /Could not load dashboard/);
+  assert.doesNotMatch(failed, /server-rendered dashboard/);
   assert.match(failed, /href="\/dashboard"/);
 
   const populated = renderDashboard({ data: dashboardData(), error: null, loading: false });
   assert.match(populated, /Daily governed budget/);
   assert.match(populated, /Worker token component breakdown/);
   assert.match(populated, /href="\/board"/);
+  assert.match(populated, /href="\/projects"/);
   assert.match(populated, /href="\/app\/projects\/demo-999"/);
   assert.match(populated, /href="\/app\/projects\/demo-999\/board"/);
   assert.match(populated, /href="\/sessions\/sess-demo-999"/);
@@ -549,9 +608,35 @@ test("dashboard renders loading, error, populated, and empty states", () => {
   });
   assert.match(empty, /No active sessions/);
   assert.match(empty, /No open alarms/);
-  assert.match(empty, /Not enough completed tasks for accuracy tracking/);
+  assert.doesNotMatch(empty, /Estimation accuracy/);
   assert.match(empty, /No projects are connected yet/);
   assert.match(empty, /href="\/settings\/project"/);
+});
+
+test("dashboard estimation accuracy panel shows absent, progress, and figures states", () => {
+  const absent = renderDashboard({
+    data: dashboardData({ estimation_accuracy: { completed_count: null, median_error_ratio: null, within_2x_pct: null } }),
+    error: null,
+    loading: false,
+  });
+  assert.doesNotMatch(absent, /Estimation accuracy/);
+
+  const progress = renderDashboard({
+    data: dashboardData({ estimation_accuracy: { completed_count: 1, median_error_ratio: null, within_2x_pct: null } }),
+    error: null,
+    loading: false,
+  });
+  assert.match(progress, /Estimation accuracy/);
+  assert.match(progress, /1 of 3 needed/);
+
+  const figures = renderDashboard({
+    data: dashboardData({ estimation_accuracy: { completed_count: 3, median_error_ratio: 1.1, within_2x_pct: 100 } }),
+    error: null,
+    loading: false,
+  });
+  assert.match(figures, /Completed tasks tracked/);
+  assert.match(figures, /Median error ratio/);
+  assert.match(figures, /Within 2× estimate/);
 });
 
 test("React workspace renders active summary, profile, and route-owned links", () => {

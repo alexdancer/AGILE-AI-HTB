@@ -3,6 +3,7 @@ import React from "react";
 import { NavContext } from "./nav.jsx";
 import Shell from "./components/Shell.jsx";
 import Dashboard from "./views/Dashboard.jsx";
+import Projects from "./views/Projects.jsx";
 import Workspace from "./views/Workspace.jsx";
 import Board from "./views/Board.jsx";
 import Sessions from "./views/Sessions.jsx";
@@ -19,12 +20,16 @@ import { NavigationGuardContext } from "./nav.jsx";
 
 // The shell is served under /app. Client routes mirror the Jinja URLs so the
 // two surfaces stay legible during migration:
-//   /app                      -> React dashboard
+//   /app                      -> React dashboard (transitional alias)
+//   /dashboard                -> React dashboard
+//   /projects                 -> React projects list
 //   /app/projects/:id         -> React project workspace
 //   /app/projects/:id/board   -> React project board shell
 export function parseRoute(pathname) {
   const normalized = pathname.replace(/\/$/, "");
   if (normalized === "/app") return { view: "dashboard" };
+  if (normalized === "/dashboard") return { view: "dashboard" };
+  if (normalized === "/projects") return { view: "projects" };
   if (normalized === "/setup") return { view: "setup" };
   if (normalized === "/alarms") return { view: "alarms" };
   if (normalized === "/sessions") return { view: "sessions" };
@@ -102,6 +107,8 @@ export default function App() {
     content = <Board projectId={route.projectId} />;
   } else if (route.view === "dashboard") {
     content = <Dashboard />;
+  } else if (route.view === "projects") {
+    content = <Projects />;
   } else if (route.view === "setup") {
     content = <Setup />;
   } else if (route.view === "alarms") {

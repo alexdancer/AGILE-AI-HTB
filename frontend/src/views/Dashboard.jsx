@@ -7,6 +7,11 @@ export default function Dashboard() {
   return <DashboardState {...useResource("/api/dashboard")} />;
 }
 
+const safeError = (error) =>
+  error?.status === 401
+    ? "Dashboard requires sign-in."
+    : "Could not load dashboard. Retry.";
+
 export function DashboardState({ data, error, loading }) {
   if (loading) {
     return <p className="spinner">Loading dashboard…</p>;
@@ -14,11 +19,9 @@ export function DashboardState({ data, error, loading }) {
   if (error) {
     return (
       <>
-        <div className="notice danger">
-          Could not load dashboard: {error.message}
-        </div>
+        <div className="notice danger">{safeError(error)}</div>
         <p>
-          <a href="/dashboard">Open the server-rendered dashboard</a>
+          <a href="/dashboard">Retry</a>
         </p>
       </>
     );
@@ -188,37 +191,42 @@ export function DashboardContent({ data }) {
         </div>
       </section>
 
-      <section className="panel">
-        <div className="panel-header"><h3>Estimation accuracy</h3></div>
-        <div className="panel-body">
-          {accuracy.completed_count != null && accuracy.completed_count >= 3 ? (
-            <div className="dashboard-kpis">
-              <Metric
-                label="Completed tasks tracked"
-                value={formatTokens(accuracy.completed_count)}
-                detail="with both estimate and actual tokens"
-              />
-              <Metric
-                label="Median error ratio"
-                value={`${Number(accuracy.median_error_ratio).toFixed(2)}×`}
-                detail={accuracyDetail(accuracy.median_error_ratio)}
-              />
-              <Metric
-                label="Within 2× estimate"
-                value={`${Math.round(accuracy.within_2x_pct)}%`}
-                detail="tasks where 0.5× ≤ actual ≤ 2.0×"
-              />
-            </div>
-          ) : (
-            <div className="empty-state">
-              Not enough completed tasks for accuracy tracking ({accuracy.completed_count || 0} of 3 needed).
-            </div>
-          )}
-        </div>
-      </section>
+      {accuracy.completed_count != null && (
+        <section className="panel">
+          <div className="panel-header"><h3>Estimation accuracy</h3></div>
+          <div className="panel-body">
+            {accuracy.completed_count >= 3 ? (
+              <div className="dashboard-kpis">
+                <Metric
+                  label="Completed tasks tracked"
+                  value={formatTokens(accuracy.completed_count)}
+                  detail="with both estimate and actual tokens"
+                />
+                <Metric
+                  label="Median error ratio"
+                  value={`${Number(accuracy.median_error_ratio).toFixed(2)}×`}
+                  detail={accuracyDetail(accuracy.median_error_ratio)}
+                />
+                <Metric
+                  label="Within 2× estimate"
+                  value={`${Math.round(accuracy.within_2x_pct)}%`}
+                  detail="tasks where 0.5× ≤ actual ≤ 2.0×"
+                />
+              </div>
+            ) : (
+              <div className="empty-state">
+                Not enough completed tasks for accuracy tracking ({accuracy.completed_count || 0} of 3 needed).
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       <section className="panel">
-        <div className="panel-header"><h3>Connected projects</h3></div>
+        <div className="panel-header">
+          <h3>Connected projects</h3>
+          <AppLink className="muted mono" to="/projects">view all →</AppLink>
+        </div>
         <div className="panel-body dashboard-grid">
           {projects.length === 0 ? (
             <div className="empty-state">
