@@ -234,8 +234,9 @@ Candidate order:
 7. ✅ Worker settings
 8. ✅ Project settings
 9. ✅ Setup overview after all four destination Settings surfaces are React
-10. **Next:** Login and Portal Recovery Surface
-11. Canonical URL ownership for Dashboard, Projects, project workspace, and Board — ordering vs. 10 is undecided; see [Known gap](#known-gap-the-original-app-surfaces-never-took-their-canonical-urls)
+11a. ✅ Canonical URL ownership for Dashboard and Projects
+11b. **Next:** Canonical URL ownership for project workspace and Board — see [Known gap](#known-gap-the-original-app-surfaces-never-took-their-canonical-urls)
+10. Login and Portal Recovery Surface — unblocked; `_default_portal_landing` now returns `/dashboard`
 
 ### Slice ledger
 
@@ -253,20 +254,21 @@ Live record of each Phase 5 slice, the OpenSpec change that delivers it, and its
 | 7 | Worker settings | `react-worker-settings-parity` | Archived |
 | 8 | Project settings | `react-project-settings-parity` | Archived |
 | 9 | Setup overview | `react-setup-overview-parity` | Archived |
+| 11a | Canonical URL ownership for Dashboard and Projects | `react-canonical-dashboard-projects` | Archived |
+| 11b | Canonical URL ownership for project workspace and Board | — | Not started |
 | 10 | Login + Portal Recovery Surface | — | Not started |
-| 11 | Canonical URL ownership for Dashboard, Projects, project workspace, and Board | — | Not started |
 | — | Final Jinja retirement | — | Not started |
 
 ### Known gap: the original `/app` surfaces never took their canonical URLs
 
 Slices 1–9 each moved a surface onto its existing canonical URL, because that rule was adopted after Phases 3–4 had already shipped. Dashboard, project workspace, and Orchestration Board predate the rule and still live only under `/app`. Their ✅ marks above are accurate but scoped to `/app/*`, not to the canonical routes an operator actually visits.
 
-Verified route ownership as of slice 9:
+Verified route ownership as of slice 11a:
 
 | Canonical URL | Renders | React equivalent |
 |---|---|---|
-| `/dashboard` | Jinja (`portal.py`) | `/app` |
-| `/projects` | Jinja | none — no React view exists |
+| `/dashboard` | React build-aware | `/app` (transitional alias) |
+| `/projects` | React build-aware | — |
 | `/projects/{id}` | Jinja | `/app/projects/{id}` |
 | `/projects/{id}/board` | Jinja | `/app/projects/{id}/board` |
 | `/board` | Jinja | — |
@@ -278,9 +280,9 @@ Verified route ownership as of slice 9:
 
 This blocks the final retirement. Retirement makes `/app` a permanent redirect to `/dashboard`, but `/dashboard` renders Jinja: deleting the Jinja templates breaks it, and keeping them makes `/app` redirect to the Jinja dashboard and strands the React one. Either outcome is a regression that presents as a working redirect.
 
-Slice 11 closes the gap by inverting the relationship: canonical URLs render React build-aware, `/app/*` becomes the transitional alias it was always specified to be. It is not purely a route move — `/projects` has no React view, so that part is net-new work. Consider splitting it (`/dashboard` + `/projects`, then workspace + board).
+Slice 11 closes the gap by inverting the relationship: canonical URLs render React build-aware, `/app/*` becomes the transitional alias it was always specified to be. It was split as suggested. Slice 11a (`react-canonical-dashboard-projects`, archived) took `/dashboard` and `/projects`, including the net-new React Projects view, and moved `_default_portal_landing` to `/dashboard`. Slice 11b takes the remaining half: `/projects/{id}` and `/projects/{id}/board`, and rewrites the project entry links 11a knowingly left pointing at `/app/projects/{id}`.
 
-**Open ordering question.** Slice 11 is listed after Login, but the sequence is undecided. Login redirects through `_default_portal_landing`, which returns `/app` when the build is available, so Login-first hardcodes a URL that slice 11 immediately rewrites. Inversion-first lets Login target its final URL once, and unblocks retirement earlier. The counter-argument is that slice 11 is chunkier than recent slices while Login is self-contained.
+**Ordering: settled, inversion-first.** Slice 11 was listed after Login, but ran first. Login redirects through `_default_portal_landing`, which returned `/app` when the build was available, so Login-first would have hardcoded a URL slice 11 immediately rewrote. Slice 11a moved that landing to `/dashboard`, so Login can now be written against its final URL once. The slice numbers keep their original meaning — 10 is still Login — and the ledger orders rows by execution rather than renumbering.
 
 For each surface:
 
@@ -460,6 +462,7 @@ git diff --check
 - Successful login always opens Dashboard; no requested-page return target is preserved.
 - React owns normal not-found and recoverable page errors; minimal server rendering handles only frontend boot failure and fallback login.
 - Migrated Jinja pages freeze as temporary fallbacks; one separate final retirement change deletes all duplicated frontend surfaces after full parity proof.
+- Canonical URL inversion runs before Login, split into Dashboard + Projects (11a) then project workspace + Board (11b), so Login targets its final landing URL once and retirement unblocks earlier.
 - Every numbered remaining migration slice uses a separate OpenSpec change, verification gate, and archive boundary.
 - Remaining React migration is desktop-only; mobile/narrow-screen redesign is outside scope.
 - Each desktop slice requires practical keyboard, labeling, focus, semantic, and status-announcement accessibility; formal certification is outside scope.
