@@ -8,8 +8,7 @@ from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from pydantic import ValidationError
 
@@ -29,15 +28,9 @@ from foreman_ai_hq.task_breakdown import (
     breakdown_task_source,
     validate_breakdown_result,
 )
-from foreman_ai_hq.task_breakdown_handoff import build_task_breakdown_review_context
-from foreman_ai_hq.template_context import portal_template_context
 from foreman_ai_hq.worker_model_allowlist import allowed_worker_model_ids
 
 router = APIRouter()
-templates = Jinja2Templates(
-    directory=Path(__file__).resolve().parents[1] / "templates",
-    context_processors=[portal_template_context],
-)
 CANONICAL_TASK_STATUSES = {"Estimated", "Running", "Review", "Done", "Blocked"}
 PositiveStrictInt = Annotated[int, Field(strict=True, gt=0)]
 NonNegativeStrictInt = Annotated[int, Field(strict=True, ge=0)]
@@ -477,16 +470,16 @@ async def _estimate_form_for_project(
 
 @router.get("/task-breakdowns/{breakdown_id}/review", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def task_breakdown_review(breakdown_id: str, request: Request):
-    context = build_task_breakdown_review_context(request, breakdown_id)
-    from foreman_ai_hq.routes.react_shell import react_build_dir, react_shell_available
+    from foreman_ai_hq.routes.react_shell import react_shell_or_missing_build
 
-    if react_shell_available():
-        return FileResponse(react_build_dir() / "index.html")
-    return templates.TemplateResponse(
-        request,
-        "task_breakdown_review.html",
-        context,
-    )
+    # Existence stays backend-authoritative: an unknown breakdown is a 404
+    # whether or not the frontend is built. The full review context is built by
+    # the JSON handoff the shell then calls.
+    try:
+        db.get_task_breakdown(request.app.state.settings.database_path, breakdown_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="task breakdown not found") from exc
+    return react_shell_or_missing_build()
 
 
 @router.post("/task-breakdowns/{breakdown_id}/accept", dependencies=[Depends(require_portal_auth)])

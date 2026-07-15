@@ -2,15 +2,17 @@
 
 This module keeps FastAPI as the only backend authority. It:
 
-- serves the built Vite React shell (``/app`` and client sub-routes) and its
-  static assets (``/static/react/*``) from a deterministic build directory,
-- returns a clear missing-build response instead of a blank shell when the
+- serves the built Vite React shell and its static assets (``/static/react/*``)
+  from a deterministic build directory,
+- returns the missing-build recovery response instead of a blank shell when the
   frontend has not been built,
-- exposes thin authenticated JSON endpoints for the first migrated surface
-  (project workspace and project board) that reuse existing view helpers.
+- redirects the retired ``/app`` aliases to their canonical URLs,
+- exposes the authenticated JSON handoffs the React surfaces read.
 
-Non-migrated Jinja pages and every workflow rule (auth, guardrails, launch,
-budget, review disposition) are unchanged and remain the source of truth.
+React owns every operator-facing canonical route. The only server-rendered
+pages left are the recovery surfaces: the login page and the missing-build
+response below. Every workflow rule (auth, guardrails, launch, budget, review
+disposition) is unchanged and remains the source of truth.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from foreman_ai_hq import db
 from foreman_ai_hq.auth import require_portal_auth
@@ -45,6 +47,11 @@ from foreman_ai_hq.worker_setup_view import (
 
 router = APIRouter()
 
+# The Portal Recovery Surface for frontend boot failure. Self-contained by
+# design, like login.html: a recovery surface cannot share machinery with the
+# thing that might be broken. It deliberately offers no link — every Portal
+# route returns this same document while the build is missing, so any link here
+# would point back at the error it is apologizing for.
 _MISSING_BUILD_HTML = """<!doctype html>
 <html lang="en">
   <head>
@@ -54,11 +61,10 @@ _MISSING_BUILD_HTML = """<!doctype html>
   <body style="font-family: sans-serif; max-width: 40rem; margin: 4rem auto; color: #222;">
     <h1>React Portal shell is not built</h1>
     <p>
-      The React Portal assets have not been built yet. Build the frontend with
-      <code>cd frontend &amp;&amp; npm install &amp;&amp; npm run build</code>, or use the
-      server-rendered pages instead.
+      The Portal assets have not been built yet. Build the frontend with
+      <code>cd frontend &amp;&amp; npm install &amp;&amp; npm run build</code>, then reload
+      this page.
     </p>
-    <p><a href="/projects">Open the server-rendered Portal</a></p>
   </body>
 </html>
 """
@@ -136,40 +142,63 @@ def react_asset(asset_path: str):
     return FileResponse(target)
 
 
-@router.get("/app", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
-@router.get(
-    "/app/projects/{project_id}",
-    response_class=HTMLResponse,
-    dependencies=[Depends(require_portal_auth)],
-)
-@router.get(
-    "/app/projects/{project_id}/board",
-    response_class=HTMLResponse,
-    dependencies=[Depends(require_portal_auth)],
-)
-def react_shell(request: Request, project_id: str | None = None):
-    """Serve the React shell index for an explicitly owned route.
+def missing_build_response() -> HTMLResponse:
+    """The recovery response for a missing or partial React build."""
 
-    Client-side routing renders the workspace/board from the same ``index.html``.
-    When assets are missing we return a clear response, never a blank shell.
+    return HTMLResponse(
+        _MISSING_BUILD_HTML,
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
+
+
+def react_shell_or_missing_build():
+    """Serve the built React shell, or the recovery response when it is absent.
+
+    Every React-owned canonical route ends here, so a missing build produces one
+    answer at one status code rather than a per-route decision. Callers that must
+    stay backend-authoritative about existence (unknown project, session, or
+    breakdown ids) do their lookup first: an unknown id is a ``404``, never a
+    recovery response about a resource that never existed.
     """
 
     index = _react_index()
     if index is None:
-        return HTMLResponse(
-            _MISSING_BUILD_HTML,
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        )
+        return missing_build_response()
     return FileResponse(index)
+
+
+@router.get("/app", dependencies=[Depends(require_portal_auth)])
+def react_app_alias() -> RedirectResponse:
+    """Permanent redirect for the retired ``/app`` alias.
+
+    Nothing links here — slice 11b moved every target onto the canonical URLs.
+    The redirect exists for operator bookmarks and external links only.
+    """
+
+    return RedirectResponse("/dashboard", status_code=status.HTTP_301_MOVED_PERMANENTLY)
+
+
+@router.get("/app/projects/{project_id}", dependencies=[Depends(require_portal_auth)])
+def react_app_project_alias(project_id: str) -> RedirectResponse:
+    return RedirectResponse(
+        f"/projects/{project_id}", status_code=status.HTTP_301_MOVED_PERMANENTLY
+    )
+
+
+@router.get("/app/projects/{project_id}/board", dependencies=[Depends(require_portal_auth)])
+def react_app_board_alias(project_id: str) -> RedirectResponse:
+    return RedirectResponse(
+        f"/projects/{project_id}/board", status_code=status.HTTP_301_MOVED_PERMANENTLY
+    )
 
 
 @router.get("/api/portal/nav", dependencies=[Depends(require_portal_auth)])
 def react_portal_nav(request: Request):
     """Authenticated sidebar navigation context for the React shell.
 
-    Reuses the same ``portal_template_context`` helper that feeds the Jinja
-    sidebar in ``base.html`` so the React sidebar and the Jinja sidebar draw
-    from a single source of truth. Returns only the fields the sidebar needs.
+    Reuses the ``portal_template_context`` helper, which also guards the login
+    page against exposing project data before authentication. Returns only the
+    fields the sidebar needs.
     """
 
     context = portal_template_context(request)

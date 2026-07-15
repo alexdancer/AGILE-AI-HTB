@@ -5,20 +5,14 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, ValidationError
 
 from foreman_ai_hq import db
 from foreman_ai_hq.auth import require_portal_auth
 from foreman_ai_hq.evidence_reporting import safe_evidence
-from foreman_ai_hq.template_context import portal_template_context
 
 router = APIRouter()
-templates = Jinja2Templates(
-    directory=Path(__file__).resolve().parents[1] / "templates",
-    context_processors=[portal_template_context],
-)
 
 AlarmAction = Literal["continue", "abort_session", "raise_budget", "adjust_guardrail"]
 
@@ -80,28 +74,9 @@ def list_alarms(
     if _wants_html(request):
         # Browser views are protected; JSON polling stays available to API clients.
         require_portal_auth(request)
-        from foreman_ai_hq.routes.react_shell import _react_index
+        from foreman_ai_hq.routes.react_shell import react_shell_or_missing_build
 
-        index = _react_index()
-        if index is not None:
-            return FileResponse(index)
-        open_alarms = [alarm for alarm in alarms if not alarm.get("resolved_at")]
-        critical_count = sum(
-            1 for alarm in open_alarms if str(alarm.get("severity", "")).lower() in {"critical", "high"}
-        )
-        warning_count = sum(
-            1 for alarm in open_alarms if str(alarm.get("severity", "")).lower() in {"warning", "medium"}
-        )
-        return templates.TemplateResponse(
-            request,
-            "alarms.html",
-            {
-                "active_page": "alarms",
-                "open_alarms": open_alarms,
-                "critical_count": critical_count,
-                "warning_count": warning_count,
-            },
-        )
+        return react_shell_or_missing_build()
     return {"alarms": alarms}
 
 

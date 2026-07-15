@@ -54,7 +54,7 @@ from foreman_ai_hq.operator_config import (
     write_control_plane_secret,
 )
 from foreman_ai_hq.project_context import task_project_id
-from foreman_ai_hq.routes.react_shell import react_shell_available, _budget_json, _react_index
+from foreman_ai_hq.routes.react_shell import _budget_json, react_shell_or_missing_build
 from foreman_ai_hq.settings import Settings
 from foreman_ai_hq.task_launch import DEFAULT_PROXY_URL, TaskLaunchBlocked, launch_task, refresh_task_from_session
 from foreman_ai_hq.routes.tasks import _ensure_review_task, _run_agent_review, _wants_react_json
@@ -272,13 +272,13 @@ def root(request: Request) -> RedirectResponse:
             require_portal_auth(request)
         except HTTPException:
             return RedirectResponse("/login")
-    return RedirectResponse(_default_portal_landing(request.app.state.settings.database_path))
+    return RedirectResponse("/dashboard")
 
 
 @router.get("/login", response_class=HTMLResponse)
 def login_form(request: Request):
     if not request.app.state.settings.portal_auth_required:
-        return RedirectResponse(_default_portal_landing(request.app.state.settings.database_path))
+        return RedirectResponse("/dashboard")
     return templates.TemplateResponse(request, "login.html", {"active_page": "login"})
 
 
@@ -288,7 +288,7 @@ _LOGIN_ERROR_MESSAGE = "Invalid portal token. Check the configured portal token 
 @router.post("/login")
 def login(request: Request, token: str = Form(default="")):
     if not request.app.state.settings.portal_auth_required:
-        return RedirectResponse(_default_portal_landing(request.app.state.settings.database_path), status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse("/dashboard", status_code=status.HTTP_303_SEE_OTHER)
 
     expected_token = os.getenv(request.app.state.settings.portal_token_env, "")
     # Constant-time comparison avoids revealing partial token matches.
@@ -301,7 +301,7 @@ def login(request: Request, token: str = Form(default="")):
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
 
-    response = RedirectResponse(_default_portal_landing(request.app.state.settings.database_path), status_code=status.HTTP_303_SEE_OTHER)
+    response = RedirectResponse("/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     response.set_cookie(
         PORTAL_COOKIE_NAME,
         sign_portal_cookie(expected_token),
@@ -317,7 +317,7 @@ def login(request: Request, token: str = Form(default="")):
 def logout(request: Request):
     redirect_to = "/login"
     if not request.app.state.settings.portal_auth_required:
-        redirect_to = _default_portal_landing(request.app.state.settings.database_path)
+        redirect_to = "/dashboard"
     response = RedirectResponse(redirect_to, status_code=status.HTTP_303_SEE_OTHER)
     response.delete_cookie(
         PORTAL_COOKIE_NAME,
@@ -330,10 +330,7 @@ def logout(request: Request):
 
 @router.get("/dashboard", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def dashboard(request: Request):
-    index = _react_index()
-    if index is not None:
-        return FileResponse(index)
-    return templates.TemplateResponse(request, "dashboard.html", _dashboard_context(request))
+    return react_shell_or_missing_build()
 
 
 def _dashboard_context(request: Request) -> dict[str, Any]:
@@ -456,44 +453,19 @@ def _dashboard_next_actions(
 
 @router.get("/projects", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def projects(request: Request):
-    index = _react_index()
-    if index is not None:
-        return FileResponse(index)
-    return templates.TemplateResponse(
-        request,
-        "projects.html",
-        {
-            "active_page": "projects",
-            "projects": _project_view_models(request),
-            "archived_projects": _archived_project_view_models(request),
-            "local_runner_enabled": request.app.state.settings.local_runner_enabled,
-        },
-    )
+    return react_shell_or_missing_build()
 
 
 @router.get("/projects/{project_id}", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def project_workspace(project_id: str, request: Request):
     database_path = request.app.state.settings.database_path
+    # Existence stays backend-authoritative: an unknown project is a 404 whether
+    # or not the frontend is built.
     try:
-        project = db.get_connected_project(database_path, project_id)
+        db.get_connected_project(database_path, project_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="connected project not found") from exc
-    index = _react_index()
-    if index is not None:
-        return FileResponse(index)
-    project = _project_view_model(request, project)
-    summary = _project_workspace_summary(database_path, project)
-    return templates.TemplateResponse(
-        request,
-        "project_workspace.html",
-        {
-            "active_page": "project_workspace",
-            "active_project": project,
-            "project": project,
-            "summary": summary,
-            "error": request.query_params.get("error", ""),
-        },
-    )
+    return react_shell_or_missing_build()
 
 
 def _setup_overview_state(request: Request) -> dict[str, Any]:
@@ -574,46 +546,12 @@ def _setup_overview_state(request: Request) -> dict[str, Any]:
 
 @router.get("/setup", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def setup_overview(request: Request):
-    index = _react_index()
-    if index is not None:
-        return FileResponse(index)
-
-    state = _setup_overview_state(request)
-    steps = state["steps"]
-    ready_to_launch = state["ready_to_launch"]
-    next_step = state["next_step"]
-    active_adapter = state["active_adapter"]
-    budget_settings = state["budget_settings"]
-
-    return templates.TemplateResponse(
-        request,
-        "setup.html",
-        {
-            "active_page": "setup",
-            "steps": steps,
-            "ready_to_launch": ready_to_launch,
-            "active_adapter": active_adapter,
-            "budget_settings": budget_settings,
-            "next_step": next_step,
-        },
-    )
+    return react_shell_or_missing_build()
 
 
 @router.get("/settings/budget", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def budget_settings(request: Request):
-    from foreman_ai_hq.routes.react_shell import _react_index
-
-    index = _react_index()
-    if index is not None:
-        return FileResponse(index)
-    database_path = request.app.state.settings.database_path
-    config = request.app.state.guardrails
-    budget = _effective_budget_settings(database_path, config, timezone=request.app.state.settings.timezone)
-    return templates.TemplateResponse(
-        request,
-        "budget.html",
-        {"active_page": "budget", "budget": budget, "error": None},
-    )
+    return react_shell_or_missing_build()
 
 
 @router.post("/settings/budget", dependencies=[Depends(require_portal_auth)])
@@ -669,19 +607,16 @@ def board(request: Request):
 @router.get("/projects/{project_id}/board", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def project_board(project_id: str, request: Request):
     database_path = request.app.state.settings.database_path
+    # Existence stays backend-authoritative: an unknown project is a 404 whether
+    # or not the frontend is built.
     try:
-        project = db.get_connected_project(database_path, project_id)
+        db.get_connected_project(database_path, project_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="connected project not found") from exc
-    index = _react_index()
-    if index is not None:
-        return FileResponse(index)
-    if db.project_is_archived(project):
-        return RedirectResponse(
-            f"/projects/{project_id}?error={quote('Restore this archived project before opening its active board')}",
-            status_code=status.HTTP_303_SEE_OTHER,
-        )
-    return _render_board(request, active_project=_project_view_model(request, project))
+    # An archived project still serves the shell; React identifies the archived
+    # state and routes to Restore. The redirect this route used to perform was
+    # only ever reachable on the retired Jinja path.
+    return react_shell_or_missing_build()
 
 
 @router.post("/projects/{project_id}/archive", dependencies=[Depends(require_portal_auth)])
@@ -724,29 +659,11 @@ def restore_project(project_id: str, request: Request):
 
 @router.get("/projects/{project_id}/task-history", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def project_task_history(project_id: str, request: Request):
-    from foreman_ai_hq.routes.react_shell import _react_index
-
     database_path = request.app.state.settings.database_path
-    project = _project_view_model(request, _ensure_project(database_path, project_id))
-    selected_filter = request.query_params.get("filter", "all")
-    context = _project_task_history_context(
-        database_path,
-        active_project=project,
-        selected_filter=selected_filter,
-    )
-    index = _react_index()
-    if index is not None:
-        return FileResponse(index)
-    return templates.TemplateResponse(
-        request,
-        "task_history.html",
-        {
-            "active_page": "task_history",
-            "active_project": project,
-            "project": project,
-            **context,
-        },
-    )
+    # Existence stays backend-authoritative: an unknown project is a 404 whether
+    # or not the frontend is built.
+    _ensure_project(database_path, project_id)
+    return react_shell_or_missing_build()
 
 
 @router.post("/projects/{project_id}/tasks/{task_id}/archive", dependencies=[Depends(require_portal_auth)])
@@ -944,23 +861,6 @@ async def project_board_status(project_id: str, request: Request):
     }
 
 
-def _render_board(request: Request, *, active_project: dict[str, Any] | None = None):
-    database_path = request.app.state.settings.database_path
-    context = _board_page_context(
-        database_path,
-        active_project=active_project,
-        default_proxy_url=DEFAULT_PROXY_URL,
-        error=request.query_params.get("error", ""),
-    )
-    return templates.TemplateResponse(
-        request,
-        "board.html",
-        {
-            "active_page": "board",
-            "active_project": active_project,
-            **context,
-        },
-    )
 
 
 def _next_setup_step(
@@ -1233,28 +1133,7 @@ def _automation_stop_reason(task: dict[str, Any], reasons: list[str]) -> str:
 
 @router.get("/settings/workers", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def worker_settings(request: Request):
-    from foreman_ai_hq.routes.react_shell import _react_index
-
-    index = _react_index()
-    if index is not None:
-        return FileResponse(index)
-    database_path = request.app.state.settings.database_path
-    adapters = _worker_adapter_view_models(database_path)
-    active_adapter = _active_adapter_for_request(adapters, request.query_params.get("adapter_id"))
-    projects = db.list_connected_projects(database_path)
-    next_action = _worker_setup_next_action(active_adapter, bool(projects))
-    return templates.TemplateResponse(
-        request,
-        "workers.html",
-        {
-            "active_page": "workers",
-            "adapters": adapters,
-            "active_adapter": active_adapter,
-            "default_proxy_url": DEFAULT_PROXY_URL,
-            "next_action": next_action,
-            "error": request.query_params.get("error", ""),
-        },
-    )
+    return react_shell_or_missing_build()
 
 
 def _worker_settings_url(adapter_id: str, *, error: str | None = None) -> str:
@@ -1338,29 +1217,7 @@ def refresh_worker_diagnostics(adapter_id: str, request: Request):
 
 @router.get("/settings/control-plane", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def control_plane_settings(request: Request):
-    from foreman_ai_hq.routes.react_shell import _react_index
-
-    index = _react_index()
-    if index is not None:
-        return FileResponse(index)
-    settings = request.app.state.settings
-    try:
-        connection_status = db.get_execution_backend_status(settings.database_path, "control_plane_model")
-    except KeyError:
-        connection_status = None
-    return templates.TemplateResponse(
-        request,
-        "control_plane.html",
-        {
-            "active_page": "control_plane",
-            "settings": settings,
-            "api_key_configured": bool(os.getenv(settings.control_plane_api_key_env)),
-            "legacy_api_key_configured": bool(os.getenv(settings.provider_api_key_env)),
-            "connection_status": connection_status,
-            "shadowed_settings": _control_plane_shadowed_settings(settings),
-            "curated_control_plane_models": CURATED_CONTROL_PLANE_MODELS,
-        },
-    )
+    return react_shell_or_missing_build()
 
 
 @router.post("/settings/control-plane", dependencies=[Depends(require_portal_auth)])
@@ -1386,10 +1243,12 @@ async def save_control_plane_settings(request: Request):
         _sync_control_plane_env(payload)
     except OSError as exc:
         safe_message = "Could not save control-plane config."
-        if wants_html:
-            return _control_plane_settings_with_error(request, safe_message)
         if _wants_react_json(request):
             return _react_control_plane_outcome(ok=False, error=safe_message, status_code=500)
+        # Non-JSON callers previously got this message rendered into the Jinja
+        # settings page. That page is retired, and the control-plane handoff does
+        # not read an ``?error=`` query parameter, so a redirect would drop the
+        # message silently. The sanitized message stays in the response body.
         return JSONResponse(status_code=500, content={"detail": safe_message})
 
     new_settings = Settings(
@@ -1494,35 +1353,7 @@ async def test_control_plane_connection(request: Request):
 
 @router.get("/settings/project", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def project_settings(request: Request):
-    from foreman_ai_hq.routes.react_shell import _react_index
-
-    index = _react_index()
-    if index is not None:
-        return FileResponse(index)
-
-    database_path = request.app.state.settings.database_path
-    backend = _local_backend(request)
-    projects = []
-    for project in db.list_connected_projects(database_path):
-        capability = backend.project_capability(project) if backend else project.get("capability", {})
-        projects.append({**project, "capability": capability})
-    archived_projects = []
-    for project in db.list_archived_connected_projects(database_path):
-        capability = backend.project_capability(project) if backend else project.get("capability", {})
-        archived_projects.append({**project, "capability": capability})
-    backend_status = backend.status() if backend else None
-    return templates.TemplateResponse(
-        request,
-        "project.html",
-        {
-            "active_page": "project",
-            "local_runner_enabled": request.app.state.settings.local_runner_enabled,
-            "backend_status": backend_status,
-            "projects": projects,
-            "archived_projects": archived_projects,
-            "error": request.query_params.get("error", ""),
-        },
-    )
+    return react_shell_or_missing_build()
 
 
 @router.post("/settings/project/connect", dependencies=[Depends(require_portal_auth)])
@@ -1651,33 +1482,19 @@ async def discover_worker_models_route(adapter_id: str, request: Request):
 
 @router.get("/sessions", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def sessions_index(request: Request):
-    from foreman_ai_hq.routes.react_shell import _react_index
-    from foreman_ai_hq.session_handoff import build_sessions_context
-
-    index = _react_index()
-    if index is not None:
-        return FileResponse(index)
-    return templates.TemplateResponse(
-        request,
-        "sessions.html",
-        build_sessions_context(request),
-    )
+    return react_shell_or_missing_build()
 
 
 @router.get("/sessions/{session_id}", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def session_report_view(session_id: str, request: Request):
-    from foreman_ai_hq.routes.react_shell import _react_index
-    from foreman_ai_hq.session_handoff import build_session_report_context
-
-    context = build_session_report_context(request, session_id)
-    index = _react_index()
-    if index is not None:
-        return FileResponse(index)
-    return templates.TemplateResponse(
-        request,
-        "session_report.html",
-        context,
-    )
+    # Existence stays backend-authoritative: an unknown session is a 404 whether
+    # or not the frontend is built. A single-row lookup is enough here; the full
+    # artifact is built by the JSON handoff the shell then calls.
+    try:
+        db.get_session(request.app.state.settings.database_path, session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="session not found") from exc
+    return react_shell_or_missing_build()
 
 
 def _related_agent_review(database_path: Path | str, session_id: str) -> dict[str, Any] | None:
@@ -1836,26 +1653,46 @@ def _sync_control_plane_env(payload: ControlPlaneSettingsRequest) -> None:
             os.environ[name] = value
 
 
-def _control_plane_settings_with_error(request: Request, error: str):
-    settings = request.app.state.settings
-    try:
-        connection_status = db.get_execution_backend_status(settings.database_path, "control_plane_model")
-    except KeyError:
-        connection_status = None
-    return templates.TemplateResponse(
-        request,
-        "control_plane.html",
-        {
-            "active_page": "control_plane",
-            "settings": settings,
-            "api_key_configured": bool(os.getenv(settings.control_plane_api_key_env)),
-            "legacy_api_key_configured": bool(os.getenv(settings.provider_api_key_env)),
-            "connection_status": connection_status,
-            "shadowed_settings": _control_plane_shadowed_settings(settings),
-            "curated_control_plane_models": CURATED_CONTROL_PLANE_MODELS,
-            "error": error,
-        },
-        status_code=500,
+def _local_backend(request: Request) -> LocalExecutionBackend | None:
+    if not request.app.state.settings.local_runner_enabled:
+        return None
+    backend = getattr(request.app.state, "execution_backend", None)
+    if backend is None:
+        # Cache the backend on app state so route calls share project capability probes.
+        backend = LocalExecutionBackend(request.app.state.settings.database_path)
+        request.app.state.execution_backend = backend
+    return backend
+
+
+def _project_view_models(request: Request) -> list[dict[str, Any]]:
+    return [_project_view_model(request, project) for project in db.list_connected_projects(request.app.state.settings.database_path)]
+
+
+def _archived_project_view_models(request: Request) -> list[dict[str, Any]]:
+    return [
+        _project_view_model(request, project)
+        for project in db.list_archived_connected_projects(request.app.state.settings.database_path)
+    ]
+
+
+def _project_view_model(request: Request, project: dict[str, Any]) -> dict[str, Any]:
+    backend = _local_backend(request)
+    capability = backend.project_capability(project) if backend else project.get("capability", {})
+    return {**project, "capability": capability}
+
+
+def _project_settings_with_error(request: Request, error: str):
+    """Carry a connect/backend failure back to the canonical Project Settings URL.
+
+    This used to re-render the Jinja page with the error inline. Retirement
+    removed that page, so the reason travels as a query parameter instead — the
+    same path the archive block already uses, and one the Project Settings JSON
+    handoff sanitizes before React surfaces it.
+    """
+
+    return RedirectResponse(
+        f"/settings/project?error={quote(str(_safe_worker_evidence(error))[:1000])}",
+        status_code=status.HTTP_303_SEE_OTHER,
     )
 
 
@@ -1878,25 +1715,24 @@ async def _budget_payload_from_request(request: Request) -> tuple[TokenBudgetSet
     raise HTTPException(status_code=422, detail="budget settings are required")
 
 
-async def _worker_verify_payload_from_request(request: Request) -> tuple[WorkerVerifyRequest, bool]:
+async def _config_payload_from_request(request: Request) -> tuple[WorkerConfigureRequest, bool]:
+    """Extract worker configure payload from JSON or form-encoded request."""
     content_type = request.headers.get("content-type", "")
-    accept = request.headers.get("accept", "")
-    wants_html = "text/html" in accept and "application/json" not in accept
     if "application/json" in content_type:
         raw = await request.json()
         try:
-            return WorkerVerifyRequest.model_validate(raw or {}), False
+            return WorkerConfigureRequest.model_validate(raw or {}), False
         except ValidationError as exc:
             raise HTTPException(status_code=422, detail=exc.errors()) from exc
     if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
         form = await request.form()
-        raw = {key: value for key, value in form.items() if value not in (None, "")}
-        raw.setdefault("proxy_url", DEFAULT_PROXY_URL)
+        raw: dict[str, Any] = {key: value for key, value in form.items() if value not in (None, "")}
+        raw["is_default"] = "is_default" in raw
         try:
-            return WorkerVerifyRequest.model_validate(raw), True
+            return WorkerConfigureRequest.model_validate(raw), True
         except ValidationError as exc:
             raise HTTPException(status_code=422, detail=exc.errors()) from exc
-    raise HTTPException(status_code=422, detail="model is required")
+    return WorkerConfigureRequest(), True
 
 
 async def _project_connect_payload_from_request(request: Request) -> tuple[ProjectConnectRequest, bool]:
@@ -1919,81 +1755,25 @@ async def _project_connect_payload_from_request(request: Request) -> tuple[Proje
     raise HTTPException(status_code=422, detail="root_path is required")
 
 
-async def _config_payload_from_request(request: Request) -> tuple[WorkerConfigureRequest, bool]:
-    """Extract worker configure payload from JSON or form-encoded request."""
+async def _worker_verify_payload_from_request(request: Request) -> tuple[WorkerVerifyRequest, bool]:
     content_type = request.headers.get("content-type", "")
+    accept = request.headers.get("accept", "")
+    wants_html = "text/html" in accept and "application/json" not in accept
     if "application/json" in content_type:
         raw = await request.json()
         try:
-            return WorkerConfigureRequest.model_validate(raw or {}), False
+            return WorkerVerifyRequest.model_validate(raw or {}), False
         except ValidationError as exc:
             raise HTTPException(status_code=422, detail=exc.errors()) from exc
     if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
         form = await request.form()
-        raw: dict[str, Any] = {key: value for key, value in form.items() if value not in (None, "")}
-        raw["is_default"] = "is_default" in raw
+        raw = {key: value for key, value in form.items() if value not in (None, "")}
+        raw.setdefault("proxy_url", DEFAULT_PROXY_URL)
         try:
-            return WorkerConfigureRequest.model_validate(raw), True
+            return WorkerVerifyRequest.model_validate(raw), True
         except ValidationError as exc:
             raise HTTPException(status_code=422, detail=exc.errors()) from exc
-    return WorkerConfigureRequest(), True
-
-
-def _local_backend(request: Request) -> LocalExecutionBackend | None:
-    if not request.app.state.settings.local_runner_enabled:
-        return None
-    backend = getattr(request.app.state, "execution_backend", None)
-    if backend is None:
-        # Cache the backend on app state so route calls share project capability probes.
-        backend = LocalExecutionBackend(request.app.state.settings.database_path)
-        request.app.state.execution_backend = backend
-    return backend
-
-
-def _default_portal_landing(database_path: Path | str) -> str:
-    if react_shell_available():
-        return "/dashboard"
-    projects = db.list_connected_projects(database_path)
-    if projects:
-        return f"/projects/{projects[0]['id']}"
-    return "/projects"
-
-
-def _project_view_models(request: Request) -> list[dict[str, Any]]:
-    return [_project_view_model(request, project) for project in db.list_connected_projects(request.app.state.settings.database_path)]
-
-
-def _archived_project_view_models(request: Request) -> list[dict[str, Any]]:
-    return [
-        _project_view_model(request, project)
-        for project in db.list_archived_connected_projects(request.app.state.settings.database_path)
-    ]
-
-
-def _project_view_model(request: Request, project: dict[str, Any]) -> dict[str, Any]:
-    backend = _local_backend(request)
-    capability = backend.project_capability(project) if backend else project.get("capability", {})
-    return {**project, "capability": capability}
-
-
-def _project_settings_with_error(request: Request, error: str):
-    database_path = request.app.state.settings.database_path
-    projects = db.list_connected_projects(database_path)
-    archived_projects = db.list_archived_connected_projects(database_path)
-    backend = _local_backend(request)
-    return templates.TemplateResponse(
-        request,
-        "project.html",
-        {
-            "active_page": "project",
-            "local_runner_enabled": request.app.state.settings.local_runner_enabled,
-            "backend_status": backend.status() if backend else None,
-            "projects": projects,
-            "archived_projects": archived_projects,
-            "error": error,
-        },
-        status_code=422,
-    )
+    raise HTTPException(status_code=422, detail="model is required")
 
 
 def _effective_budget_settings(database_path: Path | str, config: Any, *, timezone: str = "local") -> dict[str, Any]:

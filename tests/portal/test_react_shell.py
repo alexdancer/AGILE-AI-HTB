@@ -62,10 +62,17 @@ def test_react_shell_served_when_built(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     build_dir = _build_react_assets(tmp_path)
     monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+    database_path = tmp_path / "harness.db"
     with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "shell-repo")
         shells = [
             client.get(path, headers=_portal_headers())
-            for path in ("/app", "/app/projects/1", "/app/projects/1/board")
+            for path in (
+                "/dashboard",
+                "/projects",
+                f"/projects/{project['id']}",
+                f"/projects/{project['id']}/board",
+            )
         ]
         asset = client.get("/static/react/assets/main.js")
 
@@ -101,7 +108,7 @@ def test_react_shell_reports_missing_build(tmp_path, monkeypatch):
     empty_dir.mkdir()
     monkeypatch.setattr(react_shell, "react_build_dir", lambda: empty_dir)
     with _client(tmp_path) as client:
-        response = client.get("/app/projects/1", headers=_portal_headers())
+        response = client.get("/dashboard", headers=_portal_headers())
 
     assert response.status_code == 503
     assert "not built" in response.text
@@ -109,7 +116,13 @@ def test_react_shell_reports_missing_build(tmp_path, monkeypatch):
     assert "<h1>" in response.text
 
 
-def test_partial_react_build_falls_back_without_blank_shell(tmp_path, monkeypatch):
+def test_partial_react_build_returns_recovery_without_blank_shell(tmp_path, monkeypatch):
+    """A partial build is still a missing build.
+
+    Every entry point lands on /dashboard and gets the recovery response there.
+    Before retirement these redirected to a server-rendered /projects landing.
+    """
+
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     build_dir = _build_partial_react_assets(tmp_path)
     monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
@@ -130,28 +143,34 @@ def test_partial_react_build_falls_back_without_blank_shell(tmp_path, monkeypatc
             "/login", data={"token": PORTAL_TOKEN}, follow_redirects=False
         )
         authenticated_root = client.get("/", follow_redirects=False)
-        shell = client.get("/app", headers=_portal_headers())
 
-    assert root.headers["location"] == "/projects"
-    assert login_form.headers["location"] == "/projects"
-    assert login_submit.headers["location"] == "/projects"
-    assert logout.headers["location"] == "/projects"
-    assert landing.status_code == 200
+    assert root.headers["location"] == "/dashboard"
+    assert login_form.headers["location"] == "/dashboard"
+    assert login_submit.headers["location"] == "/dashboard"
+    assert logout.headers["location"] == "/dashboard"
     assert login.status_code == 303
-    assert login.headers["location"] == "/projects"
-    assert authenticated_root.headers["location"] == "/projects"
-    assert shell.status_code == 503
-    assert "not built" in shell.text
+    assert login.headers["location"] == "/dashboard"
+    assert authenticated_root.headers["location"] == "/dashboard"
+    # The landing itself reports the partial build rather than promoting it.
+    assert landing.status_code == 503
+    assert "not built" in landing.text
 
 
-def test_partial_react_build_uses_connected_project_fallback_for_all_entries(tmp_path, monkeypatch):
+def test_partial_build_landing_ignores_connected_projects(tmp_path, monkeypatch):
+    """A connected project no longer changes the landing.
+
+    This replaces the connected-project fallback: the landing used to pick the
+    first project's route when the build was incomplete. There is no longer a
+    server-rendered destination to pick.
+    """
+
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     build_dir = _build_partial_react_assets(tmp_path)
     monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
     database_path = tmp_path / "harness.db"
 
     with _client(tmp_path, portal_auth_required=False) as client:
-        project = _connect_project(database_path, tmp_path / "partial-fallback-repo")
+        _connect_project(database_path, tmp_path / "partial-fallback-repo")
         no_auth_responses = [
             client.get("/", follow_redirects=False),
             client.get("/login", follow_redirects=False),
@@ -169,10 +188,9 @@ def test_partial_react_build_uses_connected_project_fallback_for_all_entries(tmp
         )
         authenticated_root = client.get("/", follow_redirects=False)
 
-    expected = f"/projects/{project['id']}"
-    assert all(response.headers["location"] == expected for response in no_auth_responses)
-    assert login.headers["location"] == expected
-    assert authenticated_root.headers["location"] == expected
+    assert all(response.headers["location"] == "/dashboard" for response in no_auth_responses)
+    assert login.headers["location"] == "/dashboard"
+    assert authenticated_root.headers["location"] == "/dashboard"
 
 
 def test_mixed_quote_missing_asset_rejects_partial_build(tmp_path, monkeypatch):
@@ -182,10 +200,10 @@ def test_mixed_quote_missing_asset_rejects_partial_build(tmp_path, monkeypatch):
 
     with _client(tmp_path, portal_auth_required=False) as client:
         root = client.get("/", follow_redirects=False)
-        shell = client.get("/app")
+        dashboard = client.get("/dashboard")
 
-    assert root.headers["location"] == "/projects"
-    assert shell.status_code == 503
+    assert root.headers["location"] == "/dashboard"
+    assert dashboard.status_code == 503
 
 
 def test_auth_disabled_root_uses_react_when_built(tmp_path, monkeypatch):
