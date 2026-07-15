@@ -55,14 +55,26 @@
 
 Design Decision 9. The suite's autouse fixture (`tests/conftest.py:9-16`) pins every test to "build absent", so 141 assertions across 19 files read Jinja markup as their oracle for backend state. Retirement removes the surface, not the behavior: each assertion migrates to the corresponding JSON handoff, which is already spec'd with a bounded field contract. Do **not** convert these to recovery-response assertions — that deletes the coverage while leaving the suite green.
 
-- [ ] 8.1 `tests/portal/test_control_plane.py` (23 markup assertions) → `/api/settings/control-plane`. Watch the placeholder-only key contract: the handoff exposes `api_key_present`, never the value.
-- [ ] 8.2 `tests/workers/test_adapter_verification.py` (23) → `/api/settings/workers`. Tracking-label strings become `tracking.mode`; form-action assertions become `launchable` / `configured` state.
-- [ ] 8.3 `tests/portal/test_workers.py` (14) → `/api/settings/workers`.
-- [ ] 8.4 `tests/portal/test_dashboard.py` (14) → `/api/dashboard`.
-- [ ] 8.5 `tests/portal/test_auth.py` (12) → the auth boundary is unchanged; keep assertions on status/redirect, and migrate only those reading page markup. `/login` assertions stay as-is — it is the one surviving template.
-- [ ] 8.6 `tests/portal/test_task_breakdown_handoff.py` (7) → `/api/task-breakdowns/{id}/review` handoff.
-- [ ] 8.7 `tests/portal/test_board.py` (6) → `/api/projects/{id}/board`.
-- [ ] 8.8 `tests/config/test_project_setup.py` (6) → `/api/settings/project` or `/api/projects`.
+**Patterns learned from 8.10** (done; `test_react_shell.py`, 27 tests → 152 passing). Apply these to the remaining files:
+
+1. **Sort each assertion into one of three buckets before editing.** *Backend state* (`"Add streaming proxy tests"`, `"25,000"`, `created["id"]`) → migrate to the handoff. *Pure presentation* (`"repeat(6, minmax(340px, 1fr))"`, `"task-title"`, `<details class="task-details">`) → task 8.11: React owns it, so move to `frontend/tests` or drop with a recorded reason. *Retired contract* (`assert location == "/projects"`) → delete; `test_jinja_retirement.py` covers the replacement.
+2. **Delete rather than rewrite when the test's premise is gone.** A test named `..._keeps_jinja_fallback` has no post-retirement meaning. Check `test_jinja_retirement.py` first — if it covers the replacement, remove the old test and leave a comment saying where it went. Don't duplicate.
+3. **Consolidate the per-route families.** Six `*_keeps_jinja_fallback` tests became one parametrized test over the route list. Same coverage, less surface.
+4. **Keep the route inventories, flip their claim.** Lists of canonical routes are valuable; `test_non_migrated_jinja_routes_remain_directly_reachable` became `test_every_canonical_route_serves_the_shell_when_built` by adding a built shell and asserting `id="root"`.
+5. **For oracle tests, assert the source, not the deleted page.** "JSON agrees with Jinja" becomes "JSON projects `CURATED_CONTROL_PLANE_MODELS` exactly" — what the comparison was really protecting (design Decision 7).
+6. **Build present is opt-in.** `monkeypatch.setattr(react_shell, "react_build_dir", lambda: _build_react_assets(tmp_path))`. `_build_partial_react_assets` gives a partial build, which must be treated as missing.
+7. **`/alarms` is content-negotiated.** It needs `Accept: text/html` to reach the shell arm; without it a test takes the JSON path and never exercises the surface. JSON polling is unaffected by retirement.
+
+Handoff targets per file: `/api/dashboard`, `/api/projects`, `/api/projects/{id}/board`, `/api/projects/{id}/task-history`, `/api/settings/{budget,control-plane,project,workers}`, `/api/setup`, `/api/alarms`, `/api/sessions`.
+
+- [ ] 8.1 `tests/portal/test_control_plane.py` (23 markup assertions) → `/api/settings/control-plane`. Watch the placeholder-only key contract: the handoff exposes `api_key_present`, never the value. → **10 failing now**.
+- [ ] 8.2 `tests/workers/test_adapter_verification.py` (23) → `/api/settings/workers`. Tracking-label strings become `tracking.mode`; form-action assertions become `launchable` / `configured` state. → **5 failing now**.
+- [ ] 8.3 `tests/portal/test_workers.py` (14) → `/api/settings/workers`. → **12 failing now**.
+- [ ] 8.4 `tests/portal/test_dashboard.py` (14) → `/api/dashboard`. → **10 failing now**.
+- [ ] 8.5 `tests/portal/test_auth.py` (12) → the auth boundary is unchanged; keep assertions on status/redirect, and migrate only those reading page markup. `/login` assertions stay as-is — it is the one surviving template. → **7 failing now**.
+- [ ] 8.6 `tests/portal/test_task_breakdown_handoff.py` (7) → `/api/task-breakdowns/{id}/review` handoff. → **3 failing now**.
+- [ ] 8.7 `tests/portal/test_board.py` (6) → `/api/projects/{id}/board`. → **18 failing now**.
+- [ ] 8.8 `tests/config/test_project_setup.py` (6) → `/api/settings/project` or `/api/projects`. → **6 failing now**.
 - [ ] 8.9 Remaining single-digit files: `test_alarms.py` (3) → `/api/alarms`; `test_setup.py` (2) → `/api/setup`; `tests/api/test_task_launch.py` (2), `test_task_estimation.py` (1), `test_task_review.py` (1), `test_project_archive.py` (1), `test_token_component_breakdown.py` (1) → their respective handoffs.
 - [x] 8.10 `tests/portal/test_react_shell.py` (25) → these mostly assert the shell/fallback contract itself; rewrite against the recovery response and the new redirects rather than a handoff.
 - [ ] 8.11 For each assertion with no JSON equivalent because it asserts React's copy rather than backend state, move it to `frontend/tests` or drop it *with a recorded reason in this task* if the React view's existing tests already cover it. Never drop silently.
