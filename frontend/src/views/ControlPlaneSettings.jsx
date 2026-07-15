@@ -3,6 +3,11 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { getJSON, postJSON } from "../api.js";
 import { useResource } from "../useResource.js";
 
+const safeError = (error) =>
+  error?.status === 401
+    ? "Control-plane settings require sign-in."
+    : "Could not load control-plane settings. Retry.";
+
 const PROVIDERS = ["openai", "anthropic", "openai-compatible"];
 
 function dataToForm(data) {
@@ -157,7 +162,7 @@ export function ControlPlaneSettingsState({ data, error, loading, onRefresh }) {
   if (error) {
     return (
       <>
-        <div className="notice danger">Could not load control-plane settings: {error.message}</div>
+        <div className="notice danger">{safeError(error)}</div>
         <p><a href="/settings/control-plane">Retry</a></p>
       </>
     );

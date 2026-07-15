@@ -3,6 +3,11 @@ import React, { useCallback, useEffect, useState } from "react";
 import { postJSON } from "../api.js";
 import { useResource } from "../useResource.js";
 
+const safeError = (error) =>
+  error?.status === 401
+    ? "Project settings require sign-in."
+    : "Could not load project settings. Retry.";
+
 // HTML archive callers (the Jinja /projects list) are redirected here as
 // /settings/project?error=<block reason>. Forward it to the API so the backend
 // sanitizes and bounds it, matching what the Jinja fallback page renders.
@@ -162,7 +167,7 @@ export function ProjectSettingsState({ data, error, loading, onRefresh }) {
   if (error) {
     return (
       <>
-        <div className="notice danger">Could not load project settings: {boundedError(error.message, "Project settings unavailable.")}</div>
+        <div className="notice danger">{safeError(error)}</div>
         <p><a href="/settings/project">Retry</a></p>
       </>
     );

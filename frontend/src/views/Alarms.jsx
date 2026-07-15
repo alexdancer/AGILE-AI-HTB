@@ -27,7 +27,7 @@ function boundedError(value, fallback) {
 function safeError(error) {
   if (!error) return null;
   if (error.status === 401) return "Alarms require sign-in.";
-  return boundedError(error.message, "Could not load Alarms. Retry.");
+  return "Could not load Alarms. Retry.";
 }
 
 export default function Alarms() {
@@ -67,7 +67,7 @@ export default function Alarms() {
   return (
     <AlarmsState
       data={state.data}
-      error={safeError(state.error)}
+      error={state.error}
       loading={state.loading}
       filter={filter}
       onFilter={selectFilter}
@@ -140,7 +140,7 @@ export function AlarmsState({
       </nav>
 
       <div className="live-notice" aria-live="polite">
-        {error || inlineError || status || ""}
+        {safeError(error) || inlineError || status || ""}
       </div>
 
       {loading && !data && <div className="notice">Loading Alarms…</div>}

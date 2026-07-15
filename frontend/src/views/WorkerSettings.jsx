@@ -3,6 +3,11 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { getJSON, postJSON } from "../api.js";
 import { useResource } from "../useResource.js";
 
+const safeError = (error) =>
+  error?.status === 401
+    ? "Worker adapters require sign-in."
+    : "Could not load worker adapters. Retry.";
+
 function initialAdapterId() {
   const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
   return params.get("adapter_id") || null;
@@ -197,7 +202,7 @@ export function WorkerSettingsState({
   if (error) {
     return (
       <>
-        <div className="notice danger">Could not load worker adapters: {error.message}</div>
+        <div className="notice danger">{safeError(error)}</div>
         <p><a href="/settings/workers">Retry</a></p>
       </>
     );

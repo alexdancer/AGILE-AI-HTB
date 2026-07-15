@@ -3,6 +3,11 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { getJSON, postJSON } from "../api.js";
 import { useResource } from "../useResource.js";
 
+const safeError = (error) =>
+  error?.status === 401
+    ? "Budget settings require sign-in."
+    : "Could not load budget settings. Retry.";
+
 export default function BudgetSettings() {
   const [refreshKey, setRefreshKey] = useState(0);
   const { data, error, loading } = useResource("/api/settings/budget", refreshKey);
@@ -88,7 +93,7 @@ export function BudgetSettingsState({ data, error, loading, onRefresh }) {
   if (error) {
     return (
       <>
-        <div className="notice danger">Could not load budget settings: {error.message}</div>
+        <div className="notice danger">{safeError(error)}</div>
         <p><a href="/settings/budget">Retry</a></p>
       </>
     );

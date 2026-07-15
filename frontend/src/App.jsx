@@ -132,7 +132,7 @@ export default function App() {
   } else {
     content = (
       <div className="notice danger">
-        This React Portal route does not exist. <a href="/app">Open dashboard</a>.
+        This React Portal route does not exist. <a href="/dashboard">Open dashboard</a>.
       </div>
     );
   }

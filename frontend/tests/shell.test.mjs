@@ -33,6 +33,10 @@ let confirmReviewNavigation;
 let preventReviewUnload;
 let NavContext;
 let NavigationGuardContext;
+let BudgetSettingsState;
+let WorkerSettingsState;
+let ControlPlaneSettingsState;
+let ProjectSettingsState;
 
 before(async () => {
   server = await createServer({
@@ -61,6 +65,10 @@ before(async () => {
   ({ NavContext, NavigationGuardContext } = await server.ssrLoadModule("/src/nav.jsx"));
   ({ parseRoute } = await server.ssrLoadModule("/src/App.jsx"));
   ({ TaskHistoryState } = await server.ssrLoadModule("/src/views/TaskHistory.jsx"));
+  ({ BudgetSettingsState } = await server.ssrLoadModule("/src/views/BudgetSettings.jsx"));
+  ({ WorkerSettingsState } = await server.ssrLoadModule("/src/views/WorkerSettings.jsx"));
+  ({ ControlPlaneSettingsState } = await server.ssrLoadModule("/src/views/ControlPlaneSettings.jsx"));
+  ({ ProjectSettingsState } = await server.ssrLoadModule("/src/views/ProjectSettings.jsx"));
 });
 
 after(async () => {
@@ -550,7 +558,7 @@ test("Alarms sidebar and list render from available_actions and bookmarkable fil
   const loading = renderToStaticMarkup(React.createElement(AlarmsState, { data: null, error: null, loading: true, filter: "open", onFilter: () => {}, onRefresh: () => {}, retry: () => {} }));
   assert.match(loading, /Loading Alarms/);
 
-  const failed = renderToStaticMarkup(React.createElement(AlarmsState, { data: null, error: "Alarms require sign-in.", loading: false, filter: "open", onFilter: () => {}, onRefresh: () => {}, retry: () => {} }));
+  const failed = renderToStaticMarkup(React.createElement(AlarmsState, { data: null, error: Object.assign(new Error("unauthorized"), { status: 401 }), loading: false, filter: "open", onFilter: () => {}, onRefresh: () => {}, retry: () => {} }));
   assert.match(failed, /Alarms require sign-in/);
 
   const populated = renderToStaticMarkup(React.createElement(AlarmsState, { data, error: null, loading: false, filter: "open", onFilter: () => {}, onRefresh: () => {}, retry: () => {} }));
@@ -1525,4 +1533,113 @@ test("Task Breakdown Review is exact-route owned without swallowing suffixes", (
   });
   assert.equal(parseRoute("/task-breakdowns/breakdown-demo-999/review/extra").view, "notFound");
   assert.equal(parseRoute("/app/task-breakdowns/breakdown-demo-999/review").view, "notFound");
+});
+
+// A failed JSON handoff carries text nobody wrote for an operator: an exception
+// detail, a proxy's HTML error page, or `Internal Server Error`. It must never be
+// rendered. A negotiated action outcome is the opposite -- the backend authors and
+// sanitizes that text for the operator -- so this only exercises the load-error
+// branch, and the action paths that surface `outcome.error` stay legal.
+test("no view renders backend text when its handoff fails", () => {
+  const sentinel = "SENTINEL_BACKEND_DETAIL_2099";
+  const views = () => [
+    ["Dashboard", DashboardState],
+    ["Projects", ProjectsState],
+    ["Board", BoardState],
+    ["Workspace", WorkspaceState],
+    ["Sessions", SessionsState],
+    ["SessionReport", SessionReportState],
+    ["Setup", SetupState],
+    ["Alarms", AlarmsState],
+    ["TaskHistory", TaskHistoryState],
+    ["BudgetSettings", BudgetSettingsState],
+    ["WorkerSettings", WorkerSettingsState],
+    ["ControlPlaneSettings", ControlPlaneSettingsState],
+    ["ProjectSettings", ProjectSettingsState],
+  ];
+
+  for (const status of [500, 401]) {
+    const error = new Error(`${sentinel} raised at /srv/internal/path`);
+    error.status = status;
+    for (const [name, Component] of views()) {
+      const markup = renderToStaticMarkup(
+        React.createElement(Component, {
+          data: null,
+          error,
+          loading: false,
+          projectId: "demo-999",
+          sessionId: "sess-demo-999",
+          breakdownId: "breakdown-demo-999",
+          onRefresh: () => {},
+        }),
+      );
+      assert.ok(
+        !markup.includes(sentinel),
+        `${name} rendered backend error text on a ${status} load failure`,
+      );
+    }
+  }
+});
+
+test("Settings views show a fixed message when their handoff fails", () => {
+  const cases = [
+    ["BudgetSettings", () => BudgetSettingsState, /Could not load budget settings\. Retry\./, /Budget settings require sign-in\./],
+    ["WorkerSettings", () => WorkerSettingsState, /Could not load worker adapters\. Retry\./, /Worker adapters require sign-in\./],
+    ["ControlPlaneSettings", () => ControlPlaneSettingsState, /Could not load control-plane settings\. Retry\./, /Control-plane settings require sign-in\./],
+    ["ProjectSettings", () => ProjectSettingsState, /Could not load project settings\. Retry\./, /Project settings require sign-in\./],
+    ["Alarms", () => AlarmsState, /Could not load Alarms\. Retry\./, /Alarms require sign-in\./],
+  ];
+
+  for (const [name, get, failMessage, authMessage] of cases) {
+    const render = (status) =>
+      renderToStaticMarkup(
+        React.createElement(get(), {
+          data: null,
+          error: Object.assign(new Error("psycopg2.OperationalError at /srv/app"), { status }),
+          loading: false,
+          filter: "open",
+          onFilter: () => {},
+          onRefresh: () => {},
+          retry: () => {},
+        }),
+      );
+
+    assert.match(render(500), failMessage, `${name} 500`);
+    assert.match(render(401), authMessage, `${name} 401`);
+  }
+});
+
+test("the not-found branch routes to a canonical URL", async () => {
+  const { default: App } = await server.ssrLoadModule("/src/App.jsx");
+  assert.equal(parseRoute("/nonsense-route-2099").view, "notFound");
+  const source = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
+  // The /app alias becomes a redirect at Jinja retirement, so nothing in-shell
+  // may target it.
+  assert.match(source, /This React Portal route does not exist\./);
+  assert.doesNotMatch(source, /href="\/app"/);
+  assert.ok(App);
+});
+
+// The mirror of the load-error rule. A negotiated outcome's `error` is text the
+// backend wrote for the operator and sanitized server-side; replacing it with a
+// fixed string would delete the guidance, not protect anyone.
+test("a negotiated action outcome still surfaces the backend's authored message", async () => {
+  const authored = "Local Runner backend is disabled. Run foremanctl init, then foremanctl serve.";
+  const blocked = await submitProjectRestore({
+    url: "/projects/demo-999/restore",
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({
+        ok: false,
+        error: authored,
+        next_href: null,
+        retry_href: null,
+        project: null,
+      }),
+    }),
+    onSuccess: async () => { throw new Error("must not refetch after a failed outcome"); },
+  });
+
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.error, authored);
 });
