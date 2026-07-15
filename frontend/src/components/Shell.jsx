@@ -10,9 +10,9 @@ import { useResource } from "../useResource.js";
 // `portal_template_context` helper the Jinja sidebar uses, so both shells
 // draw from a single source of truth.
 //
-// React-owned routes (/app, /app/projects/:id, /app/projects/:id/board) use
-// AppLink for client-side navigation. Non-migrated Jinja pages use ordinary
-// full-page anchors so the browser loads the server-rendered page.
+// React-owned routes use AppLink for client-side navigation. Non-migrated Jinja
+// pages use ordinary full-page anchors so the browser loads the server-rendered
+// page.
 //
 // Props:
 //   activeView: "dashboard" | "workspace" | "board"

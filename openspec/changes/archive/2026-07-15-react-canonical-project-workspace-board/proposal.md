@@ -32,8 +32,9 @@ None. The migrated surfaces belong to the existing React Portal shell capability
 
 - `src/foreman_ai_hq/routes/portal.py` — `project_workspace` and `project_board` become build-aware after their existing project lookup and archive checks.
 - `src/foreman_ai_hq/routes/react_shell.py` — the workspace projection's `board_href`/attention hrefs and the Restore outcome's `next_href` target the canonical routes.
+- `src/foreman_ai_hq/routes/tasks.py`, `src/foreman_ai_hq/task_breakdown_handoff.py` — the Task Breakdown Review's board link stops being rewritten to `/app/projects/{id}/board`. The spec already required a canonical board `next_href`, so this removes a rewrite that contradicted it.
 - `frontend/src/App.jsx` — `parseRoute` claims both canonical project routes alongside the retained `/app` aliases.
-- `frontend/src/nav.jsx` — sidebar active-state recognizes the canonical project and board routes.
+- `frontend/src/components/Shell.jsx` — sidebar project and board links target the canonical routes. Active-state needs no change: it derives from `parseRoute`, which matches both the canonical and alias shapes.
 - `frontend/src/views/Projects.jsx`, `frontend/src/views/Dashboard.jsx` — entry links move to `/projects/{id}`.
 - `frontend/src/views/Board.jsx`, `frontend/src/views/Workspace.jsx`, `frontend/src/views/TaskHistory.jsx` — escape links removed, error branches sanitized.
 - `tests/portal/test_react_shell.py`, `frontend/tests/shell.test.mjs`.
