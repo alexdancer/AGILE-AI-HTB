@@ -252,7 +252,7 @@ The system SHALL provide explicit commands or documented checks for building the
 - **THEN** it SHALL include a check that FastAPI serves the React shell or reports missing assets clearly
 
 ### Requirement: React is the build-aware default authenticated landing
-The normal Portal landing SHALL use the React dashboard at `/app` when the complete built React shell is available. The system SHALL validate the React index and all referenced local React assets before choosing `/app`; when that validation fails, the normal landing SHALL remain the existing server-rendered first-project or `/projects` route. This promotion SHALL NOT remove explicit Jinja fallback routes. React route ownership SHALL include `/app`, `/app/projects/{id}`, `/app/projects/{id}/board`, `/sessions`, `/sessions/{session_id}`, `/task-breakdowns/{breakdown_id}/review`, and the destination Settings routes `/settings/control-plane`, `/settings/budget`, `/settings/project`, and `/settings/workers` only for the migrated surfaces defined by this specification.
+The normal Portal landing SHALL use the React dashboard at `/app` when the complete built React shell is available. The system SHALL validate the React index and all referenced local React assets before choosing `/app`; when that validation fails, the normal landing SHALL remain the existing server-rendered first-project or `/projects` route. This promotion SHALL NOT remove explicit Jinja fallback routes. React route ownership SHALL include `/app`, `/app/projects/{id}`, `/app/projects/{id}/board`, `/sessions`, `/sessions/{session_id}`, `/task-breakdowns/{breakdown_id}/review`, `/setup`, and the destination Settings routes `/settings/control-plane`, `/settings/budget`, `/settings/project`, and `/settings/workers` only for the migrated surfaces defined by this specification.
 
 #### Scenario: Auth-disabled local root opens built React dashboard
 - **WHEN** portal auth is not required and an operator opens `/` while the complete React build is available
@@ -304,7 +304,7 @@ The normal Portal landing SHALL use the React dashboard at `/app` when the compl
 - **AND** it SHALL preserve Accept, Retry, Manual Candidate, Cancel, and Session Report links
 
 #### Scenario: Non-migrated and fallback Jinja routes remain reachable
-- **WHEN** an operator on the default React shell follows a link to Setup, Alarms, Settings, task history, or an explicit server-rendered fallback surface
+- **WHEN** an operator on the default React shell follows a link to Alarms, Settings, task history, or an explicit server-rendered fallback surface
 - **THEN** the existing FastAPI/Jinja route SHALL remain reachable through ordinary full-page navigation, serving the Jinja page directly for non-migrated surfaces and as the missing/partial-build fallback for migrated canonical routes
 - **AND** no React client route SHALL claim a path that this specification has not migrated
 
@@ -384,6 +384,12 @@ The React Portal shell SHALL render the same application frame as the server-ren
 - **AND** no Dashboard or project sidebar entry SHALL be highlighted
 - **AND** the shell SHALL highlight at most one `Settings` group item
 
+#### Scenario: Setup route is highlighted in the sidebar
+
+- **WHEN** an authenticated operator opens `/setup` with a complete React build
+- **THEN** the shell SHALL highlight the `Setup` group `First-run setup` item as active
+- **AND** no Dashboard, project, Sessions, or Settings sidebar entry SHALL be highlighted
+
 #### Scenario: Unknown React paths return not found
 
 - **WHEN** an operator opens a path under `/app` other than `/app`, `/app/projects/{id}`, or `/app/projects/{id}/board`
@@ -391,7 +397,7 @@ The React Portal shell SHALL render the same application frame as the server-ren
 
 #### Scenario: Non-migrated Jinja pages remain reachable from the React sidebar via full-page navigation
 
-- **WHEN** an authenticated operator follows a Setup, Alarms, Settings, Planning, task-history, or full-board link from the React sidebar
+- **WHEN** an authenticated operator follows an Alarms, Settings, Planning, task-history, or full-board link from the React sidebar
 - **THEN** the browser SHALL perform an ordinary full-page navigation to the corresponding canonical route rather than an in-shell transition
 - **AND** the shell's own in-shell surfaces SHALL use client-side navigation so in-shell moves do not require a full reload
 
@@ -1017,4 +1023,66 @@ React SHALL render Project Settings inside the shared Portal chrome on the canon
 - **THEN** React SHALL surface that block reason rather than silently dropping it, preserving what the Jinja page showed for the same redirect
 - **AND** the reason SHALL be sanitized and bounded by the backend rather than rendered from the URL directly
 - **AND** React SHALL clear the redirect-borne error once the operator takes a subsequent action
+
+### Requirement: React Setup Overview JSON is authenticated, exact, and bounded
+FastAPI SHALL expose a new authenticated JSON handoff for Setup Overview that requires Portal authentication and reuses the existing control-plane setup state, effective budget settings, Worker adapter view models with active-adapter selection, Local Runner project capability evaluation, and next-setup-step derivation. The response SHALL be bounded and sanitized so the frontend can render the readiness steps, launch readiness, the next action, and the active Worker adapter without recomputing setup rules in the browser.
+
+#### Scenario: Setup Overview handoff requires authentication
+- **WHEN** an unauthenticated caller requests the authenticated React Setup Overview JSON handoff while portal auth is required
+- **THEN** FastAPI SHALL reject the request using the Portal authentication boundary
+- **AND** SHALL NOT return Setup Overview data, including readiness state or adapter configuration
+
+#### Scenario: Setup Overview JSON is bounded and exact
+- **WHEN** an authenticated caller requests the React Setup Overview JSON handoff
+- **THEN** the response SHALL include the four readiness steps with name, state, href, and detail, the `ready_to_launch` flag, the next action with label, href, and detail, and the active Worker adapter projection
+- **AND** absent optional values SHALL be typed `null` rather than fabricated defaults
+
+#### Scenario: Setup Overview readiness is computed by the backend
+- **WHEN** the Setup Overview JSON handoff builds its response
+- **THEN** it SHALL reuse the existing control-plane setup state, budget confirmation, active-adapter launchability, project capability evaluation, and next-setup-step derivation that power the Jinja setup page
+- **AND** the frontend SHALL render the returned steps and next action rather than deriving readiness from their parts
+
+#### Scenario: Setup Overview adapter projection is allow-listed
+- **WHEN** the Setup Overview JSON handoff serializes the active Worker adapter
+- **THEN** the response SHALL carry only the adapter name, verification status, launchability, and tracking mode
+- **AND** it SHALL NOT serialize the full Worker verification evidence
+
+#### Scenario: Setup Overview reports launch readiness only with a launch-ready project
+- **WHEN** the Setup Overview JSON handoff builds its response while the control plane, token budget, and Worker adapter requirements pass but no Connected Project is launch-ready
+- **THEN** `ready_to_launch` SHALL be false
+- **AND** the projects step state SHALL NOT report ready
+
+### Requirement: React Setup Overview navigates inside the shell
+React SHALL render Setup Overview inside the shared Portal chrome on the canonical `/setup` URL when the complete build is available, and FastAPI SHALL render the existing Jinja page at the same URL when the build is missing or partial. The view SHALL preserve the next-action toolbar, the four readiness cards with their destination links, the launch-readiness panel, and the active Worker adapter panel. The Setup sidebar link SHALL use in-shell client navigation.
+
+#### Scenario: Built canonical route opens React Setup Overview in-shell
+- **WHEN** an authenticated operator opens `/setup` while the complete React build is available
+- **THEN** FastAPI SHALL serve the React shell and render Setup Overview inside the full Portal chrome
+- **AND** React SHALL request the authenticated Setup Overview JSON for its readiness steps, next action, and active adapter
+
+#### Scenario: Missing or partial build keeps canonical Setup Overview in Jinja
+- **WHEN** an authenticated operator opens `/setup` while the React build is missing or partial
+- **THEN** FastAPI SHALL render the existing Jinja setup page at the same canonical URL
+- **AND** it SHALL NOT return a blank shell or require an alternate fallback URL
+
+#### Scenario: Setup adapter context is bookmarkable
+- **WHEN** an authenticated operator opens `/setup` with an `adapter_id` query parameter while the complete React build is available
+- **THEN** React SHALL pass that `adapter_id` through to the Setup Overview JSON handoff
+- **AND** the backend SHALL perform active-adapter selection using its existing selection rule, including its existing fallback when the `adapter_id` is absent or unknown
+- **AND** React SHALL NOT select the active adapter itself or hold the selection as client-only state
+
+#### Scenario: Setup forwards adapter context to Worker Settings
+- **WHEN** an operator opens the Worker adapter destination from the React Setup Overview while an `adapter_id` is in effect
+- **THEN** the destination link SHALL carry that `adapter_id` so Worker Settings opens the same adapter
+- **AND** the operator SHALL NOT be returned to the default adapter
+
+#### Scenario: Setup Overview load failure is sanitized
+- **WHEN** the React Setup Overview cannot load its state
+- **THEN** React SHALL render a fixed sanitized message with a retry path, and a sign-in message when the failure is an authentication rejection
+- **AND** it SHALL NOT render the underlying error text into the page
+
+#### Scenario: Both renderers read one tracking source
+- **WHEN** the React Setup Overview and the Jinja fallback render the tracking of the same active Worker adapter
+- **THEN** both SHALL read the tracking mode from the Worker adapter view model rather than from raw verification evidence
+- **AND** an adapter whose tracking has not been verified SHALL render as unverified on both surfaces
 
