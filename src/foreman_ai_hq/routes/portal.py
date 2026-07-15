@@ -282,17 +282,24 @@ def login_form(request: Request):
     return templates.TemplateResponse(request, "login.html", {"active_page": "login"})
 
 
+_LOGIN_ERROR_MESSAGE = "Invalid portal token. Check the configured portal token and try again."
+
+
 @router.post("/login")
-def login(request: Request, token: str = Form(...)):
+def login(request: Request, token: str = Form(default="")):
     if not request.app.state.settings.portal_auth_required:
         return RedirectResponse(_default_portal_landing(request.app.state.settings.database_path), status_code=status.HTTP_303_SEE_OTHER)
 
     expected_token = os.getenv(request.app.state.settings.portal_token_env, "")
-    if not expected_token or not token:
-        raise HTTPException(status_code=401, detail="invalid portal token")
     # Constant-time comparison avoids revealing partial token matches.
-    if not secrets.compare_digest(token, expected_token):
-        raise HTTPException(status_code=401, detail="invalid portal token")
+    # The same sanitized error is shown for every rejection cause.
+    if not expected_token or not token or not secrets.compare_digest(token, expected_token):
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"active_page": "login", "error": _LOGIN_ERROR_MESSAGE},
+            status_code=status.HTTP_401_UNAUTHORIZED,
+        )
 
     response = RedirectResponse(_default_portal_landing(request.app.state.settings.database_path), status_code=status.HTTP_303_SEE_OTHER)
     response.set_cookie(

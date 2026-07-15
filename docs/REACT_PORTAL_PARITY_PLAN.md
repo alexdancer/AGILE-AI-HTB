@@ -16,7 +16,7 @@ Every canonical Portal URL now renders React build-aware, including `/dashboard`
 
 React owns the main authenticated operator-console front door without becoming a separate-feeling `/app` mini-application. Remaining surfaces migrate only after bounded parity work.
 
-Normal login also becomes React-owned. Minimal server rendering remains only as the Portal Recovery Surface when the React build cannot load.
+Normal login remains server-rendered as the Portal Recovery Surface. The React build owns the authenticated console after login; the standalone server-rendered login is the only entry point when the React build cannot load.
 
 Migrated React surfaces take over the existing canonical user-facing URLs (`/sessions`, `/alarms`, `/setup`, `/settings/*`, and equivalent project routes). Do not create a parallel `/app/*` route tree for remaining surfaces. During migration, each canonical GET may select React when the build is complete and its existing Jinja page when React is unavailable. Existing FastAPI mutation routes remain authoritative. `/app` is a transitional alias, not the final URL namespace.
 
@@ -27,7 +27,6 @@ Target end state:
 ```text
 / or authenticated landing
 └─ React Portal shell
-   ├─ Login
    ├─ Dashboard
    ├─ Projects
    ├─ Project workspace
@@ -37,9 +36,11 @@ Target end state:
    ├─ Setup
    └─ Settings
 
+The server-rendered login page is the Portal Recovery Surface.
+
 FastAPI owns all backend rules and workflow state.
 Jinja remains non-migrated support until replaced surface-by-surface.
-Minimal server-rendered login/recovery remains only when React cannot load.
+The standalone server-rendered login page is the only recovery surface when React cannot load.
 ```
 
 Non-goals:
@@ -256,8 +257,10 @@ Live record of each Phase 5 slice, the OpenSpec change that delivers it, and its
 | 9 | Setup overview | `react-setup-overview-parity` | Archived |
 | 11a | Canonical URL ownership for Dashboard and Projects | `react-canonical-dashboard-projects` | Archived |
 | 11b | Canonical URL ownership for project workspace and Board | `react-canonical-project-workspace-board` | Archived |
-| 10 | Login + Portal Recovery Surface | — | Not started |
+| 10 | Login + Portal Recovery Surface | `standalone-portal-recovery-login` | Implemented |
 | — | Final Jinja retirement | — | Not started |
+
+The Final Jinja retirement change may now delete `base.html` together with the duplicated templates; the login page is self-contained and no authenticated route depends on it.
 
 ### Known gap: the original `/app` surfaces never took their canonical URLs
 
@@ -324,7 +327,7 @@ React Settings mutations stay on the current Settings surface. They show inline 
 
 Project Task History preserves bookmarkable status filters, estimate/actual/model evidence, Session Report links, Worker Run and blocker evidence, manual-estimate indicators, archive timestamps, and inline Unarchive behavior.
 
-Normal React Login uses a standalone branded layout without authenticated Portal navigation. When Portal auth is disabled, `/login` redirects to the normal root. When the React build is unavailable, the minimal server-rendered Portal Recovery Surface provides login instead.
+The login page is a standalone branded server-rendered recovery surface without authenticated Portal navigation. When Portal auth is disabled, `/login` redirects to the normal root. The same login page is the Portal Recovery Surface when the React build is unavailable.
 
 Successful login always opens the React Dashboard. The login flow does not preserve or accept a requested return URL.
 
@@ -444,7 +447,7 @@ git diff --check
 - React should not be an incomplete separate `/app` island.
 - Backend authority remains in FastAPI. React is a presentation/client-state layer, not a duplicate workflow engine.
 - The existing Jinja Portal remains the reliable fallback until each React surface reaches parity.
-- Final frontend boundary: React owns every normal user-facing route, including login. A minimal server-rendered Portal Recovery Surface remains only for login and recovery when the React build is missing or partial; it does not retain duplicated operator workflows.
+- Final frontend boundary: React owns every normal user-facing route except login. The server-rendered login page is the normal entry point and the Portal Recovery Surface; it does not retain duplicated operator workflows.
 - Migrated React surfaces own existing canonical user-facing URLs. `/app` remains only a transitional alias and must not grow into a parallel route namespace.
 - Final `/app/*` compatibility is redirect-only; canonical Portal URLs are the only rendered route tree.
 - Sessions list and full Session Report migrate together as the first remaining read-only vertical slice.
@@ -460,7 +463,7 @@ git diff --check
 - Task Breakdown Review and Project Task History migrate before Alarms and Settings because they are direct branches of the primary React Orchestration Board workflow.
 - React Task Breakdown Review keeps full editable contract parity while using progressive disclosure for dense slicing evidence.
 - Task Breakdown Review keeps pre-acceptance edits browser-local, warns before leaving, and persists only on explicit acceptance.
-- React Login is a standalone branded screen; authenticated Portal chrome appears only after login.
+- React Login is a standalone branded screen; authenticated Portal chrome appears only after login. (Superseded: normal login remains server-rendered. A React login would permanently duplicate the form because the server-rendered login must exist for missing-build recovery; the operator-visible result is the same. Revisit if login grows beyond one token field: multi-user, SSO, password reset, or session management would give React a real reason to own the surface.)
 - Successful login always opens Dashboard; no requested-page return target is preserved.
 - React owns normal not-found and recoverable page errors; minimal server rendering handles only frontend boot failure and fallback login.
 - Migrated Jinja pages freeze as temporary fallbacks; one separate final retirement change deletes all duplicated frontend surfaces after full parity proof.

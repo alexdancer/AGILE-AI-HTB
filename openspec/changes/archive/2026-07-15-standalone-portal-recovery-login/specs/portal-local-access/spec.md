@@ -1,52 +1,4 @@
-# portal-local-access Specification
-
-## Purpose
-TBD - created by archiving change skip-local-portal-login. Update Purpose after archive.
-## Requirements
-### Requirement: Loopback Portal access skips token login
-The system SHALL allow the default loopback local Portal run to be used without submitting a portal login token.
-
-#### Scenario: Default loopback root opens Portal landing
-- **WHEN** an operator starts the Portal through the default local `foremanctl serve` loopback bind
-- **THEN** `GET /` SHALL redirect to the normal Portal landing page without requiring a login cookie or bearer token
-
-#### Scenario: Loopback protected page opens without cookie
-- **WHEN** portal auth is not required for the local loopback run
-- **AND** the operator requests a Portal HTML page such as `/projects` without a cookie or bearer token
-- **THEN** the page SHALL render instead of returning `401 missing portal authentication`
-
-### Requirement: Shared Portal access keeps token auth
-The system SHALL keep portal token authentication required when the Portal is reachable beyond the operator's loopback machine or auth is explicitly required.
-
-#### Scenario: Non-loopback bind requires auth
-- **WHEN** the Portal is started with a non-loopback bind such as `0.0.0.0` or a hosted/reverse-proxy auth-required setting
-- **THEN** protected Portal pages SHALL require the existing bearer token or signed portal cookie
-- **AND** unauthenticated requests SHALL return the existing unauthorized response
-
-#### Scenario: Auth-required login still sets cookie
-- **WHEN** portal auth is required
-- **AND** the operator submits the correct portal token to `/login`
-- **THEN** the system SHALL set the existing signed HttpOnly portal cookie
-- **AND** redirect to the normal Portal landing page
-
-### Requirement: Login route remains compatible
-The system SHALL keep `/login` available for auth-required deployments while avoiding it as mandatory local-loopback first-run friction. `/login` SHALL keep its existing URL, form method, token field, cookie behavior, and redirect targets; only its rendering and failure presentation are defined by this specification. Normal login SHALL remain server-rendered rather than becoming a React-owned surface, because the server-rendered login is the only entry point available when the React build cannot load.
-
-#### Scenario: Login route redirects when auth disabled
-- **WHEN** portal auth is not required
-- **AND** the operator opens `/login`
-- **THEN** the system SHALL redirect to the normal Portal landing page instead of showing a token form
-
-#### Scenario: Logout in no-auth mode is harmless
-- **WHEN** portal auth is not required
-- **AND** the operator submits `/logout`
-- **THEN** the system SHALL clear any existing portal cookie if present
-- **AND** redirect to the normal Portal landing page
-
-#### Scenario: Successful login is unchanged by the recovery surface
-- **WHEN** an operator submits the correct portal token to `/login` while portal auth is required
-- **THEN** the system SHALL set the existing signed HttpOnly portal cookie and redirect to the normal Portal landing page
-- **AND** the landing SHALL remain the existing build-aware target rather than being pinned to a server-rendered page
+## ADDED Requirements
 
 ### Requirement: The login page is the self-contained Portal Recovery Surface
 The server-rendered login page SHALL be the Portal Recovery Surface: the way into the Portal when the React build is missing, partial, or has not loaded. It SHALL render standalone and branded, without authenticated Portal navigation, and SHALL NOT depend on the shared Jinja chrome or any other template that the Jinja retirement change removes. It SHALL NOT query or expose project, task, session, or any other operator data before authentication succeeds.
@@ -92,3 +44,23 @@ A rejected `/login` submission SHALL re-render the login page with a sanitized e
 - **THEN** the system SHALL preserve the existing constant-time comparison
 - **AND** the failure rendering SHALL NOT introduce an earlier return that distinguishes a partially matching token
 
+## MODIFIED Requirements
+
+### Requirement: Login route remains compatible
+The system SHALL keep `/login` available for auth-required deployments while avoiding it as mandatory local-loopback first-run friction. `/login` SHALL keep its existing URL, form method, token field, cookie behavior, and redirect targets; only its rendering and failure presentation are defined by this specification. Normal login SHALL remain server-rendered rather than becoming a React-owned surface, because the server-rendered login is the only entry point available when the React build cannot load.
+
+#### Scenario: Login route redirects when auth disabled
+- **WHEN** portal auth is not required
+- **AND** the operator opens `/login`
+- **THEN** the system SHALL redirect to the normal Portal landing page instead of showing a token form
+
+#### Scenario: Logout in no-auth mode is harmless
+- **WHEN** portal auth is not required
+- **AND** the operator submits `/logout`
+- **THEN** the system SHALL clear any existing portal cookie if present
+- **AND** redirect to the normal Portal landing page
+
+#### Scenario: Successful login is unchanged by the recovery surface
+- **WHEN** an operator submits the correct portal token to `/login` while portal auth is required
+- **THEN** the system SHALL set the existing signed HttpOnly portal cookie and redirect to the normal Portal landing page
+- **AND** the landing SHALL remain the existing build-aware target rather than being pinned to a server-rendered page
