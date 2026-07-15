@@ -20,6 +20,21 @@
 **Properties**: Builds the React frontend, starts the FastAPI application with isolated test state, and drives a supported browser against FastAPI-served Portal routes. Each Connected Project fixture uses a real, temporary Git repository with minimal obviously synthetic files and a dedicated database; it never points browser automation at the operator's working repository. The initial fixture is truthfully `analysis_ready` rather than `launch_ready` when no real Worker Adapter has been verified. Temporary project state is removed after the test. It does not replace service-level integration tests and must not depend on real providers, real Worker CLIs, or operator secrets unless a separately labeled external-system test explicitly requires them.
 **Relationships**: Verifies Portal authentication, navigation, browser behavior, and selected operator workflows across the React frontend and authoritative FastAPI backend. Distinct from a Governance Integration Smoke Test.
 
+## Demo Scenario Catalog
+**Definition**: The shared registry that turns an existing synthetic contract under `demo_tasks/` into an isolated, repeatable Harness and project fixture for browser evidence or an opt-in live Worker run.
+**Properties**: Each scenario identifies its source Markdown contract, creates a fresh temporary Git repository, copies or references the contract inside that repository, seeds a dedicated Harness database with the Connected Project and required scenario state, and preserves the repository's DEMO/2099/999/`.invalid` data rules. The catalog replaces ad hoc duplication between browser fixtures and demo setup; the existing `seed-demo` snip dataset is not implicitly treated as equivalent to the Markdown comparison scenarios.
+**Relationships**: Supplies Portal E2E Tests and Live Demo Runs with the same task contract while keeping their execution evidence distinct.
+
+## Recorded Demo Run
+**Definition**: A deterministic, unattended Playwright run of a Demo Scenario that records Portal behavior without requiring a real model provider or Worker CLI.
+**Properties**: Uses explicit test-only synthetic provider and Worker responses behind the real browser, HTTP, FastAPI, persistence, and React boundaries. Produces an HTML report and may produce named screenshots, traces, and video. It must be labeled synthetic and must not be presented as evidence of live Worker Adapter verification, real token usage, or provider behavior.
+**Relationships**: The default repeatable recording lane for a Demo Scenario. Complements, but does not replace, an opt-in Live Demo Run.
+
+## Live Demo Run
+**Definition**: An explicitly invoked Demo Scenario run that uses configured real provider and Worker Adapter integrations.
+**Properties**: Never runs as part of the default Portal E2E or CI suite, may consume tokens and modify its isolated temporary project, and requires the same Launch Guardrails and evidence rules as ordinary governed work. Its artifacts must identify the adapter, tracking mode, and whether usage evidence is authoritative.
+**Relationships**: Uses the same Demo Scenario Catalog as Recorded Demo Runs while producing separate live execution evidence.
+
 ## Governance Integration Smoke Test
 **Definition**: A service-level pytest smoke test that proves the local governance loop without a browser.
 **Properties**: May use direct application and persistence interfaces with synthetic data to exercise project connection, task creation, simulated Worker Run evidence, token accounting, and transition to Review. It is not called a Portal E2E test because it does not exercise the browser or production HTTP boundary end-to-end.

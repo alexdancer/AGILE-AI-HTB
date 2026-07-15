@@ -625,6 +625,26 @@ def test_react_projects_endpoint_archived_capability_reasons_are_safe(tmp_path, 
     assert payload["archived_projects"][0]["capability"]["reasons"] == ["***REDACTED***"]
 
 
+def test_react_projects_endpoint_archived_absent_capability_values_are_typed_null(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        archived = _connect_project(database_path, tmp_path / "archived-repo")
+        db.archive_connected_project(database_path, archived["id"])
+        monkeypatch.setattr(
+            "foreman_ai_hq.execution_backend.LocalExecutionBackend.project_capability",
+            lambda self, project: {"state": None, "label": None, "reasons": None},
+        )
+        response = client.get("/api/projects", headers=_portal_headers())
+
+    assert response.status_code == 200
+    capability = response.json()["archived_projects"][0]["capability"]
+    assert capability == {"state": "unknown", "label": None, "reasons": None}
+
+
 def test_react_dashboard_endpoint_requires_auth(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     with _client(tmp_path) as client:

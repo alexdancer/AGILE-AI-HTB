@@ -1174,8 +1174,8 @@ def _react_projects_archived_project(request: Request, project: dict) -> dict:
         "root_path": str(safe_evidence(project.get("root_path", ""), max_length=4096))[:4096],
         "archived_at": archived_at,
         "capability": {
-            "state": str(safe_evidence(capability.get("state"), max_length=64))[:64] or "unknown",
-            "label": str(safe_evidence(capability.get("label"), max_length=200))[:200] or None,
+            "state": _optional_scalar(capability.get("state"), 64) or "unknown",
+            "label": _optional_scalar(capability.get("label"), 200) or None,
             "reasons": safe_reasons[:20] or None,
         },
     }
