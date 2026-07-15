@@ -237,7 +237,8 @@ Candidate order:
 9. ✅ Setup overview after all four destination Settings surfaces are React
 11a. ✅ Canonical URL ownership for Dashboard and Projects
 11b. ✅ Canonical URL ownership for project workspace and Board — closed the [Known gap](#known-gap-the-original-app-surfaces-never-took-their-canonical-urls)
-10. **Next:** Login and Portal Recovery Surface — unblocked; `_default_portal_landing` now returns `/dashboard`
+10. ✅ Login and Portal Recovery Surface — the login page stays server-rendered and standalone; see the superseded Decision Log entry for why React does not own it
+—. **Next:** Final Jinja retirement — delete `base.html` and the duplicated templates, flip `/app/*` to redirects, keep the standalone login
 
 ### Slice ledger
 
@@ -257,7 +258,7 @@ Live record of each Phase 5 slice, the OpenSpec change that delivers it, and its
 | 9 | Setup overview | `react-setup-overview-parity` | Archived |
 | 11a | Canonical URL ownership for Dashboard and Projects | `react-canonical-dashboard-projects` | Archived |
 | 11b | Canonical URL ownership for project workspace and Board | `react-canonical-project-workspace-board` | Archived |
-| 10 | Login + Portal Recovery Surface | `standalone-portal-recovery-login` | Implemented |
+| 10 | Login + Portal Recovery Surface | `standalone-portal-recovery-login` | Archived |
 | — | Final Jinja retirement | — | Not started |
 
 The Final Jinja retirement change may now delete `base.html` together with the duplicated templates; the login page is self-contained and no authenticated route depends on it.
