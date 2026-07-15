@@ -64,7 +64,7 @@ Design Decision 9. The suite's autouse fixture (`tests/conftest.py:9-16`) pins e
 - [ ] 8.7 `tests/portal/test_board.py` (6) → `/api/projects/{id}/board`.
 - [ ] 8.8 `tests/config/test_project_setup.py` (6) → `/api/settings/project` or `/api/projects`.
 - [ ] 8.9 Remaining single-digit files: `test_alarms.py` (3) → `/api/alarms`; `test_setup.py` (2) → `/api/setup`; `tests/api/test_task_launch.py` (2), `test_task_estimation.py` (1), `test_task_review.py` (1), `test_project_archive.py` (1), `test_token_component_breakdown.py` (1) → their respective handoffs.
-- [ ] 8.10 `tests/portal/test_react_shell.py` (25) → these mostly assert the shell/fallback contract itself; rewrite against the recovery response and the new redirects rather than a handoff.
+- [x] 8.10 `tests/portal/test_react_shell.py` (25) → these mostly assert the shell/fallback contract itself; rewrite against the recovery response and the new redirects rather than a handoff.
 - [ ] 8.11 For each assertion with no JSON equivalent because it asserts React's copy rather than backend state, move it to `frontend/tests` or drop it *with a recorded reason in this task* if the React view's existing tests already cover it. Never drop silently.
 - [ ] 8.12 Rewrite tests that assert the build-aware landing falls back to a first-project or `/projects` route.
 - [ ] 8.13 Rewrite tests that assert `/app*` serves the shell rather than redirecting.

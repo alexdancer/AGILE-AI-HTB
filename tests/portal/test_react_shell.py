@@ -271,50 +271,12 @@ def test_react_build_availability_never_bypasses_root_auth(
     assert root.headers["location"] == "/login"
 
 
-def test_landing_falls_back_to_jinja_when_build_missing(tmp_path, monkeypatch):
-    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    # The autouse fixture pins the build as absent; the Jinja landing survives.
-    with _client(tmp_path, portal_auth_required=False) as client:
-        root = client.get("/", follow_redirects=False)
-        landing = client.get(root.headers["location"])
-
-    assert root.headers["location"] == "/projects"
-    assert landing.status_code == 200
-    assert "<html" in landing.text.lower()
-
-
-def test_missing_build_falls_back_to_connected_project_for_all_no_auth_entries(tmp_path, monkeypatch):
-    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    database_path = tmp_path / "harness.db"
-
-    with _client(tmp_path, portal_auth_required=False) as client:
-        project = _connect_project(database_path, tmp_path / "fallback-repo")
-        root = client.get("/", follow_redirects=False)
-        login_form = client.get("/login", follow_redirects=False)
-        login_submit = client.post(
-            "/login",
-            data={"token": "unused-DEMO-999"},
-            follow_redirects=False,
-        )
-        logout = client.post("/logout", follow_redirects=False)
-
-    expected = f"/projects/{project['id']}"
-    assert root.headers["location"] == expected
-    assert login_form.headers["location"] == expected
-    assert login_submit.headers["location"] == expected
-    assert logout.headers["location"] == expected
-
-
-def test_authenticated_root_falls_back_to_jinja_when_build_missing(tmp_path, monkeypatch):
-    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    with _client(tmp_path) as client:
-        login = client.post(
-            "/login", data={"token": PORTAL_TOKEN}, follow_redirects=False
-        )
-        root = client.get("/", follow_redirects=False)
-
-    assert login.status_code == 303
-    assert root.headers["location"] == "/projects"
+# The three build-aware landing fallback tests that lived here asserted the
+# retired contract: that a missing build diverted the landing to a
+# server-rendered /projects or first-project route. The landing no longer
+# inspects build availability, and test_jinja_retirement.py covers the
+# replacement for every entry point (root, authenticated root, successful
+# login, logout) plus the connected-project case.
 
 
 def test_login_redirects_to_react_when_built(tmp_path, monkeypatch):
@@ -355,42 +317,81 @@ def test_built_react_and_valid_cookie_lands_on_app(tmp_path, monkeypatch):
     assert 'id="root"' in landing.text
 
 
-def test_login_falls_back_to_jinja_when_build_missing(tmp_path, monkeypatch):
-    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    with _client(tmp_path) as client:
-        login = client.post(
-            "/login", data={"token": PORTAL_TOKEN}, follow_redirects=False
-        )
-
-    assert login.status_code == 303
-    assert login.headers["location"] == "/projects"
-
-
 def _build_missing_react_assets(tmp_path):
     empty_dir = tmp_path / "no_build"
     empty_dir.mkdir()
     return empty_dir
 
 
+def test_partial_build_is_never_promoted_on_any_canonical_route(tmp_path, monkeypatch):
+    """A build with a missing referenced asset is treated as no build at all.
+
+    This consolidates six per-route tests that each asserted their canonical URL
+    kept rendering Jinja under a partial build. The Jinja pages are retired, but
+    the property they were protecting is not: a half-built shell must never be
+    served, because it fails silently in the browser rather than loudly here.
+    """
+
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_partial_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+    database_path = tmp_path / "harness.db"
+    db.init_db(database_path)
+    session = db.create_session(
+        database_path,
+        task_description="DEMO partial build 2099",
+        model="demo-model-999",
+        session_key_hash="s" * 64,
+        guardrail_overrides={},
+    )
+
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "partial-repo")
+        routes = [
+            "/sessions",
+            f"/sessions/{session['id']}",
+            f"/projects/{project['id']}/task-history",
+            "/settings/budget",
+            "/settings/control-plane",
+            "/settings/workers",
+            "/setup",
+        ]
+        responses = {
+            route: client.get(route, headers=_portal_headers()) for route in routes
+        }
+
+    for route, response in responses.items():
+        assert response.status_code == 503, f"{route} promoted a partial build"
+        assert "not built" in response.text
+        assert 'id="root"' not in response.text
+
+
 @pytest.mark.parametrize(
-    "build_helper,auth_required,expected_landing,expect_react",
+    "build_helper,auth_required,expect_react",
     [
-        (_build_react_assets, False, "/dashboard", True),
-        (_build_partial_react_assets, False, "first_project", False),
-        (_build_missing_react_assets, False, "first_project", False),
-        (_build_react_assets, True, "/dashboard", True),
-        (_build_partial_react_assets, True, "first_project", False),
-        (_build_missing_react_assets, True, "first_project", False),
+        (_build_react_assets, False, True),
+        (_build_partial_react_assets, False, False),
+        (_build_missing_react_assets, False, False),
+        (_build_react_assets, True, True),
+        (_build_partial_react_assets, True, False),
+        (_build_missing_react_assets, True, False),
     ],
 )
 def test_canonical_routing_matrix(
     build_helper,
     auth_required,
-    expected_landing,
     expect_react,
     tmp_path,
     monkeypatch,
 ):
+    """Auth-required x build-state, across every entry point.
+
+    The landing is /dashboard in all six cells: it no longer inspects build
+    availability, because there is no server-rendered destination to divert to.
+    The build state decides only what /dashboard itself then returns — the shell
+    or the recovery response.
+    """
+
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     build_dir = build_helper(tmp_path)
     monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
@@ -398,15 +399,15 @@ def test_canonical_routing_matrix(
 
     client = _client(tmp_path, portal_auth_required=auth_required)
     with client:
-        project = _connect_project(database_path, tmp_path / "routing-repo")
+        # A connected project exists precisely to prove it no longer steers the
+        # landing the way the retired first-project fallback did.
+        _connect_project(database_path, tmp_path / "routing-repo")
         if auth_required:
             login = client.post(
                 "/login", data={"token": PORTAL_TOKEN}, follow_redirects=False
             )
             assert login.status_code == 303
-            assert login.headers["location"] == (
-                "/dashboard" if expect_react else f"/projects/{project['id']}"
-            )
+            assert login.headers["location"] == "/dashboard"
         else:
             login_form = client.get("/login", follow_redirects=False)
             login_submit = client.post(
@@ -415,20 +416,16 @@ def test_canonical_routing_matrix(
                 follow_redirects=False,
             )
             logout = client.post("/logout", follow_redirects=False)
-            landing = "/dashboard" if expect_react else f"/projects/{project['id']}"
-            assert login_form.headers["location"] == landing
-            assert login_submit.headers["location"] == landing
-            assert logout.headers["location"] == landing
+            assert login_form.headers["location"] == "/dashboard"
+            assert login_submit.headers["location"] == "/dashboard"
+            assert logout.headers["location"] == "/dashboard"
 
         root = client.get("/", follow_redirects=False)
         dashboard = client.get("/dashboard")
         projects = client.get("/projects")
 
-    expected_root = (
-        "/dashboard" if expect_react else f"/projects/{project['id']}"
-    )
     assert root.status_code in (302, 307)
-    assert root.headers["location"] == expected_root
+    assert root.headers["location"] == "/dashboard"
 
     if expect_react:
         assert dashboard.status_code == 200
@@ -436,28 +433,10 @@ def test_canonical_routing_matrix(
         assert projects.status_code == 200
         assert 'id="root"' in projects.text
     else:
-        assert dashboard.status_code == 200
-        assert 'id="root"' not in dashboard.text
-        assert "page-title" in dashboard.text
-        assert projects.status_code == 200
-        assert 'id="root"' not in projects.text
-        assert "page-title" in projects.text
-
-
-def test_fallback_landing_on_projects_renders_jinja(tmp_path, monkeypatch):
-    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    empty_dir = tmp_path / "no_build"
-    empty_dir.mkdir()
-    monkeypatch.setattr(react_shell, "react_build_dir", lambda: empty_dir)
-
-    with _client(tmp_path, portal_auth_required=False) as client:
-        root = client.get("/", follow_redirects=False)
-        landing = client.get(root.headers["location"])
-
-    assert root.headers["location"] == "/projects"
-    assert landing.status_code == 200
-    assert 'id="root"' not in landing.text
-    assert "page-title" in landing.text
+        assert dashboard.status_code == 503
+        assert "not built" in dashboard.text
+        assert projects.status_code == 503
+        assert "not built" in projects.text
 
 
 def test_board_redirect_unchanged(tmp_path, monkeypatch):
@@ -502,12 +481,10 @@ def test_canonical_project_workspace_and_board_routing(
         assert board.status_code == 200
         assert 'id="root"' in board.text
     else:
-        assert workspace.status_code == 200
-        assert 'id="root"' not in workspace.text
-        assert "page-title" in workspace.text
-        assert board.status_code == 200
-        assert 'id="root"' not in board.text
-        assert "page-title" in board.text
+        assert workspace.status_code == 503
+        assert "not built" in workspace.text
+        assert board.status_code == 503
+        assert "not built" in board.text
 
 
 def test_unknown_project_returns_404_at_canonical_routes_in_both_build_states(
@@ -529,9 +506,18 @@ def test_unknown_project_returns_404_at_canonical_routes_in_both_build_states(
     assert 'id="root"' not in board.text
 
 
-def test_archived_project_board_serves_react_or_redirects_by_build_state(
+def test_archived_project_board_serves_react_or_recovery_by_build_state(
     tmp_path, monkeypatch
 ):
+    """React owns the archived board; a missing build owns nothing.
+
+    This route used to redirect an archived board to the workspace carrying a
+    restore-first message, but only when the build was missing — the redirect sat
+    behind the index check, so a built shell never reached it. With the Jinja
+    workspace retired there is nowhere to carry that message to, and React
+    already identifies the archived state and routes to Restore itself.
+    """
+
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
 
@@ -551,13 +537,23 @@ def test_archived_project_board_serves_react_or_redirects_by_build_state(
 
     assert built.status_code == 200
     assert 'id="root"' in built.text
-    assert missing.status_code == 303
-    assert missing.headers["location"] == f"/projects/{project['id']}?error=Restore%20this%20archived%20project%20before%20opening%20its%20active%20board"
+    assert missing.status_code == 503
+    assert "not built" in missing.text
 
 
-def test_non_migrated_jinja_routes_remain_directly_reachable(tmp_path, monkeypatch):
+def test_every_canonical_route_serves_the_shell_when_built(tmp_path, monkeypatch):
+    """The full canonical route inventory, proven against a built shell.
+
+    This began as proof that non-migrated Jinja routes stayed reachable. There
+    are no non-migrated routes left, so the inventory now proves the opposite
+    and more useful thing: React serves every one of them. The missing-build
+    half of this matrix lives in test_jinja_retirement.py.
+    """
+
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
+    build_dir = _build_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
 
     with _client(tmp_path) as client:
         project = _connect_project(database_path, tmp_path / "jinja-fallback-repo")
@@ -601,6 +597,9 @@ def test_non_migrated_jinja_routes_remain_directly_reachable(tmp_path, monkeypat
     assert {path: response.status_code for path, response in responses.items()} == {
         path: 200 for path in paths
     }
+    # Every one is the shell, not a server-rendered page.
+    for path, response in responses.items():
+        assert 'id="root"' in response.text, f"{path} did not serve the React shell"
 
 
 def test_react_projects_endpoint_requires_auth(tmp_path, monkeypatch):
@@ -655,7 +654,6 @@ def test_react_projects_endpoint_includes_archived_and_local_runner_flag(tmp_pat
         archived = _connect_project(database_path, tmp_path / "archived-repo")
         db.archive_connected_project(database_path, archived["id"])
         response = client.get("/api/projects", headers=_portal_headers())
-        jinja = client.get("/projects", headers=_portal_headers())
 
     assert response.status_code == 200
     payload = response.json()
@@ -664,13 +662,12 @@ def test_react_projects_endpoint_includes_archived_and_local_runner_flag(tmp_pat
     assert len(payload["projects"]) == 1
     assert len(payload["archived_projects"]) == 1
     assert payload["projects"][0]["id"] == active["id"]
+    assert payload["projects"][0]["name"] == active["name"]
     assert payload["archived_projects"][0]["id"] == archived["id"]
+    assert payload["archived_projects"][0]["name"] == archived["name"]
     assert payload["archived_projects"][0]["archived_at"] is not None
     assert set(payload["archived_projects"][0]) == {"id", "name", "root_path", "archived_at", "capability"}
     assert set(payload["archived_projects"][0]["capability"]) == {"state", "label", "reasons"}
-    assert active["name"] in jinja.text
-    assert archived["name"] in jinja.text
-    assert "Local Runner disabled" in jinja.text
 
 
 def test_react_projects_endpoint_active_array_fields_unchanged(tmp_path, monkeypatch):
@@ -751,7 +748,7 @@ def test_react_dashboard_endpoint_requires_auth(tmp_path, monkeypatch):
     assert response.status_code == 401
 
 
-def test_react_dashboard_projection_is_safe_and_matches_jinja(tmp_path, monkeypatch):
+def test_react_dashboard_projection_is_safe_and_bounded(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
     with _client(tmp_path) as client:
@@ -814,10 +811,8 @@ def test_react_dashboard_projection_is_safe_and_matches_jinja(tmp_path, monkeypa
         )
 
         api = client.get("/api/dashboard", headers=_portal_headers())
-        jinja = client.get("/dashboard", headers=_portal_headers())
 
     assert api.status_code == 200
-    assert jinja.status_code == 200
     payload = api.json()
     assert set(payload) == {
         "next_actions",
@@ -882,13 +877,14 @@ def test_react_dashboard_projection_is_safe_and_matches_jinja(tmp_path, monkeypa
     assert "dashboard-secret-hash" not in serialized
     assert "do-not-return" not in serialized
     assert "root_path" not in serialized
-    for action in payload["next_actions"]:
-        assert action["label"] in jinja.text
-    assert payload["budget"]["since"] in jinja.text
-    assert "150" in jinja.text
-    assert session["id"] in jinja.text
-    assert "react-dashboard-open" in jinja.text
-    assert "react-dashboard-resolved" not in jinja.text
+    # These previously round-tripped through the Jinja dashboard, which acted as
+    # the oracle for "both surfaces read one calculation". That page is retired,
+    # so the same claims are asserted against the projection directly.
+    recent_alarm_ids = [alarm["id"] for alarm in payload["alarms"]["recent"]]
+    assert "react-dashboard-open" in recent_alarm_ids
+    assert "react-dashboard-resolved" not in recent_alarm_ids
+    assert payload["next_actions"]
+    assert payload["budget"]["since"]
 
 
 def test_react_dashboard_previews_are_newest_first_bounded_and_unresolved(tmp_path, monkeypatch):
@@ -1784,22 +1780,9 @@ def test_react_json_missing_project_is_404(tmp_path, monkeypatch):
     assert response.status_code == 404
 
 
-def test_jinja_project_pages_remain_available(tmp_path, monkeypatch):
-    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    database_path = tmp_path / "harness.db"
-    with _client(tmp_path) as client:
-        project = _connect_project(database_path, tmp_path / "repo")
-        workspace = client.get(
-            f"/projects/{project['id']}", headers=_portal_headers()
-        )
-        board = client.get(
-            f"/projects/{project['id']}/board", headers=_portal_headers()
-        )
-
-    # Non-migrated Jinja surfaces still render server-side without a React build.
-    assert workspace.status_code == 200
-    assert "<html" in workspace.text.lower()
-    assert board.status_code == 200
+# test_jinja_project_pages_remain_available asserted that the workspace and
+# board rendered server-side without a React build. Both are React-owned now;
+# test_canonical_project_workspace_and_board_routing covers both build states.
 
 
 def test_portal_nav_requires_auth(tmp_path, monkeypatch):
@@ -1948,27 +1931,6 @@ def test_canonical_sessions_routes_use_complete_build_and_validate_report(tmp_pa
     assert unknown_alias.status_code == 404
 
 
-@pytest.mark.parametrize("partial", [True, False])
-def test_canonical_sessions_routes_keep_jinja_fallback(tmp_path, monkeypatch, partial):
-    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    build_dir = _build_partial_react_assets(tmp_path) if partial else tmp_path / "absent"
-    build_dir.mkdir(exist_ok=True)
-    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
-    db.init_db(tmp_path / "harness.db")
-    session = db.create_session(
-        tmp_path / "harness.db",
-        task_description="DEMO Jinja fallback 2099",
-        model="demo-model-999",
-        session_key_hash="s" * 64,
-        guardrail_overrides={},
-    )
-    with _client(tmp_path) as client:
-        sessions = client.get("/sessions", headers=_portal_headers())
-        report = client.get(f"/sessions/{session['id']}", headers=_portal_headers())
-    assert "All sessions" in sessions.text
-    assert "Session report" in report.text
-
-
 def test_react_task_history_endpoint_requires_auth(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     with _client(tmp_path) as client:
@@ -2056,20 +2018,6 @@ def test_canonical_task_history_route_serves_react_when_built(tmp_path, monkeypa
     assert '<div id="root"></div>' in response.text
 
 
-def test_canonical_task_history_route_keeps_jinja_fallback(tmp_path, monkeypatch):
-    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    build_dir = _build_partial_react_assets(tmp_path)
-    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
-    database_path = tmp_path / "harness.db"
-    with _client(tmp_path) as client:
-        project = _connect_project(database_path, tmp_path / "repo")
-        response = client.get(
-            f"/projects/{project['id']}/task-history", headers=_portal_headers()
-        )
-    assert response.status_code == 200
-    assert "Task history" in response.text
-
-
 def test_unarchive_task_content_negotiation(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
@@ -2105,7 +2053,6 @@ def test_unarchive_task_content_negotiation(tmp_path, monkeypatch):
 def test_task_history_view_source_contract():
     """Frontend source/contract: no stale field names, all evidence fields rendered."""
     source = Path("frontend/src/views/TaskHistory.jsx").read_text(encoding="utf-8")
-    jinja_template = Path("src/foreman_ai_hq/templates/task_history.html").read_text(encoding="utf-8")
     for field in (
         "task.description",
         "task.id",
@@ -2127,7 +2074,6 @@ def test_task_history_view_source_contract():
     assert "aria-live" in source
     assert "aria-pressed" in source
     assert "colSpan" in source
-    assert "filter=" in jinja_template
 
 
 def test_react_budget_settings_requires_auth(tmp_path, monkeypatch):
@@ -2297,16 +2243,6 @@ def test_canonical_settings_budget_route_serves_react_when_built(tmp_path, monke
         response = client.get("/settings/budget", headers=_portal_headers())
     assert response.status_code == 200
     assert 'id="root"' in response.text
-
-
-def test_canonical_settings_budget_route_keeps_jinja_fallback(tmp_path, monkeypatch):
-    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    build_dir = _build_partial_react_assets(tmp_path)
-    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
-    with _client(tmp_path) as client:
-        response = client.get("/settings/budget", headers=_portal_headers())
-    assert response.status_code == 200
-    assert "Token budget" in response.text
 
 
 def test_react_budget_settings_source_contract():
@@ -2763,35 +2699,24 @@ def test_canonical_settings_control_plane_route_serves_react_when_built(
     assert 'id="root"' in response.text
 
 
-def test_canonical_settings_control_plane_route_keeps_jinja_fallback(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    build_dir = _build_partial_react_assets(tmp_path)
-    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
-    with _client(tmp_path) as client:
-        response = client.get("/settings/control-plane", headers=_portal_headers())
-    assert response.status_code == 200
-    assert "Control plane model" in response.text
-
-
 def test_react_control_plane_curated_list_single_source(tmp_path, monkeypatch):
+    """The curated list has one authoritative source.
+
+    This used to compare the JSON read against the Jinja page's rendered
+    dropdown. That page is retired, so the assertion moves onto the source of
+    truth itself: the handoff must project CURATED_CONTROL_PLANE_MODELS exactly,
+    with no independent copy.
+    """
+
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    empty_dir = tmp_path / "no_build"
-    empty_dir.mkdir()
-    monkeypatch.setattr(react_shell, "react_build_dir", lambda: empty_dir)
     with _client(tmp_path) as client:
         json_response = client.get("/api/settings/control-plane", headers=_portal_headers())
-        html_response = client.get("/settings/control-plane", headers=_portal_headers())
     assert json_response.status_code == 200
     payload = json_response.json()
     assert payload["curated_models"] == [
         {"provider": provider, "model": model, "label": label}
         for provider, model, label in portal.CURATED_CONTROL_PLANE_MODELS
     ]
-    for _provider, model, label in portal.CURATED_CONTROL_PLANE_MODELS:
-        assert model in html_response.text
-        assert label in html_response.text
 
 
 def test_react_control_plane_settings_source_contract():
@@ -3161,18 +3086,6 @@ def test_canonical_settings_workers_route_serves_react_when_built(
     assert 'id="root"' in response.text
 
 
-def test_canonical_settings_workers_route_keeps_jinja_fallback(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    build_dir = _build_partial_react_assets(tmp_path)
-    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
-    with _client(tmp_path) as client:
-        response = client.get("/settings/workers", headers=_portal_headers())
-    assert response.status_code == 200
-    assert "Worker adapters" in response.text
-
-
 def test_react_worker_settings_source_contract():
     """Frontend WorkerSettings view matches the backend contract and route wiring."""
     app_source = Path("frontend/src/App.jsx").read_text(encoding="utf-8")
@@ -3400,7 +3313,7 @@ def test_react_project_settings_connect_restore_proof_json_shapes_unchanged(tmp_
         assert "capability" in proof_payload
 
 
-def test_react_project_settings_build_aware_react_vs_jinja(tmp_path, monkeypatch):
+def test_react_project_settings_is_build_aware(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     build_dir = _build_react_assets(tmp_path)
     monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
@@ -3410,13 +3323,12 @@ def test_react_project_settings_build_aware_react_vs_jinja(tmp_path, monkeypatch
     partial_dir = _build_partial_react_assets(tmp_path)
     monkeypatch.setattr(react_shell, "react_build_dir", lambda: partial_dir)
     with _client(tmp_path) as client:
-        jinja = client.get("/settings/project", headers=_portal_headers())
+        partial = client.get("/settings/project", headers=_portal_headers())
 
     assert react.status_code == 200
     assert 'id="root"' in react.text
-    assert jinja.status_code == 200
-    assert 'id="root"' not in jinja.text
-    assert "Local Runner" in jinja.text
+    assert partial.status_code == 503
+    assert 'id="root"' not in partial.text
 
 
 def test_react_project_settings_source_contract():
@@ -3585,27 +3497,16 @@ def test_canonical_setup_route_serves_react_when_built(tmp_path, monkeypatch):
     assert 'id="root"' in response.text
 
 
-def test_canonical_setup_route_keeps_jinja_fallback(tmp_path, monkeypatch):
-    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    partial_dir = _build_partial_react_assets(tmp_path)
-    monkeypatch.setattr(react_shell, "react_build_dir", lambda: partial_dir)
-    with _client(tmp_path) as client:
-        response = client.get("/setup", headers=_portal_headers())
-    assert response.status_code == 200
-    assert 'id="root"' not in response.text
-    assert "First-run setup" in response.text
+def test_setup_normalizes_tracking_through_the_view_model(tmp_path, monkeypatch):
+    """Tracking is read from the view model, never from raw verification evidence.
 
-
-def test_setup_jinja_fallback_normalizes_tracking_through_the_view_model(tmp_path, monkeypatch):
-    """Both renderers read tracking from the view model, so the fallback stays an oracle.
-
-    The view model normalizes the mode; reading raw verification evidence would
-    render an unrecognized value straight into the page.
+    Two renderers used to read this and the Jinja one was the oracle. Only the
+    handoff is left, which makes the normalization more load-bearing, not less:
+    an unrecognized stored mode must surface as `unverified` rather than being
+    passed through to the operator.
     """
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
-    partial_dir = _build_partial_react_assets(tmp_path)
-    monkeypatch.setattr(react_shell, "react_build_dir", lambda: partial_dir)
     with _client(tmp_path) as client:
         adapter = db.get_worker_adapter(database_path, "opencode")
         db.update_worker_adapter(
@@ -3621,14 +3522,11 @@ def test_setup_jinja_fallback_normalizes_tracking_through_the_view_model(tmp_pat
             verified=True,
             evidence={"tracking_mode": "not_a_real_mode"},
         )
-        fallback = client.get("/setup", headers=_portal_headers())
         api = client.get("/api/setup?adapter_id=opencode", headers=_portal_headers())
-    assert fallback.status_code == 200
-    adapter_panel = fallback.text.split("Active Worker adapter")[-1]
-    assert "unverified" in adapter_panel
-    assert "not_a_real_mode" not in adapter_panel
-    # React reads the same normalized source.
+
+    assert api.status_code == 200
     assert api.json()["active_adapter"]["tracking_mode"] == "unverified"
+    assert "not_a_real_mode" not in api.text
 
 
 def test_react_setup_source_contract():
