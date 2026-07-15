@@ -54,7 +54,7 @@ from foreman_ai_hq.operator_config import (
     write_control_plane_secret,
 )
 from foreman_ai_hq.project_context import task_project_id
-from foreman_ai_hq.routes.react_shell import react_shell_available, _budget_json
+from foreman_ai_hq.routes.react_shell import react_shell_available, _budget_json, _react_index
 from foreman_ai_hq.settings import Settings
 from foreman_ai_hq.task_launch import DEFAULT_PROXY_URL, TaskLaunchBlocked, launch_task, refresh_task_from_session
 from foreman_ai_hq.routes.tasks import _ensure_review_task, _run_agent_review, _wants_react_json
@@ -480,8 +480,13 @@ def project_workspace(project_id: str, request: Request):
     )
 
 
-@router.get("/setup", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
-def setup_overview(request: Request):
+def _setup_overview_state(request: Request) -> dict[str, Any]:
+    """Readiness steps and next action for the Setup Overview surface.
+
+    Both the Jinja page and the React JSON handoff render this one computation,
+    so the fallback stays a parity oracle instead of a second implementation.
+    """
+
     database_path = request.app.state.settings.database_path
     config = request.app.state.guardrails
     settings = request.app.state.settings
@@ -499,6 +504,12 @@ def setup_overview(request: Request):
         control_status = db.get_execution_backend_status(database_path, "control_plane_model")
     except KeyError:
         control_status = None
+
+    # Carry the operator's adapter context onward so Worker settings opens the adapter shown here.
+    worker_href = "/settings/workers"
+    if active_adapter:
+        worker_href = f"/settings/workers?adapter_id={active_adapter['id']}"
+
     steps = [
         {
             "name": "Control plane model",
@@ -515,7 +526,7 @@ def setup_overview(request: Request):
         {
             "name": "Worker adapter",
             "state": "ready" if active_adapter and active_adapter.get("launchable") else "needs setup",
-            "href": "/settings/workers",
+            "href": worker_href,
             "detail": active_adapter["name"] if active_adapter else "No adapter selected",
         },
         {
@@ -535,6 +546,29 @@ def setup_overview(request: Request):
     ]
     ready_to_launch = all(step["state"] == "ready" for step in steps)
     next_step = _next_setup_step(steps, launch_ready_project if ready_to_launch else None)
+
+    return {
+        "steps": steps,
+        "ready_to_launch": ready_to_launch,
+        "next_step": next_step,
+        "active_adapter": active_adapter,
+        "budget_settings": budget_settings,
+    }
+
+
+@router.get("/setup", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
+def setup_overview(request: Request):
+    index = _react_index()
+    if index is not None:
+        return FileResponse(index)
+
+    state = _setup_overview_state(request)
+    steps = state["steps"]
+    ready_to_launch = state["ready_to_launch"]
+    next_step = state["next_step"]
+    active_adapter = state["active_adapter"]
+    budget_settings = state["budget_settings"]
+
     return templates.TemplateResponse(
         request,
         "setup.html",

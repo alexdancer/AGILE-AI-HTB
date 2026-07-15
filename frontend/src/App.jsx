@@ -14,6 +14,7 @@ import BudgetSettings from "./views/BudgetSettings.jsx";
 import ControlPlaneSettings from "./views/ControlPlaneSettings.jsx";
 import ProjectSettings from "./views/ProjectSettings.jsx";
 import WorkerSettings from "./views/WorkerSettings.jsx";
+import Setup from "./views/Setup.jsx";
 import { NavigationGuardContext } from "./nav.jsx";
 
 // The shell is served under /app. Client routes mirror the Jinja URLs so the
@@ -24,6 +25,7 @@ import { NavigationGuardContext } from "./nav.jsx";
 export function parseRoute(pathname) {
   const normalized = pathname.replace(/\/$/, "");
   if (normalized === "/app") return { view: "dashboard" };
+  if (normalized === "/setup") return { view: "setup" };
   if (normalized === "/alarms") return { view: "alarms" };
   if (normalized === "/sessions") return { view: "sessions" };
   if (normalized === "/settings/budget") return { view: "budgetSettings" };
@@ -100,6 +102,8 @@ export default function App() {
     content = <Board projectId={route.projectId} />;
   } else if (route.view === "dashboard") {
     content = <Dashboard />;
+  } else if (route.view === "setup") {
+    content = <Setup />;
   } else if (route.view === "alarms") {
     content = <Alarms />;
   } else if (route.view === "sessions") {

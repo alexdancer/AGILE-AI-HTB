@@ -3,8 +3,13 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { getJSON, postJSON } from "../api.js";
 import { useResource } from "../useResource.js";
 
+function initialAdapterId() {
+  const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+  return params.get("adapter_id") || null;
+}
+
 export default function WorkerSettings() {
-  const [selectedAdapterId, setSelectedAdapterId] = useState(null);
+  const [selectedAdapterId, setSelectedAdapterId] = useState(initialAdapterId);
   const [refreshKey, setRefreshKey] = useState(0);
   const { data, error, loading } = useResource("/api/settings/workers" + (selectedAdapterId ? `?adapter_id=${encodeURIComponent(selectedAdapterId)}` : ""), refreshKey);
   const refresh = useCallback(() => { setRefreshKey((k) => k + 1); }, []);

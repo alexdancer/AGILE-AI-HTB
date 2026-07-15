@@ -1550,7 +1550,6 @@ def test_react_shell_non_migrated_links_are_anchors():
     """Non-migrated Jinja routes render as full-page <a href>, not AppLink."""
     shell_source = Path("frontend/src/components/Shell.jsx").read_text(encoding="utf-8")
     for jinja_href in (
-        "/setup",
         "/settings/control-plane",
         "/settings/budget",
         "/settings/project",
@@ -3136,4 +3135,201 @@ def test_react_project_settings_source_contract():
         assert field in source, f"{field} missing from ProjectSettings.jsx"
     assert "aria-live" in source
     assert "htmlFor" in source
+    assert 'Accept: "application/json"' in api_source
+
+
+def test_react_setup_requires_auth(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.get("/api/setup")
+    assert response.status_code == 401
+
+
+def test_react_setup_json_uses_exact_contract_and_null_defaults(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        response = client.get("/api/setup", headers=_portal_headers())
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {"steps", "ready_to_launch", "next_step", "active_adapter"}
+    assert set(payload["next_step"]) == {"label", "href", "detail"}
+    assert len(payload["steps"]) == 4
+    for step in payload["steps"]:
+        assert set(step) == {"name", "state", "href", "detail"}
+    assert isinstance(payload["ready_to_launch"], bool)
+    assert payload["ready_to_launch"] is False
+    assert payload["active_adapter"] is not None
+    assert set(payload["active_adapter"]) == {
+        "name",
+        "verification_status",
+        "launchable",
+        "tracking_mode",
+    }
+    assert "verification_evidence" not in payload["active_adapter"]
+    assert payload["active_adapter"]["launchable"] is False
+
+
+def test_react_setup_active_adapter_tracking_mode_from_view_model(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        adapter = db.get_worker_adapter(database_path, "opencode")
+        db.update_worker_adapter(
+            database_path,
+            "opencode",
+            config={**(adapter.get("config") or {}), "allowed_models_configured": True},
+            supported_models=["opencode/gpt-5.1"],
+            is_default=True,
+        )
+        db.mark_worker_adapter_verification(
+            database_path,
+            "opencode",
+            verified=True,
+            evidence={"tracking_mode": "native_usage"},
+        )
+        response = client.get("/api/setup", headers=_portal_headers())
+    assert response.status_code == 200
+    payload = response.json()
+    active = payload["active_adapter"]
+    assert active["name"] == "OpenCode"
+    assert active["verification_status"] == "verified"
+    assert active["launchable"] is True
+    assert active["tracking_mode"] == "native_usage"
+    assert "verification_evidence" not in active
+
+
+def test_react_setup_adapter_id_passthrough(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.get(
+            "/api/setup?adapter_id=opencode", headers=_portal_headers()
+        )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["active_adapter"]["name"] == "OpenCode"
+    worker_step = next(step for step in payload["steps"] if step["name"] == "Worker adapter")
+    assert worker_step["href"] == "/settings/workers?adapter_id=opencode"
+
+    with _client(tmp_path) as client:
+        response = client.get(
+            "/api/setup?adapter_id=unknown-adapter", headers=_portal_headers()
+        )
+    assert response.status_code == 200
+    payload = response.json()
+    # Unknown id falls back to the default active adapter selection.
+    assert payload["active_adapter"]["name"] in {"Claude Code", "Codex", "OpenCode"}
+
+
+def test_react_setup_readiness_regression_no_launch_ready_project(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    monkeypatch.setenv("FOREMAN_AI_HQ_CONTROL_API_KEY", "sk_test_control_key")
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        db.set_token_budget_settings(
+            database_path, daily_cap_tokens=1000, session_cap_tokens=500
+        )
+        adapter = db.get_worker_adapter(database_path, "opencode")
+        db.update_worker_adapter(
+            database_path,
+            "opencode",
+            config={**(adapter.get("config") or {}), "allowed_models_configured": True},
+            supported_models=["opencode/gpt-5.1"],
+            is_default=True,
+        )
+        db.mark_worker_adapter_verification(
+            database_path,
+            "opencode",
+            verified=True,
+            evidence={"tracking_mode": "native_usage"},
+        )
+        response = client.get("/api/setup", headers=_portal_headers())
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ready_to_launch"] is False
+    project_step = next(step for step in payload["steps"] if step["name"] == "Projects")
+    assert project_step["state"] != "ready"
+    assert project_step["detail"] == "Connect a project for local Worker runs"
+
+
+def test_canonical_setup_route_serves_react_when_built(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+    with _client(tmp_path) as client:
+        response = client.get("/setup", headers=_portal_headers())
+    assert response.status_code == 200
+    assert 'id="root"' in response.text
+
+
+def test_canonical_setup_route_keeps_jinja_fallback(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    partial_dir = _build_partial_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: partial_dir)
+    with _client(tmp_path) as client:
+        response = client.get("/setup", headers=_portal_headers())
+    assert response.status_code == 200
+    assert 'id="root"' not in response.text
+    assert "First-run setup" in response.text
+
+
+def test_setup_jinja_fallback_normalizes_tracking_through_the_view_model(tmp_path, monkeypatch):
+    """Both renderers read tracking from the view model, so the fallback stays an oracle.
+
+    The view model normalizes the mode; reading raw verification evidence would
+    render an unrecognized value straight into the page.
+    """
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    partial_dir = _build_partial_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: partial_dir)
+    with _client(tmp_path) as client:
+        adapter = db.get_worker_adapter(database_path, "opencode")
+        db.update_worker_adapter(
+            database_path,
+            "opencode",
+            config={**(adapter.get("config") or {}), "allowed_models_configured": True},
+            supported_models=["opencode/gpt-5.1"],
+            is_default=True,
+        )
+        db.mark_worker_adapter_verification(
+            database_path,
+            "opencode",
+            verified=True,
+            evidence={"tracking_mode": "not_a_real_mode"},
+        )
+        fallback = client.get("/setup", headers=_portal_headers())
+        api = client.get("/api/setup?adapter_id=opencode", headers=_portal_headers())
+    assert fallback.status_code == 200
+    adapter_panel = fallback.text.split("Active Worker adapter")[-1]
+    assert "unverified" in adapter_panel
+    assert "not_a_real_mode" not in adapter_panel
+    # React reads the same normalized source.
+    assert api.json()["active_adapter"]["tracking_mode"] == "unverified"
+
+
+def test_react_setup_source_contract():
+    """Frontend Setup view matches the backend contract and route wiring."""
+    app_source = Path("frontend/src/App.jsx").read_text(encoding="utf-8")
+    shell_source = Path("frontend/src/components/Shell.jsx").read_text(encoding="utf-8")
+    source = Path("frontend/src/views/Setup.jsx").read_text(encoding="utf-8")
+    api_source = Path("frontend/src/api.js").read_text(encoding="utf-8")
+
+    assert 'view: "setup"' in app_source
+    assert "<Setup />" in app_source
+    assert 'activeView === "setup"' in shell_source
+    assert 'to="/setup"' in shell_source
+    assert "useResource(" in source
+    assert '"/api/setup"' in source
+    assert "adapter_id" in source
+    assert "active_adapter" in source
+    assert "tracking_mode" in source
+    assert "ready_to_launch" in source
+    assert "next_step" in source
+    assert "steps" in source
+    assert "aria-live" in source
+    assert "aria-label" in source
+    assert 'href={step.href}' in source
+    assert "active_adapter" in source
+    assert "setup" in app_source
     assert 'Accept: "application/json"' in api_source

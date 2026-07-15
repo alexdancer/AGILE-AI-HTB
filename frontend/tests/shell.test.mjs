@@ -22,6 +22,7 @@ let submitProjectRestore;
 let SessionsState;
 let AlarmsState;
 let SessionReportState;
+let SetupState;
 let TaskBreakdownReviewState;
 let TaskBreakdownReview;
 let submitBreakdownAction;
@@ -45,6 +46,7 @@ before(async () => {
   ({ SessionsState } = await server.ssrLoadModule("/src/views/Sessions.jsx"));
   ({ AlarmsState } = await server.ssrLoadModule("/src/views/Alarms.jsx"));
   ({ SessionReportState } = await server.ssrLoadModule("/src/views/SessionReport.jsx"));
+  ({ SetupState } = await server.ssrLoadModule("/src/views/Setup.jsx"));
   ({
     default: TaskBreakdownReview,
     TaskBreakdownReviewState,
@@ -404,6 +406,45 @@ test("Sessions sidebar and list preserve compact scan, states, and pagination", 
   const populated = renderToStaticMarkup(React.createElement(SessionsState, { data, error: null, loading: false }));
   for (const text of ["Agent Review", "DEMO review task", "claude-demo-999", "10 prompt", "5 completion", "15 total", "1 runs", "2 events", "1 failed checks", "yellow zone", "1 alarms", "Active sessions refresh every 5 seconds", "Next sessions"]) assert.match(populated, new RegExp(text));
   assert.match(populated, /href="\/sessions\/sess-demo-999"/);
+});
+
+test("Setup sidebar highlighting is exclusive and cards render backend readiness", () => {
+  const sidebar = renderSidebar({ activeView: "setup" });
+  assert.match(sidebar, /class="active" href="\/setup">First-run setup/);
+  assert.doesNotMatch(sidebar, /class="active" href="\/app">Dashboard/);
+  assert.doesNotMatch(sidebar, /class="active" href="\/sessions">Sessions/);
+  assert.doesNotMatch(sidebar, /class="active" href="\/settings\//);
+
+  const data = {
+    steps: [
+      { name: "Control plane model", state: "ready", href: "/settings/control-plane", detail: "claude-demo-999" },
+      { name: "Token budget", state: "ready", href: "/settings/budget", detail: "Daily 1,000 · Session 500" },
+      { name: "Worker adapter", state: "needs setup", href: "/settings/workers?adapter_id=opencode", detail: "OpenCode" },
+      { name: "Projects", state: "needs setup", href: "/settings/project", detail: "No launch-ready project" },
+    ],
+    ready_to_launch: false,
+    next_step: { label: "Open Worker adapter", href: "/settings/workers?adapter_id=opencode", detail: "OpenCode" },
+    active_adapter: { name: "OpenCode", verification_status: "verified", launchable: false, tracking_mode: "unverified" },
+  };
+  const populated = renderToStaticMarkup(React.createElement(SetupState, { data, error: null, loading: false }));
+  for (const text of ["First-run setup", "Control plane model", "Token budget", "Worker adapter", "Projects", "No launch-ready project", "setup needed", "OpenCode", "unverified"]) {
+    assert.match(populated, new RegExp(text));
+  }
+  // The forwarded adapter context reaches the destination link.
+  assert.match(populated, /href="\/settings\/workers\?adapter_id=opencode"/);
+  assert.doesNotMatch(populated, /Open task board/);
+
+  const ready = renderToStaticMarkup(React.createElement(SetupState, {
+    data: { ...data, ready_to_launch: true, steps: data.steps.map((step) => ({ ...step, state: "ready" })), next_step: { label: "Open task board", href: "/projects/proj-demo-999/board", detail: "Governed Worker launch is ready." } },
+    error: null,
+    loading: false,
+  }));
+  assert.match(ready, /Open task board/);
+  assert.match(ready, /href="\/projects\/proj-demo-999\/board"/);
+
+  const failed = renderToStaticMarkup(React.createElement(SetupState, { data: null, error: new Error("secret"), loading: false }));
+  assert.match(failed, /Could not load setup state/);
+  assert.doesNotMatch(failed, /secret/);
 });
 
 test("Alarms sidebar and list render from available_actions and bookmarkable filters", () => {

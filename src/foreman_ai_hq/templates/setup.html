@@ -49,7 +49,7 @@
     <div class="k">adapter</div><div class="v">{{ active_adapter.name }}</div>
     <div class="k">status</div><div class="v">{{ active_adapter.verification_status }}</div>
     <div class="k">launchable</div><div class="v">{{ active_adapter.launchable }}</div>
-    <div class="k">tracking</div><div class="v">{{ active_adapter.verification_evidence.get('tracking_mode', 'unverified') }}</div>
+    <div class="k">tracking</div><div class="v">{{ active_adapter.tracking.mode }}</div>
   </div>
 </section>
 {% endif %}

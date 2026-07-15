@@ -94,7 +94,12 @@ export function Sidebar({ activeView, activeProjectId, data, error, loading }) {
 
         <div className="group">Setup</div>
         <nav>
-          <a href="/setup">First-run setup</a>
+          <AppLink
+            to="/setup"
+            className={activeView === "setup" ? "active" : ""}
+          >
+            First-run setup
+          </AppLink>
         </nav>
 
         <div className="group">Governance</div>

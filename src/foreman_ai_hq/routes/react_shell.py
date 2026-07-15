@@ -333,6 +333,46 @@ def react_worker_settings(request: Request):
     }
 
 
+@router.get("/api/setup", dependencies=[Depends(require_portal_auth)])
+def react_setup_state(request: Request):
+    """Bounded, authenticated Setup Overview handoff for the React shell.
+
+    Reuses the same readiness builders and next-step derivation that power the
+    Jinja ``setup.html`` page. The projection is allow-listed and the full
+    Worker verification evidence is not serialized.
+    """
+
+    from foreman_ai_hq.routes.portal import _setup_overview_state
+
+    state = _setup_overview_state(request)
+    next_step = state["next_step"]
+    active_adapter = state["active_adapter"]
+
+    return {
+        "steps": [
+            {
+                "name": step["name"],
+                "state": step["state"],
+                "href": step["href"],
+                "detail": step["detail"],
+            }
+            for step in state["steps"]
+        ],
+        "ready_to_launch": state["ready_to_launch"],
+        "next_step": {
+            "label": next_step["label"],
+            "href": next_step["href"],
+            "detail": next_step["detail"],
+        },
+        "active_adapter": {
+            "name": active_adapter["name"],
+            "verification_status": active_adapter.get("verification_status"),
+            "launchable": bool(active_adapter.get("launchable")),
+            "tracking_mode": (active_adapter.get("tracking") or {}).get("mode"),
+        } if active_adapter else None,
+    }
+
+
 @router.get("/api/settings/control-plane", dependencies=[Depends(require_portal_auth)])
 def react_control_plane_settings(request: Request):
     """Bounded, authenticated control-plane setup state for the React shell.
