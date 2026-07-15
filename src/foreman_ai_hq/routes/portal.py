@@ -153,7 +153,7 @@ def _react_restore_outcome(
         content={
             "ok": ok,
             "error": str(_safe_worker_evidence(error))[:1000] if error else None,
-            "next_href": f"/app/projects/{project_id}" if project else None,
+            "next_href": f"/projects/{project_id}" if project else None,
             "retry_href": None if project else "/projects",
             "project": {"id": project_id, "archived": False} if project else None,
         },
@@ -471,6 +471,9 @@ def project_workspace(project_id: str, request: Request):
         project = db.get_connected_project(database_path, project_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="connected project not found") from exc
+    index = _react_index()
+    if index is not None:
+        return FileResponse(index)
     project = _project_view_model(request, project)
     summary = _project_workspace_summary(database_path, project)
     return templates.TemplateResponse(
@@ -663,6 +666,9 @@ def project_board(project_id: str, request: Request):
         project = db.get_connected_project(database_path, project_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="connected project not found") from exc
+    index = _react_index()
+    if index is not None:
+        return FileResponse(index)
     if db.project_is_archived(project):
         return RedirectResponse(
             f"/projects/{project_id}?error={quote('Restore this archived project before opening its active board')}",

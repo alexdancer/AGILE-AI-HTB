@@ -239,10 +239,10 @@ export function DashboardContent({ data }) {
                 {formatTokens(project.task_count)} tasks · {(project.capability || {}).state || "unknown"}
               </p>
               <div className="toolbar">
-                <AppLink className="btn" to={`/app/projects/${project.id}`}>
+                <AppLink className="btn" to={`/projects/${project.id}`}>
                   Open workspace
                 </AppLink>
-                <AppLink className="btn secondary" to={`/app/projects/${project.id}/board`}>
+                <AppLink className="btn secondary" to={`/projects/${project.id}/board`}>
                   Open board
                 </AppLink>
               </div>

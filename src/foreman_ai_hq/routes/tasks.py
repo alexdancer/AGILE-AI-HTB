@@ -1810,9 +1810,7 @@ def _breakdown_board_path(breakdown: dict[str, Any]) -> str:
 
 
 def _breakdown_react_board_path(breakdown: dict[str, Any]) -> str:
-    board_path = _breakdown_board_path(breakdown)
-    match = re.fullmatch(r"/projects/([^/]+)/board", board_path)
-    return f"/app/projects/{match.group(1)}/board" if match else board_path
+    return _breakdown_board_path(breakdown)
 
 
 async def _launch_payload_from_request(request: Request) -> tuple[TaskLaunchRequest, bool]:

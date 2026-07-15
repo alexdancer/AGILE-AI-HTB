@@ -68,7 +68,7 @@ export function Sidebar({ activeView, activeProjectId, data, error, loading }) {
             return (
               <React.Fragment key={project.id}>
                 <AppLink
-                  to={`/app/projects/${project.id}`}
+                  to={`/projects/${project.id}`}
                   className={`project-item${isActive ? " active" : ""}`}
                 >
                   <span className="project-name">{project.name}</span>
@@ -78,7 +78,7 @@ export function Sidebar({ activeView, activeProjectId, data, error, loading }) {
                 </AppLink>
                 {hasTasks && (
                   <AppLink
-                    to={`/app/projects/${project.id}/board`}
+                    to={`/projects/${project.id}/board`}
                     className={`project-board${isActive && activeView === "board" ? " active" : ""}`}
                   >
                     └ Task board

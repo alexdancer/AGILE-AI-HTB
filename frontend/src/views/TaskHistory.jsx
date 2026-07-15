@@ -3,6 +3,11 @@ import React, { useState } from "react";
 import { AppLink } from "../nav.jsx";
 import { useResource } from "../useResource.js";
 
+const safeError = (error) =>
+  error?.status === 401
+    ? "Task history requires sign-in."
+    : "Could not load task history. Retry.";
+
 function initialFilter() {
   return new URLSearchParams(window.location.search).get("filter") || "all";
 }
@@ -77,10 +82,7 @@ export function TaskHistoryState({
   if (loading && !data) return <p className="spinner">Loading task history…</p>;
   if (error) return (
     <>
-      <div className="notice danger">
-        Could not load task history: {boundedError(error.message, "History unavailable.")}
-      </div>
-      <p><a href={`/projects/${projectId}/task-history`}>Open server-rendered history</a></p>
+      <div className="notice danger">{safeError(error)}</div>
     </>
   );
   if (!data) return <div className="empty-state">No task history state available.</div>;
@@ -112,7 +114,7 @@ export function TaskHistoryState({
           ))}
         </div>
         <div className="status-group">
-          <AppLink className="btn ghost" to={`/app/projects/${projectId}/board`}>
+          <AppLink className="btn ghost" to={`/projects/${projectId}/board`}>
             Back to board
           </AppLink>
         </div>

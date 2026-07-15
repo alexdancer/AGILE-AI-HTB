@@ -47,7 +47,8 @@ The React Portal shell SHALL render its dashboard home at the canonical `/dashbo
 
 #### Scenario: Project entry cards stay in-shell
 - **WHEN** an operator follows a workspace or board entry from a React dashboard project card
-- **THEN** the shell SHALL use existing React in-shell navigation to `/app/projects/{id}` or `/app/projects/{id}/board`
+- **THEN** the shell SHALL use existing React in-shell navigation to the canonical `/projects/{id}` or `/projects/{id}/board`
+- **AND** it SHALL NOT target the `/app` aliases, which exist only for deep links until the Jinja retirement change
 
 #### Scenario: Dashboard routes actions to authoritative workflows
 - **WHEN** an operator follows a dashboard next action, session, alarm, or full-board link
@@ -98,7 +99,7 @@ The system SHALL expose an authenticated read-only dashboard JSON handoff for th
 - **AND** tests SHALL assert the nested response-key allowlists
 
 ### Requirement: React owns only the migrated project surfaces
-The React Portal shell SHALL own its dashboard home, the Projects list, selected project workspace, project board workflow, Sessions list, Session Report, Task Breakdown Review, Project Task History, and the Alarms inbox while existing Jinja pages remain available for non-migrated workflows and as build-aware fallback for migrated surfaces. The selected React project workspace SHALL preserve the existing project overview's identity, profile, readiness, actionable summary, archive safety, and workflow navigation. The canonical `/dashboard`, `/projects`, `/sessions`, `/sessions/{session_id}`, `/task-breakdowns/{breakdown_id}/review`, `/projects/{project_id}/task-history`, and `/alarms` routes SHALL select React only when the complete frontend build is available. The canonical `/projects/{project_id}` and `/projects/{project_id}/board` routes SHALL continue to render Jinja until a following change migrates them.
+The React Portal shell SHALL own its dashboard home, the Projects list, selected project workspace, project board workflow, Sessions list, Session Report, Task Breakdown Review, Project Task History, and the Alarms inbox while existing Jinja pages remain available for non-migrated workflows and as build-aware fallback for migrated surfaces. The selected React project workspace SHALL preserve the existing project overview's identity, profile, readiness, actionable summary, archive safety, and workflow navigation. The canonical `/dashboard`, `/projects`, `/projects/{project_id}`, `/projects/{project_id}/board`, `/sessions`, `/sessions/{session_id}`, `/task-breakdowns/{breakdown_id}/review`, `/projects/{project_id}/task-history`, and `/alarms` routes SHALL select React only when the complete frontend build is available. `/app/projects/{project_id}` and `/app/projects/{project_id}/board` SHALL remain transitional aliases serving the same React surfaces until the Jinja retirement change converts them to redirects.
 
 #### Scenario: Unknown React paths are not claimed
 - **WHEN** an operator opens a path under `/app` other than `/app`, `/app/projects/{project_id}`, or `/app/projects/{project_id}/board`
@@ -120,16 +121,41 @@ The React Portal shell SHALL own its dashboard home, the Projects list, selected
 - **THEN** the system SHALL preserve its existing redirect onto the first connected project's board, or onto `/projects` when no project is connected
 - **AND** this change SHALL NOT give `/board` a React view
 
+#### Scenario: Built canonical project workspace opens in React
+- **WHEN** an authenticated operator opens `/projects/{project_id}` for an existing connected project while the complete React build is available
+- **THEN** FastAPI SHALL return the React shell for that canonical URL
+- **AND** React SHALL render the project workspace inside the shared Portal chrome
+
+#### Scenario: Missing or partial build keeps canonical project workspace in Jinja
+- **WHEN** an authenticated operator opens `/projects/{project_id}` while the React build is missing or partial
+- **THEN** FastAPI SHALL render the existing Jinja project workspace at the same canonical URL
+- **AND** it SHALL NOT return a blank shell or require an alternate fallback URL
+
+#### Scenario: Built canonical project board opens in React
+- **WHEN** an authenticated operator opens `/projects/{project_id}/board` for an active connected project while the complete React build is available
+- **THEN** FastAPI SHALL return the React shell for that canonical URL
+- **AND** React SHALL render the project board inside the shared Portal chrome
+
+#### Scenario: Missing or partial build keeps canonical project board in Jinja
+- **WHEN** an authenticated operator opens `/projects/{project_id}/board` while the React build is missing or partial
+- **THEN** FastAPI SHALL render the existing Jinja project board at the same canonical URL
+- **AND** it SHALL NOT return a blank shell or require an alternate fallback URL
+
+#### Scenario: Unknown project is rejected before the shell is served
+- **WHEN** an authenticated operator opens `/projects/{project_id}` or `/projects/{project_id}/board` for a project that does not exist
+- **THEN** FastAPI SHALL return its existing not-found response regardless of build availability
+- **AND** it SHALL NOT serve the React shell for an unknown project
+
 #### Scenario: Active project workspace opens with full overview state
-- **WHEN** an authenticated operator opens `/app/projects/{project_id}` for an active connected project
+- **WHEN** an authenticated operator opens the canonical `/projects/{project_id}` or the `/app/projects/{project_id}` alias for an active connected project
 - **THEN** React SHALL show project identity, capability/readiness and reasons, canonical task counts, actionable attention state, and repository profile fields using authenticated FastAPI data
-- **AND** board-targeting actions SHALL use `/app/projects/{project_id}/board`
+- **AND** board-targeting actions SHALL use `/projects/{project_id}/board`
 - **AND** Worker setup and Project settings SHALL remain ordinary full-page links
 - **AND** task history SHALL use the canonical `/projects/{project_id}/task-history` link
 - **AND** Sessions SHALL use the canonical `/sessions` link
 
 #### Scenario: Archived project workspace is restore-first
-- **WHEN** an authenticated operator opens `/app/projects/{project_id}` for an archived connected project
+- **WHEN** an authenticated operator opens the canonical `/projects/{project_id}` or the `/app/projects/{project_id}` alias for an archived connected project
 - **THEN** React SHALL show an archived warning, Restore action, and retained task-history/session evidence links
 - **AND** React SHALL suppress active board and launch entry points until refreshed backend state reports the project restored
 
@@ -139,9 +165,15 @@ The React Portal shell SHALL own its dashboard home, the Projects list, selected
 - **AND** backend validation SHALL remain authoritative for every workflow decision
 
 #### Scenario: Archived React board routes to Restore
-- **WHEN** an authenticated operator opens `/app/projects/{project_id}/board` for an archived project
-- **THEN** React SHALL clearly identify the archived state and provide a route to `/app/projects/{project_id}` for Restore
+- **WHEN** an authenticated operator opens the canonical `/projects/{project_id}/board` or the `/app/projects/{project_id}/board` alias for an archived project while the complete React build is available
+- **THEN** FastAPI SHALL serve the React shell rather than redirecting to the workspace
+- **AND** React SHALL clearly identify the archived state and provide a route to `/projects/{project_id}` for Restore
 - **AND** the surface SHALL not present launch controls or encourage navigation to an active Jinja board
+
+#### Scenario: Missing or partial build preserves the archived board redirect
+- **WHEN** an authenticated operator opens `/projects/{project_id}/board` for an archived project while the React build is missing or partial
+- **THEN** FastAPI SHALL preserve its existing redirect to the canonical project workspace carrying the existing restore-first message
+- **AND** the Jinja workspace SHALL render that message at the same canonical URL
 
 #### Scenario: Built canonical Sessions list opens in React
 - **WHEN** an authenticated operator opens `/sessions` while the complete React build is available
@@ -172,6 +204,11 @@ The React Portal shell SHALL own its dashboard home, the Projects list, selected
 - **WHEN** an operator needs a missing/partial-build fallback for a migrated surface or opens setup, settings, alarms, login, or another non-migrated Portal workflow
 - **THEN** the corresponding existing FastAPI/Jinja page SHALL remain reachable
 - **AND** the React board SHALL not require the Jinja board to complete its normal in-board workflow
+
+#### Scenario: Migrated project surfaces do not offer server-rendered escape links
+- **WHEN** the React project workspace, project board, or Project Task History cannot load its state and renders an error
+- **THEN** it SHALL NOT link to the server-rendered equivalent, which is a missing-build fallback rather than an operator destination
+- **AND** the error SHALL be sanitized rather than rendering raw backend detail
 
 ### Requirement: React Alarms JSON is authenticated, exact, and bounded
 FastAPI SHALL expose a new authenticated, bounded JSON handoff for the Alarms inbox that requires Portal authentication and echoes the selected filter. The response SHALL preserve every field the operator needs to triage and audit alarms without exposing unbounded payloads.
@@ -250,7 +287,7 @@ The React Portal shell SHALL load dashboard, project workspace, project board, S
 
 #### Scenario: Workspace links follow fixed route ownership
 - **WHEN** FastAPI projects workspace links and attention actions
-- **THEN** active `board_href` and board-targeting attention hrefs SHALL be exactly `/app/projects/{project_id}/board`
+- **THEN** active `board_href` and board-targeting attention hrefs SHALL be exactly `/projects/{project_id}/board`
 - **AND** task history, Sessions, Worker setup, and Project settings hrefs SHALL use their existing canonical routes
 - **AND** unknown helper hrefs SHALL be dropped
 - **AND** archived projects SHALL return `can_open_board: false`, `board_href: null`, `can_restore: true`, and `restore_href: /projects/{project_id}/restore`
@@ -258,7 +295,7 @@ The React Portal shell SHALL load dashboard, project workspace, project board, S
 #### Scenario: React Restore receives fixed success outcome
 - **WHEN** React posts to `/projects/{project_id}/restore` with `Accept: application/json` for an archived or already-active project
 - **THEN** the response SHALL be `200` JSON with exactly `ok`, `error`, `next_href`, `retry_href`, and `project`
-- **AND** it SHALL contain `ok: true`, `error: null`, `next_href: /app/projects/{project_id}`, `retry_href: null`, and project fields exactly `id` and `archived: false`
+- **AND** it SHALL contain `ok: true`, `error: null`, `next_href: /projects/{project_id}`, `retry_href: null`, and project fields exactly `id` and `archived: false`
 - **AND** React SHALL refetch workspace and sidebar state after success rather than optimistically changing project state
 
 #### Scenario: React Restore receives bounded unknown-project outcome
@@ -288,7 +325,7 @@ The system SHALL provide explicit commands or documented checks for building the
 - **THEN** it SHALL include a check that FastAPI serves the React shell or reports missing assets clearly
 
 ### Requirement: React is the build-aware default authenticated landing
-The normal Portal landing SHALL use the React dashboard at the canonical `/dashboard` when the complete built React shell is available. The system SHALL validate the React index and all referenced local React assets before choosing `/dashboard`; when that validation fails, the normal landing SHALL remain the existing server-rendered first-project or `/projects` route. This promotion SHALL NOT remove explicit Jinja fallback routes. React route ownership SHALL include `/dashboard`, `/projects`, `/app`, `/app/projects/{id}`, `/app/projects/{id}/board`, `/sessions`, `/sessions/{session_id}`, `/task-breakdowns/{breakdown_id}/review`, `/setup`, and the destination Settings routes `/settings/control-plane`, `/settings/budget`, `/settings/project`, and `/settings/workers` only for the migrated surfaces defined by this specification.
+The normal Portal landing SHALL use the React dashboard at the canonical `/dashboard` when the complete built React shell is available. The system SHALL validate the React index and all referenced local React assets before choosing `/dashboard`; when that validation fails, the normal landing SHALL remain the existing server-rendered first-project or `/projects` route. This promotion SHALL NOT remove explicit Jinja fallback routes. React route ownership SHALL include `/dashboard`, `/projects`, `/projects/{id}`, `/projects/{id}/board`, `/app`, `/app/projects/{id}`, `/app/projects/{id}/board`, `/sessions`, `/sessions/{session_id}`, `/task-breakdowns/{breakdown_id}/review`, `/setup`, and the destination Settings routes `/settings/control-plane`, `/settings/budget`, `/settings/project`, and `/settings/workers` only for the migrated surfaces defined by this specification.
 
 #### Scenario: Auth-disabled local root opens built React dashboard
 - **WHEN** portal auth is not required and an operator opens `/` while the complete React build is available
@@ -411,9 +448,9 @@ The React Portal shell SHALL render the same application frame as the server-ren
 
 #### Scenario: Active project and board routes are highlighted in the sidebar
 
-- **WHEN** an authenticated operator opens a project workspace or project board at `/app/projects/{id}` or `/app/projects/{id}/board`
+- **WHEN** an authenticated operator opens a project workspace or project board at the canonical `/projects/{id}` or `/projects/{id}/board`, or at the `/app/projects/{id}` or `/app/projects/{id}/board` alias
 - **THEN** the sidebar SHALL highlight the active project's sidebar entry so the operator can tell which project the shell is showing
-- **AND** the `└ Task board` sub-link SHALL be highlighted only on `/app/projects/{id}/board`, not on the project workspace
+- **AND** the `└ Task board` sub-link SHALL be highlighted only on the board route, not on the project workspace
 - **AND** the Dashboard sidebar item SHALL NOT be highlighted
 - **AND** the shell SHALL NOT mark Setup, Sessions, Alarms, or Settings group items as active
 

@@ -457,6 +457,86 @@ def test_board_redirect_unchanged(tmp_path, monkeypatch):
     assert with_project.headers["location"] == f"/projects/{project['id']}/board"
 
 
+@pytest.mark.parametrize(
+    "build_helper,expect_react",
+    [
+        (_build_react_assets, True),
+        (_build_partial_react_assets, False),
+        (_build_missing_react_assets, False),
+    ],
+)
+def test_canonical_project_workspace_and_board_routing(
+    build_helper, expect_react, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = build_helper(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+    database_path = tmp_path / "harness.db"
+
+    with _client(tmp_path, portal_auth_required=False) as client:
+        project = _connect_project(database_path, tmp_path / "routing-repo")
+        workspace = client.get(f"/projects/{project['id']}")
+        board = client.get(f"/projects/{project['id']}/board")
+
+    if expect_react:
+        assert workspace.status_code == 200
+        assert 'id="root"' in workspace.text
+        assert board.status_code == 200
+        assert 'id="root"' in board.text
+    else:
+        assert workspace.status_code == 200
+        assert 'id="root"' not in workspace.text
+        assert "page-title" in workspace.text
+        assert board.status_code == 200
+        assert 'id="root"' not in board.text
+        assert "page-title" in board.text
+
+
+def test_unknown_project_returns_404_at_canonical_routes_in_both_build_states(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+
+    with _client(tmp_path) as client:
+        workspace = client.get("/projects/missing-DEMO-999", headers=_portal_headers())
+        board = client.get(
+            "/projects/missing-DEMO-999/board", headers=_portal_headers()
+        )
+
+    assert workspace.status_code == 404
+    assert 'id="root"' not in workspace.text
+    assert board.status_code == 404
+    assert 'id="root"' not in board.text
+
+
+def test_archived_project_board_serves_react_or_redirects_by_build_state(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "archived-board-repo")
+        db.archive_connected_project(database_path, project["id"])
+
+        build_dir = _build_react_assets(tmp_path)
+        monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+        built = client.get(f"/projects/{project['id']}/board", headers=_portal_headers())
+
+        build_dir = _build_missing_react_assets(tmp_path)
+        monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+        missing = client.get(
+            f"/projects/{project['id']}/board", headers=_portal_headers(), follow_redirects=False
+        )
+
+    assert built.status_code == 200
+    assert 'id="root"' in built.text
+    assert missing.status_code == 303
+    assert missing.headers["location"] == f"/projects/{project['id']}?error=Restore%20this%20archived%20project%20before%20opening%20its%20active%20board"
+
+
 def test_non_migrated_jinja_routes_remain_directly_reachable(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
@@ -919,7 +999,7 @@ def test_react_workspace_state_uses_exact_contract_and_route_ownership(tmp_path,
     }
     assert payload["controls"] == {"can_open_board": True, "can_restore": False}
     assert payload["links"] == {
-        "board_href": f"/app/projects/{project['id']}/board",
+        "board_href": f"/projects/{project['id']}/board",
         "task_history_href": f"/projects/{project['id']}/task-history",
         "sessions_href": "/sessions",
         "worker_setup_href": "/settings/workers",
@@ -930,7 +1010,7 @@ def test_react_workspace_state_uses_exact_contract_and_route_ownership(tmp_path,
         action for action in payload["summary"]["attention_actions"]
         if action["label"] == "Running work"
     )
-    assert running["href"] == f"/app/projects/{project['id']}/board"
+    assert running["href"] == f"/projects/{project['id']}/board"
     assert set(running) == {"label", "detail", "href", "tone"}
     serialized = json.dumps(payload)
     for excluded in (
@@ -1020,7 +1100,7 @@ def test_react_workspace_projection_applies_every_bound_and_redacts():
     assert all(len(item["detail"]) == 1000 for item in summary["attention_actions"])
     assert all(len(item["tone"]) == 32 for item in summary["attention_actions"])
     assert all(
-        item["href"] == f"/app/projects/{bounded_id}/board"
+        item["href"] == f"/projects/{bounded_id}/board"
         for item in summary["attention_actions"]
     )
     serialized = json.dumps(payload)
@@ -1157,7 +1237,7 @@ def test_react_restore_json_success_is_idempotent_and_bounded(tmp_path, monkeypa
     expected = {
         "ok": True,
         "error": None,
-        "next_href": f"/app/projects/{project['id']}",
+        "next_href": f"/projects/{project['id']}",
         "retry_href": None,
         "project": {"id": project["id"], "archived": False},
     }
@@ -1195,6 +1275,22 @@ def test_react_restore_respects_accept_quality_and_casing(
         assert response.json()["ok"] is True
     else:
         assert response.headers["location"] == f"/projects/{project['id']}"
+
+
+def test_react_restore_html_caller_gets_303_to_workspace(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "html-restore-repo")
+        db.archive_connected_project(database_path, project["id"])
+        response = client.post(
+            f"/projects/{project['id']}/restore",
+            headers=_portal_headers(),
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/projects/{project['id']}"
 
 
 @pytest.mark.parametrize(
@@ -1782,7 +1878,7 @@ def test_react_dashboard_source_contract():
     assert 'useResource("/api/dashboard")' in dashboard_source
     assert 'href={action.href}' in dashboard_source
     assert "<AppLink" in dashboard_source
-    assert "/app/projects/${project.id}" in dashboard_source
+    assert "/projects/${project.id}" in dashboard_source
 
 
 def test_css_shell_layout_present():

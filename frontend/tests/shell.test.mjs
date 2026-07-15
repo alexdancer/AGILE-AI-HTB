@@ -27,6 +27,7 @@ let SetupState;
 let TaskBreakdownReviewState;
 let TaskBreakdownReview;
 let submitBreakdownAction;
+let TaskHistoryState;
 let buildAcceptForm;
 let confirmReviewNavigation;
 let preventReviewUnload;
@@ -59,6 +60,7 @@ before(async () => {
   } = await server.ssrLoadModule("/src/views/TaskBreakdownReview.jsx"));
   ({ NavContext, NavigationGuardContext } = await server.ssrLoadModule("/src/nav.jsx"));
   ({ parseRoute } = await server.ssrLoadModule("/src/App.jsx"));
+  ({ TaskHistoryState } = await server.ssrLoadModule("/src/views/TaskHistory.jsx"));
 });
 
 after(async () => {
@@ -170,7 +172,7 @@ function workspaceData(overrides = {}) {
       attention_actions: [{
         label: "Running work",
         detail: "2 slices need refresh",
-        href: "/app/projects/demo-999/board",
+        href: "/projects/demo-999/board",
         tone: "blue",
       }, {
         label: "Worker setup",
@@ -181,7 +183,7 @@ function workspaceData(overrides = {}) {
     },
     controls: { can_open_board: true, can_restore: false },
     links: {
-      board_href: "/app/projects/demo-999/board",
+      board_href: "/projects/demo-999/board",
       task_history_href: "/projects/demo-999/task-history",
       sessions_href: "/sessions",
       worker_setup_href: "/settings/workers",
@@ -369,6 +371,14 @@ test("only exact React routes are parsed as owned views", () => {
     view: "sessionReport",
     sessionId: "sess-demo-999",
   });
+  assert.deepEqual(parseRoute("/projects/demo-999"), {
+    view: "workspace",
+    projectId: "demo-999",
+  });
+  assert.deepEqual(parseRoute("/projects/demo-999/board"), {
+    view: "board",
+    projectId: "demo-999",
+  });
   assert.deepEqual(parseRoute("/app/projects/demo-999"), {
     view: "workspace",
     projectId: "demo-999",
@@ -377,9 +387,13 @@ test("only exact React routes are parsed as owned views", () => {
     view: "board",
     projectId: "demo-999",
   });
+  assert.equal(parseRoute("/projects/demo-999/task-history").view, "taskHistory");
+  assert.equal(parseRoute("/app/projects/demo-999/task-history").view, "notFound");
   for (const path of [
     "/app/settings",
     "/app/not-a-migrated-route",
+    "/projects/demo-999/extra",
+    "/projects/demo-999/board/extra",
     "/app/projects/demo-999/extra",
     "/app/projects/demo-999/board/extra",
     "/app/projects",
@@ -436,8 +450,8 @@ test("Projects view renders empty, active, archived, and disabled runner states"
   assert.match(populated, /Active Repo/);
   assert.match(populated, /Archived Repo/);
   assert.match(populated, /Archived 2099-01-01T00:00:00Z/);
-  assert.match(populated, /href="\/app\/projects\/active-999"/);
-  assert.match(populated, /href="\/app\/projects\/archived-999"/);
+  assert.match(populated, /href="\/projects\/active-999"/);
+  assert.match(populated, /href="\/projects\/archived-999"/);
 });
 
 test("Dashboard is the sole active home navigation item", () => {
@@ -591,8 +605,8 @@ test("dashboard renders loading, error, populated, and empty states", () => {
   assert.match(populated, /Worker token component breakdown/);
   assert.match(populated, /href="\/board"/);
   assert.match(populated, /href="\/projects"/);
-  assert.match(populated, /href="\/app\/projects\/demo-999"/);
-  assert.match(populated, /href="\/app\/projects\/demo-999\/board"/);
+  assert.match(populated, /href="\/projects\/demo-999"/);
+  assert.match(populated, /href="\/projects\/demo-999\/board"/);
   assert.match(populated, /href="\/sessions\/sess-demo-999"/);
 
   const empty = renderDashboard({
@@ -665,7 +679,7 @@ test("React workspace renders active summary, profile, and route-owned links", (
     "README.md, CONTEXT.md",
   ]) assert.match(markup, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   for (const href of [
-    "/app/projects/demo-999/board",
+    "/projects/demo-999/board",
     "/projects/demo-999/task-history",
     "/sessions",
     "/settings/workers",
@@ -687,8 +701,9 @@ test("React workspace renders safe missing, loading, error, and empty states", (
   const failed = renderWorkspace({
     projectId: "demo-999", data: null, error: new Error("offline"), loading: false,
   });
-  assert.match(failed, /Could not load project workspace: offline/);
-  assert.match(failed, /href="\/projects\/demo-999"/);
+  assert.match(failed, /Could not load workspace/);
+  assert.doesNotMatch(failed, /offline/);
+  assert.doesNotMatch(failed, /server-rendered/);
 
   const empty = renderWorkspace({ projectId: "demo-999", data: null, error: null, loading: false });
   assert.match(empty, /No project workspace state available/);
@@ -755,7 +770,7 @@ test("project Restore controller refetches only after bounded success", async ()
         json: async () => ({
           ok: true,
           error: null,
-          next_href: "/app/projects/demo-999",
+          next_href: "/projects/demo-999",
           retry_href: null,
           project: { id: "demo-999", archived: false },
         }),
@@ -804,7 +819,7 @@ test("archived React board error routes to workspace Restore only", () => {
     projectId: "demo-999", data: null, error, loading: false,
   }));
   assert.match(markup, /Archived project/);
-  assert.match(markup, /href="\/app\/projects\/demo-999"/);
+  assert.match(markup, /href="\/projects\/demo-999"/);
   assert.doesNotMatch(markup, /href="\/projects\/demo-999\/board"/);
   assert.doesNotMatch(markup, /Run next|Start queue|Launch/);
 });
@@ -816,10 +831,12 @@ test("React board renders every governed workflow state and bounded detail", () 
   assert.match(loading, /Loading board…/);
 
   const failed = renderToStaticMarkup(React.createElement(BoardState, {
-    projectId: "demo-999", data: null, error: new Error("offline"), loading: false,
+    projectId: "demo-999", data: null, error: { message: "offline", status: 500 }, loading: false,
   }));
-  assert.match(failed, /Could not load board: offline/);
-  assert.match(failed, /href="\/projects\/demo-999\/board"/);
+  assert.match(failed, /Could not load board/);
+  assert.doesNotMatch(failed, /offline/);
+  assert.doesNotMatch(failed, /server-rendered/);
+  assert.doesNotMatch(failed, /href="\/projects\/demo-999\/board"/);
 
   const populated = renderToStaticMarkup(React.createElement(BoardState, {
     projectId: "demo-999",
@@ -882,6 +899,35 @@ test("React board renders every governed workflow state and bounded detail", () 
   }));
   assert.match(filtered, /0 of 5 visible/);
   assert.match(filtered, /No matching tasks/);
+});
+
+test("React task history sanitizes errors and links back to the canonical board", () => {
+  const loading = renderToStaticMarkup(React.createElement(TaskHistoryState, {
+    projectId: "demo-999", data: null, error: null, loading: true, filter: "all",
+    onSelectFilter: () => {}, onUnarchive: () => {}, notice: null,
+  }));
+  assert.match(loading, /Loading task history/);
+
+  const failed = renderToStaticMarkup(React.createElement(TaskHistoryState, {
+    projectId: "demo-999", data: null, error: { message: "secret detail", status: 500 }, loading: false,
+    filter: "all", onSelectFilter: () => {}, onUnarchive: () => {}, notice: null,
+  }));
+  assert.match(failed, /Could not load task history/);
+  assert.doesNotMatch(failed, /secret detail/);
+  assert.doesNotMatch(failed, /server-rendered/);
+
+  const populated = renderToStaticMarkup(React.createElement(TaskHistoryState, {
+    projectId: "demo-999",
+    data: { filters: [], tasks: [] },
+    error: null,
+    loading: false,
+    filter: "all",
+    onSelectFilter: () => {},
+    onUnarchive: () => {},
+    notice: null,
+  }));
+  assert.match(populated, /href="\/projects\/demo-999\/board"/);
+  assert.doesNotMatch(populated, /href="\/app\/projects\/demo-999\/board"/);
 });
 
 test("board action controller negotiates JSON, reloads, reports failures, and navigates", async () => {
@@ -1023,6 +1069,9 @@ test("project and board active states follow the selected route", () => {
   assert.match(workspace, /class="project-item active"/);
   assert.match(workspace, /class="project-board"/);
   assert.doesNotMatch(workspace, /class="project-board active"/);
+  assert.match(workspace, /href="\/projects\/demo-999"/);
+  assert.match(workspace, /href="\/projects\/demo-999\/board"/);
+  assert.doesNotMatch(workspace, /href="\/app\/projects\/demo-999"/);
 
   const board = renderSidebar({
     activeProjectId: "demo-999",
@@ -1031,6 +1080,19 @@ test("project and board active states follow the selected route", () => {
   });
   assert.match(board, /class="project-item active"/);
   assert.match(board, /class="project-board active"/);
+});
+
+test("canonical and alias project routes both highlight the project in the sidebar", () => {
+  for (const path of ["/projects/demo-999", "/app/projects/demo-999"]) {
+    const route = parseRoute(path);
+    assert.equal(route.view, "workspace");
+    assert.equal(route.projectId, "demo-999");
+  }
+  for (const path of ["/projects/demo-999/board", "/app/projects/demo-999/board"]) {
+    const route = parseRoute(path);
+    assert.equal(route.view, "board");
+    assert.equal(route.projectId, "demo-999");
+  }
 });
 
 test("task-board and logout controls are conditional", () => {
@@ -1111,7 +1173,7 @@ function breakdownReviewData(status = "proposed") {
     links: {
       self_href: "/task-breakdowns/breakdown-demo-999/review",
       api_href: "/api/task-breakdowns/breakdown-demo-999/review",
-      board_href: "/app/projects/project-demo-999/board",
+      board_href: "/projects/project-demo-999/board",
       accept_href: status === "proposed" ? "/task-breakdowns/breakdown-demo-999/accept" : null,
       retry_href: status === "failed" ? "/task-breakdowns/breakdown-demo-999/retry" : null,
       manual_href: status === "failed" ? "/task-breakdowns/breakdown-demo-999/manual" : null,
@@ -1402,7 +1464,7 @@ test("Task Breakdown action controller negotiates exact JSON and preserves safe 
     body: new URLSearchParams({ accept_0: "1" }),
     fetchImpl: async (url, options) => {
       request = { url, options };
-      return { ok: true, json: async () => ({ ok: true, next_href: "/app/projects/demo/board" }) };
+      return { ok: true, json: async () => ({ ok: true, next_href: "/projects/demo/board" }) };
     },
   });
   assert.equal(success.ok, true);

@@ -180,7 +180,7 @@ export function ProjectsState({ data, error, loading, onRefresh }) {
                 <article className="card" key={project.id}>
                   <CapabilityPill state={project.capability?.state} label={project.capability?.label} />
                   <h2 className="mono" style={{ fontSize: 16, margin: "10px 0 6px" }}>
-                    <AppLink to={`/app/projects/${project.id}`}>{project.name}</AppLink>
+                    <AppLink to={`/projects/${project.id}`}>{project.name}</AppLink>
                   </h2>
                   <p className="muted mono" style={{ margin: 0 }}>
                     {project.root_path}
@@ -218,7 +218,7 @@ export function ProjectsState({ data, error, loading, onRefresh }) {
                 <article className="card" key={project.id}>
                   <span className="pill muted">archived</span>
                   <h2 className="mono" style={{ fontSize: 16, margin: "10px 0 6px" }}>
-                    <AppLink to={`/app/projects/${project.id}`}>{project.name}</AppLink>
+                    <AppLink to={`/projects/${project.id}`}>{project.name}</AppLink>
                   </h2>
                   <p className="muted mono" style={{ margin: 0 }}>
                     {project.root_path}

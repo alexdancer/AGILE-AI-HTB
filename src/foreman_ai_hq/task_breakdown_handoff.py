@@ -264,7 +264,7 @@ def build_task_breakdown_review_context(request: Request, breakdown_id: str) -> 
         status = "failed"
     breakdown["status"] = status
     board_path = task_project_board_path(_mapping(stored.get("intake_metadata")))
-    react_board_path = re.sub(r"^/projects/([^/]+)/board$", r"/app/projects/\1/board", board_path)
+    react_board_path = board_path
     controls = {
         "can_accept": status == "proposed" and not accepting and bool(breakdown["candidates"]),
         "can_retry": status == "failed",

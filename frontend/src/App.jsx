@@ -18,13 +18,9 @@ import WorkerSettings from "./views/WorkerSettings.jsx";
 import Setup from "./views/Setup.jsx";
 import { NavigationGuardContext } from "./nav.jsx";
 
-// The shell is served under /app. Client routes mirror the Jinja URLs so the
-// two surfaces stay legible during migration:
-//   /app                      -> React dashboard (transitional alias)
-//   /dashboard                -> React dashboard
-//   /projects                 -> React projects list
-//   /app/projects/:id         -> React project workspace
-//   /app/projects/:id/board   -> React project board shell
+// Client routes mirror the Jinja URLs so the two surfaces stay legible during
+// migration. The canonical /projects/:id and /projects/:id/board routes also
+// keep /app aliases until the Jinja retirement change converts them to redirects.
 export function parseRoute(pathname) {
   const normalized = pathname.replace(/\/$/, "");
   if (normalized === "/app") return { view: "dashboard" };
@@ -46,10 +42,10 @@ export function parseRoute(pathname) {
     return { view: "taskBreakdownReview", breakdownId: decodeURIComponent(breakdownReview[1]) };
   }
 
-  const board = normalized.match(/^\/app\/projects\/([^/]+)\/board$/);
+  const board = normalized.match(/^\/(?:app\/)?projects\/([^/]+)\/board$/);
   if (board) return { view: "board", projectId: board[1] };
 
-  const workspace = normalized.match(/^\/app\/projects\/([^/]+)$/);
+  const workspace = normalized.match(/^\/(?:app\/)?projects\/([^/]+)$/);
   if (workspace) return { view: "workspace", projectId: workspace[1] };
 
   const taskHistory = normalized.match(/^\/projects\/([^/]+)\/task-history$/);

@@ -5,6 +5,11 @@ import { getJSON } from "../api.js";
 
 const COLUMNS = ["Estimated", "Running", "Review", "Done", "Blocked"];
 
+const safeError = (error) =>
+  error?.status === 401
+    ? "Board requires sign-in."
+    : "Could not load board. Retry.";
+
 export async function submitBoardAction({ url, body, fetchImpl, navigate, reload, onNotice }) {
   onNotice(null);
   try {
@@ -133,9 +138,9 @@ export function BoardState({
       <strong>Archived project</strong>
       <p className="muted">Restore this project before opening its active board.</p>
     </div>
-    <p><AppLink to={`/app/projects/${projectId}`}>Open workspace to Restore</AppLink></p>
+    <p><AppLink to={`/projects/${projectId}`}>Open workspace to Restore</AppLink></p>
   </>;
-  if (error) return <><div className="notice danger">Could not load board: {boundedError(error.message, "Board unavailable.")}</div><p><a href={`/projects/${projectId}/board`}>Open server-rendered board</a></p></>;
+  if (error) return <><div className="notice danger">{safeError(error)}</div></>;
   if (!data) return <div className="empty-state">No board state available.</div>;
 
   const cards = Object.values(data.tasks_by_status).flat();
@@ -152,7 +157,7 @@ export function BoardState({
       <button className="btn small" onClick={() => action(`/projects/${projectId}/run-next`)}>Run next</button>
       {queueRunning ? <button className="btn small secondary" onClick={() => action(`/projects/${projectId}/queue/stop`)}>Stop queue</button> : <QueueStart projectId={projectId} queue={data.automation.queue} action={action} />}
       {data.board_summary.counts.Done > 0 && <button className="btn small secondary" onClick={() => action(`/projects/${projectId}/tasks/archive-done`)}>Archive all Done</button>}
-      <AppLink className="btn small secondary" to={`/app/projects/${projectId}`}>Workspace</AppLink>
+      <AppLink className="btn small secondary" to={`/projects/${projectId}`}>Workspace</AppLink>
       <AppLink className="btn small secondary" to={data.history_href}>History</AppLink>
       <a className="btn small secondary" href={`/projects/${projectId}/board`}>Server board</a>
     </div>

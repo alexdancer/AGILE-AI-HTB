@@ -5,6 +5,11 @@ import { useResource } from "../useResource.js";
 
 const COLUMN_ORDER = ["Estimated", "Running", "Review", "Done", "Blocked"];
 
+const safeError = (error) =>
+  error?.status === 401
+    ? "Workspace requires sign-in."
+    : "Could not load workspace. Retry.";
+
 export async function submitProjectRestore({ url, fetchImpl, onSuccess = async () => {} }) {
   try {
     const response = await fetchImpl(url, {
@@ -86,10 +91,7 @@ export function WorkspaceState({
 }) {
   if (loading) return <p className="spinner">Loading project workspace…</p>;
   if (error) return <>
-    <div className="notice danger">
-      Could not load project workspace: {boundedError(error.message, "Workspace unavailable.")}
-    </div>
-    <p><a href={`/projects/${projectId}`}>Open the server-rendered workspace</a></p>
+    <div className="notice danger">{safeError(error)}</div>
   </>;
   if (!data?.project) return <div className="empty-state">No project workspace state available.</div>;
 
@@ -200,7 +202,7 @@ function WorkspaceAction({ action }) {
     <h3>{action.label || "Project attention"}</h3>
     <p className="muted">{action.detail || "Open the linked workflow for details."}</p>
   </>;
-  if (typeof action.href === "string" && action.href.startsWith("/app/")) {
+  if (typeof action.href === "string" && action.href.startsWith("/projects/")) {
     return <AppLink className="workspace-action" to={action.href}>{content}</AppLink>;
   }
   return <a className="workspace-action" href={action.href}>{content}</a>;

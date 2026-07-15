@@ -676,7 +676,7 @@ def _react_workspace_projection(project: dict, summary: dict) -> dict:
     summary = _mapping(summary)
     archived_at = _workspace_optional_string(project.get("archived_at"), 64)
     archived = archived_at is not None
-    board_href = None if archived else f"/app/projects/{project_id}/board"
+    board_href = None if archived else f"/projects/{project_id}/board"
     restore_href = f"/projects/{project_id}/restore" if archived else None
     counts = _workspace_counts(summary.get("counts"))
 
@@ -793,10 +793,10 @@ def _workspace_attention_actions(value, project_id: str) -> list[dict[str, str]]
 def _workspace_action_href(value, project_id: str) -> str | None:
     if not isinstance(value, str):
         return None
-    react_board_href = f"/app/projects/{project_id}/board"
+    board_href = f"/projects/{project_id}/board"
     allowed = {
-        f"/projects/{project_id}/board": react_board_href,
-        react_board_href: react_board_href,
+        f"/projects/{project_id}/board": board_href,
+        f"/app/projects/{project_id}/board": board_href,
         f"/projects/{project_id}/task-history": f"/projects/{project_id}/task-history",
         "/sessions": "/sessions",
         "/settings/workers": "/settings/workers",
