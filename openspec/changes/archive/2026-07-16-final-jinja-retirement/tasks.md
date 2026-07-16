@@ -81,21 +81,21 @@ Handoff targets per file: `/api/dashboard`, `/api/projects`, `/api/projects/{id}
 - [x] 8.12 Rewrite tests that assert the build-aware landing falls back to a first-project or `/projects` route.
 - [x] 8.13 Rewrite tests that assert `/app*` serves the shell rather than redirecting.
 - [x] 8.14 Verify `tests/portal/` still covers the `portal-local-access` scenario "Login survives retirement of the duplicated surfaces" — this change is what that scenario was written for.
-- [ ] 8.15 Confirm no test still asserts on `response.text` for a retired route: `grep -rnE 'get\("/(dashboard|projects|sessions|alarms|setup|settings|board|task-breakdowns)' tests/` cross-checked against `.text` assertions should come back empty except `/login`.
+- [x] 8.15 Confirm no test still asserts on `response.text` for a retired route: `grep -rnE 'get\("/(dashboard|projects|sessions|alarms|setup|settings|board|task-breakdowns)' tests/` cross-checked against `.text` assertions should come back empty except `/login`. The remaining `.text` assertions are on JSON bodies, handoff endpoints, or the `/login` server-rendered page.
 
 ## 9. Specs and docs
 
-- [ ] 9.1 Apply the seven delta specs in the same commit as the template deletion (design Decision 4): `react-portal-shell`, `portal-quality-system`, `project-workspace`, `project-task-history`, `task-breakdown-review`, `control-plane-model-connection`, `react-board-workflow`.
-- [ ] 9.2 Re-run `grep -rn "Jinja" openspec/specs/` and confirm every surviving hit is either retrospective prose (design Decision 7), action-path redirect wording (Decision 8), or about the login page.
-- [ ] 9.3 Update `docs/REACT_PORTAL_PARITY_PLAN.md`: mark Final Jinja retirement complete in the ledger (`:245`), update Status (`:3`), and correct any text describing Jinja as an available fallback.
-- [ ] 9.4 Check `README.md`, `docs/HARNESS.md`, `docs/INSTALL.md`, and `docs/GETTING_STARTED.md` for text presenting server-rendered pages as an operating mode or the frontend build as optional; correct what you find.
+- [x] 9.1 Apply the seven delta specs in the same commit as the template deletion (design Decision 4): `react-portal-shell`, `portal-quality-system`, `project-workspace`, `project-task-history`, `task-breakdown-review`, `control-plane-model-connection`, `react-board-workflow`.
+- [x] 9.2 Re-run `grep -rn "Jinja" openspec/specs/` and confirm every surviving hit is either retrospective prose (design Decision 7), action-path redirect wording (Decision 8), or about the login page.
+- [x] 9.3 Update `docs/REACT_PORTAL_PARITY_PLAN.md`: mark Final Jinja retirement complete in the ledger (`:245`), update Status (`:3`), and correct any text describing Jinja as an available fallback.
+- [x] 9.4 Check `README.md`, `docs/HARNESS.md`, `docs/INSTALL.md`, and `docs/GETTING_STARTED.md` for text presenting server-rendered pages as an operating mode or the frontend build as optional; correct what you find.
 
 ## 10. Verify
 
-- [ ] 10.1 `uv run pytest -q` — expect 858 plus the new tests, all passing.
-- [ ] 10.2 `npm --prefix frontend run check` — 38 tests plus a clean build.
-- [ ] 10.3 `openspec validate --all --strict` — all changes valid.
-- [ ] 10.4 Browser proof with a build present: `/dashboard`, a project workspace, its board, `/sessions`, `/alarms`, and one Settings route each render in React.
-- [ ] 10.5 Browser proof with the build moved aside: a canonical route shows the recovery page with a working build command and no dead link; `/login` still renders and accepts a token.
-- [ ] 10.6 Confirm a bookmarked `/app/projects/{id}/board` lands on the canonical board.
-- [ ] 10.7 `/openspec-verify-change`, then archive.
+- [x] 10.1 `uv run pytest -q` — 869 passed, 1 warning.
+- [x] 10.2 `npm --prefix frontend run check` — 39 frontend tests passed, clean production build.
+- [x] 10.3 `openspec validate --all --strict` — 46 specs passed.
+- [x] 10.4 Browser proof with a build present: `/dashboard`, `/projects/{id}`, `/projects/{id}/board`, `/sessions`, `/alarms` (with `Accept: text/html`), and `/settings/workers` each returned the React shell (`id="root"`).
+- [x] 10.5 Browser proof with the build moved aside: `/dashboard` returned the missing-build recovery `503` with the build command and no link; `/login` still rendered the form and accepted a token.
+- [x] 10.6 Confirm a bookmarked `/app/projects/{id}/board` returned `301` to `/projects/{id}/board`.
+- [x] 10.7 OpenSpec verification passed; archived change (`openspec archive final-jinja-retirement`).
