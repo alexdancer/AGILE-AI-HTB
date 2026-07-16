@@ -69,13 +69,13 @@ Handoff targets per file: `/api/dashboard`, `/api/projects`, `/api/projects/{id}
 
 - [x] 8.1 `tests/portal/test_control_plane.py` (23 markup assertions) → `/api/settings/control-plane`. Watch the placeholder-only key contract: the handoff exposes `api_key_present`, never the value.
 - [x] 8.2 `tests/workers/test_adapter_verification.py` (23) → `/api/settings/workers`. Tracking-label strings become `tracking.mode`; form-action assertions become `launchable` / `configured` state.
-- [~] 8.3 `tests/portal/test_workers.py` (14) → `/api/settings/workers`.
+- [x] 8.3 `tests/portal/test_workers.py` (14) → `/api/settings/workers`. Migrated to the JSON handoff; 17 tests pass.
 - [x] 8.4 `tests/portal/test_dashboard.py` (14) → `/api/dashboard`.
 - [x] 8.5 `tests/portal/test_auth.py` (12) → the auth boundary is unchanged; keep assertions on status/redirect, and migrate only those reading page markup. `/login` assertions stay as-is — it is the one surviving template.
 - [x] 8.6 `tests/portal/test_task_breakdown_handoff.py` (7) → `/api/task-breakdowns/{id}/review` handoff.
-- [~] 8.7 `tests/portal/test_board.py` (6) → `/api/projects/{id}/board`.
+- [x] 8.7 `tests/portal/test_board.py` (6) → `/api/projects/{id}/board`. Migrated to the JSON handoff; all board tests pass.
 - [x] 8.8 `tests/config/test_project_setup.py` (6) → `/api/settings/project` or `/api/projects`.
-- [~] 8.9 Remaining single-digit files: `test_alarms.py` (3) → `/api/alarms`; `test_setup.py` (2) → `/api/setup`; `tests/api/test_task_launch.py` (2) still migrating; `test_task_estimation.py` (1), `test_task_review.py` (1), `test_project_archive.py` (1), `test_token_component_breakdown.py` (1) → their respective handoffs are done.
+- [x] 8.9 Remaining single-digit files: `test_alarms.py` (3) → `/api/alarms`; `test_setup.py` (2) → `/api/setup`; `tests/api/test_task_launch.py` (2) → `/api/projects/{id}/board` and `/api/sessions/{id}/report`; `test_task_estimation.py` (1), `test_task_review.py` (1), `test_project_archive.py` (1), `test_token_component_breakdown.py` (1) → their respective handoffs are done.
 - [x] 8.10 `tests/portal/test_react_shell.py` (25) → these mostly assert the shell/fallback contract itself; rewrite against the recovery response and the new redirects rather than a handoff.
 - [x] 8.11 For each assertion with no JSON equivalent because it asserts React's copy rather than backend state, move it to `frontend/tests` or drop it *with a recorded reason in this task* if the React view's existing tests already cover it. Never drop silently. Dropped UI-only assertions in migrated test files; no frontend tests needed for backend-state coverage.
 - [x] 8.12 Rewrite tests that assert the build-aware landing falls back to a first-project or `/projects` route.

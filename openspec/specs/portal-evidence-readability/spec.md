@@ -123,7 +123,7 @@ The React Sessions list SHALL preserve the existing compact-first operator scan 
 - **AND** status and refresh announcements SHALL not rely on color alone
 
 ### Requirement: React Session Report preserves complete evidence paths
-The React Session Report SHALL preserve information parity with the current Jinja report. It SHALL present a concise session/launch/review summary first and keep every bounded audit-detail path available without requiring the Jinja report.
+The React Session Report SHALL preserve information parity with the previous server-rendered report. It SHALL present a concise session/launch/review summary first and keep every bounded audit-detail path available without requiring the server-rendered report.
 
 #### Scenario: Worker Session report starts with governance summary
 - **WHEN** an operator opens a Worker Session report
@@ -157,7 +157,7 @@ The React Session Report SHALL preserve information parity with the current Jinj
 - **THEN** React SHALL keep them in semantic disclosure or bounded raw-evidence regions after the summary
 - **AND** every top-level/nested collection SHALL expose `Load more` while authoritative rows remain
 - **AND** every truncated text preview SHALL visibly identify truncation and expose its generated authenticated full-text action
-- **AND** no task, launch/result text, raw usage/detail, Repo source/text, checkpoint detail, or Agent Review summary/error/finding visible in Jinja SHALL become inaccessible when React is built
+- **AND** no task, launch/result text, raw usage/detail, Repo source/text, checkpoint detail, or Agent Review summary/error/finding visible in the previous server-rendered report SHALL become inaccessible when React is built
 
 ### Requirement: React Sessions refreshes only while active
 The React Sessions list SHALL poll its bounded list endpoint only while at least one session is `active` or `running`.

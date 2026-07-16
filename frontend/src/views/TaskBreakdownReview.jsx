@@ -21,8 +21,12 @@ const TEXT_FIELDS = [
 ];
 
 function isReactOwnedPath(path) {
-  return /^\/app(?:\/|$)/.test(path)
+  return /^\/(?:app|dashboard)(?:\/|$)/.test(path)
+    || /^\/projects(?:\/|$)/.test(path)
+    || /^\/setup(?:\/|$)/.test(path)
+    || /^\/alarms(?:\/|$)/.test(path)
     || /^\/sessions(?:\/|$)/.test(path)
+    || /^\/settings(?:\/|$)/.test(path)
     || /^\/task-breakdowns\/[^/]+\/review$/.test(path);
 }
 
@@ -172,7 +176,7 @@ export default function TaskBreakdownReview({ breakdownId, onProjectResolved = N
     setState((current) => ({ ...current, loading: !current.data, error: null }));
     try {
       const data = await getJSON(`/api/task-breakdowns/${encodeURIComponent(breakdownId)}/review`);
-      const projectMatch = data.links.board_href.match(/^\/app\/projects\/([^/]+)\/board$/);
+      const projectMatch = data.links.board_href.match(/^\/projects\/([^/]+)\/board$/);
       onProjectResolved(projectMatch ? projectMatch[1] : null);
       setState({ data, error: null, loading: false });
       setDraft(initialDraft(data));

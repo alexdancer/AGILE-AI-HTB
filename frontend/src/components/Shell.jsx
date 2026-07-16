@@ -3,16 +3,15 @@ import React from "react";
 import { AppLink } from "../nav.jsx";
 import { useResource } from "../useResource.js";
 
-// Shell renders the same application frame as the Jinja `base.html` Portal:
-// top brand bar, left sidebar (project list + Setup/Governance/Planning/
-// Settings groups + logout), main content, footer. Sidebar nav data comes
-// from the authenticated `/api/portal/nav` endpoint which reuses the same
-// `portal_template_context` helper the Jinja sidebar uses, so both shells
-// draw from a single source of truth.
+// Shell renders the React Portal application frame: top brand bar, left sidebar
+// (project list + Setup/Governance/Planning/Settings groups + logout), main
+// content, footer. Sidebar nav data comes from the authenticated
+// `/api/portal/nav` endpoint, which reuses the same `portal_template_context`
+// helper so the shell draws from a single source of truth.
 //
-// React-owned routes use AppLink for client-side navigation. Non-migrated Jinja
-// pages use ordinary full-page anchors so the browser loads the server-rendered
-// page.
+// React-owned routes use AppLink for client-side navigation. The server-rendered
+// login and missing-build recovery pages use ordinary full-page anchors so the
+// browser loads the server-rendered page.
 //
 // Props:
 //   activeView: "dashboard" | "workspace" | "board"

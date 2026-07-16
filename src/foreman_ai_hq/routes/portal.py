@@ -251,8 +251,8 @@ class ControlPlaneSettingsRequest(BaseModel):
 
 
 # Authoritative curated control-plane provider/model choices. Every renderer
-# (Jinja settings page, JSON handoff, React shell) consumes this list so the
-# dropdown cannot drift between surfaces.
+# (JSON handoff and React shell) consumes this list so the dropdown cannot drift
+# between surfaces.
 CURATED_CONTROL_PLANE_MODELS: tuple[tuple[str, str, str], ...] = (
     ("openai", "gpt-5.4", "OpenAI · gpt-5.4"),
     ("openai", "gpt-5.4-mini", "OpenAI · gpt-5.4-mini"),
@@ -334,7 +334,7 @@ def dashboard(request: Request):
 
 
 def _dashboard_context(request: Request) -> dict[str, Any]:
-    """Shared dashboard state for Jinja and the bounded React JSON view."""
+    """Shared dashboard state for the bounded React JSON view."""
 
     database_path = request.app.state.settings.database_path
     config = request.app.state.guardrails
@@ -471,8 +471,9 @@ def project_workspace(project_id: str, request: Request):
 def _setup_overview_state(request: Request) -> dict[str, Any]:
     """Readiness steps and next action for the Setup Overview surface.
 
-    Both the Jinja page and the React JSON handoff render this one computation,
-    so the fallback stays a parity oracle instead of a second implementation.
+    Both the server-rendered recovery and the React JSON handoff render this one
+    computation, so the fallback stays a parity oracle instead of a second
+    implementation.
     """
 
     database_path = request.app.state.settings.database_path
@@ -615,7 +616,7 @@ def project_board(project_id: str, request: Request):
         raise HTTPException(status_code=404, detail="connected project not found") from exc
     # An archived project still serves the shell; React identifies the archived
     # state and routes to Restore. The redirect this route used to perform was
-    # only ever reachable on the retired Jinja path.
+    # only ever reachable on the retired server-rendered path.
     return react_shell_or_missing_build()
 
 
@@ -1245,10 +1246,10 @@ async def save_control_plane_settings(request: Request):
         safe_message = "Could not save control-plane config."
         if _wants_react_json(request):
             return _react_control_plane_outcome(ok=False, error=safe_message, status_code=500)
-        # Non-JSON callers previously got this message rendered into the Jinja
-        # settings page. That page is retired, and the control-plane handoff does
-        # not read an ``?error=`` query parameter, so a redirect would drop the
-        # message silently. The sanitized message stays in the response body.
+        # Non-JSON callers previously got this message rendered into the
+        # server-rendered settings page. That page is retired, and the control-plane
+        # handoff does not read an ``?error=`` query parameter, so a redirect would
+        # drop the message silently. The sanitized message stays in the response body.
         return JSONResponse(status_code=500, content={"detail": safe_message})
 
     new_settings = Settings(
@@ -1684,10 +1685,10 @@ def _project_view_model(request: Request, project: dict[str, Any]) -> dict[str, 
 def _project_settings_with_error(request: Request, error: str):
     """Carry a connect/backend failure back to the canonical Project Settings URL.
 
-    This used to re-render the Jinja page with the error inline. Retirement
-    removed that page, so the reason travels as a query parameter instead — the
-    same path the archive block already uses, and one the Project Settings JSON
-    handoff sanitizes before React surfaces it.
+    This used to re-render the server-rendered page with the error inline.
+    Retirement removed that page, so the reason travels as a query parameter
+    instead — the same path the archive block already uses, and one the Project
+    Settings JSON handoff sanitizes before React surfaces it.
     """
 
     return RedirectResponse(

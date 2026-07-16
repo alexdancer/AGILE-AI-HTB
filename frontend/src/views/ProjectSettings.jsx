@@ -8,9 +8,10 @@ const safeError = (error) =>
     ? "Project settings require sign-in."
     : "Could not load project settings. Retry.";
 
-// HTML archive callers (the Jinja /projects list) are redirected here as
+// HTML callers (the canonical /projects list) are redirected here as
 // /settings/project?error=<block reason>. Forward it to the API so the backend
-// sanitizes and bounds it, matching what the Jinja fallback page renders.
+// sanitizes and bounds it, matching what the server-rendered fallback page would
+// render.
 function initialErrorParam() {
   return new URLSearchParams(window.location.search).get("error") || null;
 }

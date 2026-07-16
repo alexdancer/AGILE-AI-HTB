@@ -49,7 +49,7 @@ The system SHALL keep `/login` available for auth-required deployments while avo
 - **AND** the landing SHALL remain the existing build-aware target rather than being pinned to a server-rendered page
 
 ### Requirement: The login page is the self-contained Portal Recovery Surface
-The server-rendered login page SHALL be the Portal Recovery Surface: the way into the Portal when the React build is missing, partial, or has not loaded. It SHALL render standalone and branded, without authenticated Portal navigation, and SHALL NOT depend on the shared Jinja chrome or any other template that the Jinja retirement change removes. It SHALL NOT query or expose project, task, session, or any other operator data before authentication succeeds.
+The server-rendered login page SHALL be the Portal Recovery Surface: the way into the Portal when the React build is missing, partial, or has not loaded. It SHALL render standalone and branded, without authenticated Portal navigation, and SHALL NOT depend on the shared template chrome or any other template that the Jinja retirement change removes. It SHALL NOT query or expose project, task, session, or any other operator data before authentication succeeds.
 
 #### Scenario: Login renders without the shared chrome
 - **WHEN** an operator opens `/login` while portal auth is required

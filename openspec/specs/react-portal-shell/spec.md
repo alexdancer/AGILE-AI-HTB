@@ -232,7 +232,7 @@ FastAPI SHALL expose a new authenticated, bounded JSON handoff for the Alarms in
 - **AND** every string field SHALL be bounded and redaction SHALL precede truncation
 
 ### Requirement: React negotiates the alarm resolve action outcome
-The existing `POST /alarms/{alarm_id}/resolve` action SHALL return a bounded JSON outcome to React/JSON callers while preserving the current Jinja redirect for HTML callers. Backend validation, including the positive-cap guard for `raise_budget`, SHALL remain authoritative for both caller types.
+The existing `POST /alarms/{alarm_id}/resolve` action SHALL return a bounded JSON outcome to React/JSON callers while preserving the current redirect for HTML callers. Backend validation, including the positive-cap guard for `raise_budget`, SHALL remain authoritative for both caller types.
 
 #### Scenario: React caller receives a JSON resolve outcome
 - **WHEN** a React/JSON caller submits an alarm resolve action that passes backend validation
@@ -246,7 +246,7 @@ The existing `POST /alarms/{alarm_id}/resolve` action SHALL return a bounded JSO
 
 #### Scenario: HTML caller keeps the redirect
 - **WHEN** a browser form caller submits an alarm resolve action
-- **THEN** FastAPI SHALL preserve the existing redirect back to the Jinja alarms page
+- **THEN** FastAPI SHALL preserve the existing redirect back to the canonical /alarms route
 - **AND** the negotiated JSON path SHALL NOT alter that HTML behavior
 
 ### Requirement: React Alarms inbox navigates inside the shell
@@ -386,7 +386,7 @@ The React Portal shell SHALL let operators move between its dashboard home, Proj
 
 #### Scenario: Board intake opens Task Breakdown Review in-shell
 - **WHEN** a React board intake outcome provides `/task-breakdowns/{breakdown_id}/review`
-- **THEN** the shell SHALL navigate to that canonical review route without a full-page Jinja transition
+- **THEN** the shell SHALL navigate to that canonical review route without a full-page transition
 - **AND** browser Back/Forward SHALL preserve the route transition subject to the review's unsaved-draft guard
 
 #### Scenario: Review Session and board links preserve route ownership
@@ -645,7 +645,7 @@ The system SHALL expose authenticated read-only `/api/task-breakdowns/{breakdown
 - **AND** each candidate item SHALL contain exactly `index`, `accepted_by_default`, `kind`, `execution_mode`, `title`, `objective`, `prompt`, `acceptance_criteria`, `proof`, `hitl_reason`, `constraints`, `why_this_task_exists`, `why_not_smaller`, `why_not_larger`, `dependencies`, and `likely_entry_points`
 - **AND** candidate text fields, including newline-joined list fields, SHALL use bounded-text objects exactly `preview`, `truncated`, and `full_href`
 - **AND** `kind` and `execution_mode` SHALL use the fixed enums and normalization in the design rather than bounded text
-- **AND** `accepted_by_default` SHALL be true for every candidate in a proposed review regardless of malformed persisted boolean-like values, matching Jinja's checked-by-default behavior
+- **AND** `accepted_by_default` SHALL be true for every candidate in a proposed review regardless of malformed persisted boolean-like values, matching the previous server-rendered page's checked-by-default behavior
 - **AND** accepted-review candidates SHALL be read-only with `accepted_by_default: false`
 - **AND** persisted candidate ordinal SHALL remain stable across pages
 
@@ -769,7 +769,7 @@ The existing Accept, Retry, and Manual Candidate paths SHALL map the domain outc
 - **AND** the same presence-aware backend domain parser used by negotiated JSON SHALL distinguish omitted, present-empty optional, and present-empty required fields
 
 ### Requirement: React Project Task History JSON is exact, bounded, and complete
-FastAPI SHALL expose an authenticated read-only JSON handoff for Project Task History that reuses the existing project task history context builder and preserves every field the Jinja history page shows. The response SHALL require Portal authentication, return a not-found response for an unknown project, and echo the selected archive filter.
+FastAPI SHALL expose an authenticated read-only JSON handoff for Project Task History that reuses the existing project task history context builder and preserves every field the canonical history route shows. The response SHALL require Portal authentication, return a not-found response for an unknown project, and echo the selected archive filter.
 
 #### Scenario: History JSON requires authentication
 - **WHEN** an unauthenticated caller requests the Project Task History JSON endpoint
@@ -787,7 +787,7 @@ FastAPI SHALL expose an authenticated read-only JSON handoff for Project Task Hi
 - **THEN** FastAPI SHALL return a not-found response before serving any task data
 
 ### Requirement: React negotiates the Project Task History Unarchive outcome
-The existing `POST /projects/{project_id}/tasks/{task_id}/unarchive` action SHALL return a bounded JSON outcome to React/JSON callers while preserving the current Jinja redirect for HTML callers. The change SHALL NOT add a new mutation, new route, new archive lifecycle status, or schema change.
+The existing `POST /projects/{project_id}/tasks/{task_id}/unarchive` action SHALL return a bounded JSON outcome to React/JSON callers while preserving the current redirect for HTML callers. The change SHALL NOT add a new mutation, new route, new archive lifecycle status, or schema change.
 
 #### Scenario: React caller receives a JSON unarchive outcome
 - **WHEN** a React/JSON caller submits the Unarchive action for an archived task and requests a JSON outcome
@@ -797,7 +797,7 @@ The existing `POST /projects/{project_id}/tasks/{task_id}/unarchive` action SHAL
 
 #### Scenario: HTML caller keeps the redirect
 - **WHEN** a browser form caller submits the Unarchive action
-- **THEN** FastAPI SHALL preserve the existing redirect back to the Jinja task history page
+- **THEN** FastAPI SHALL preserve the existing redirect back to the canonical project task history route
 - **AND** the negotiated JSON path SHALL NOT alter that HTML behavior
 
 ### Requirement: React Project Task History routes navigate inside the shell
@@ -810,7 +810,7 @@ React SHALL render Project Task History inside the shared Portal chrome with boo
 
 #### Scenario: History links back to the board inside the shell
 - **WHEN** an operator uses the Back to board link from React Project Task History
-- **THEN** React SHALL navigate to the project board inside the shared Portal chrome without a full-page transition to Jinja when the build is complete
+- **THEN** React SHALL navigate to the project board inside the shared Portal chrome without a full-page transition to a server-rendered page when the build is complete
 
 ### Requirement: React Budget Settings JSON is authenticated, exact, and bounded
 FastAPI SHALL expose a new authenticated JSON handoff for Budget Settings that requires Portal authentication and reuses the existing effective-budget helper. The response SHALL preserve every field the operator needs to configure caps and read today's counter without recomputing budget domain values in the frontend.
@@ -827,7 +827,7 @@ FastAPI SHALL expose a new authenticated JSON handoff for Budget Settings that r
 - **AND** absent cap or counter values SHALL be typed `null` rather than fabricated zeros
 
 ### Requirement: React negotiates the budget save and reset outcomes
-The existing `POST /settings/budget` and `POST /settings/budget/reset` actions SHALL return a bounded JSON outcome to React/JSON callers while preserving the current Jinja redirects for HTML callers. Backend validation of cap values SHALL remain authoritative for both caller types.
+The existing `POST /settings/budget` and `POST /settings/budget/reset` actions SHALL return a bounded JSON outcome to React/JSON callers while preserving the current redirects for HTML callers. Backend validation of cap values SHALL remain authoritative for both caller types.
 
 #### Scenario: React caller receives a JSON save outcome
 - **WHEN** a React/JSON caller submits valid daily and per-session caps to the budget save action
@@ -889,7 +889,7 @@ FastAPI SHALL expose a new authenticated JSON handoff for Control Plane Settings
 - **AND** absent optional values SHALL be typed `null` rather than fabricated defaults
 
 ### Requirement: React negotiates the control-plane save and test outcomes
-The existing `POST /settings/control-plane` and `POST /settings/control-plane/test` actions SHALL return a bounded, sanitized JSON outcome to React/JSON callers while preserving the current Jinja redirects for HTML callers. Config persistence, secret storage, live apply, stale-test marking, and the connection test SHALL remain authoritative for both caller types.
+The existing `POST /settings/control-plane` and `POST /settings/control-plane/test` actions SHALL return a bounded, sanitized JSON outcome to React/JSON callers while preserving the current redirects for HTML callers. Config persistence, secret storage, live apply, stale-test marking, and the connection test SHALL remain authoritative for both caller types.
 
 #### Scenario: React caller receives a JSON save outcome
 - **WHEN** a React/JSON caller submits valid control-plane settings
@@ -956,7 +956,7 @@ FastAPI SHALL expose a new authenticated JSON handoff for Worker Settings that r
 #### Scenario: Worker Settings JSON is bounded and exact
 - **WHEN** an authenticated caller requests the React Worker Settings JSON handoff
 - **THEN** the response SHALL include, for each adapter, an allow-listed projection of id, kind, `configured`, `is_default`, connection type, available tracking modes with their view options, discovered models, operator-approved supported models, launchability, sanitized diagnostics, sanitized verification evidence and diagnostic, and the model-discovery label
-- **AND** it SHALL include the selected active adapter identifier and a single next-action derived from the same computation the Jinja page uses
+- **AND** it SHALL include the selected active adapter identifier and a single next-action derived from the same computation the canonical Worker Settings route uses
 - **AND** absent optional values SHALL be typed `null` rather than fabricated defaults
 
 #### Scenario: Worker Settings JSON never leaks raw failure detail
@@ -965,7 +965,7 @@ FastAPI SHALL expose a new authenticated JSON handoff for Worker Settings that r
 - **AND** it SHALL NOT include raw filesystem paths or raw exception text
 
 ### Requirement: React negotiates the redirect-only Worker Settings mutations and consumes the live actions
-The existing `POST /settings/workers/{id}/configure`, `POST /settings/workers/{id}/allowed-models`, and `POST /settings/workers/{id}/refresh-diagnostics` actions SHALL return a bounded, sanitized JSON outcome to React/JSON callers while preserving the current Jinja redirects for HTML callers. The existing live `POST /settings/workers/{id}/verify` and `POST /settings/workers/{id}/discover-models` actions SHALL keep their current negotiated JSON outcomes unchanged. Adapter configuration, model discovery, allow-listing, and live verification SHALL remain authoritative for both caller types.
+The existing `POST /settings/workers/{id}/configure`, `POST /settings/workers/{id}/allowed-models`, and `POST /settings/workers/{id}/refresh-diagnostics` actions SHALL return a bounded, sanitized JSON outcome to React/JSON callers while preserving the current redirects for HTML callers. The existing live `POST /settings/workers/{id}/verify` and `POST /settings/workers/{id}/discover-models` actions SHALL keep their current negotiated JSON outcomes unchanged. Adapter configuration, model discovery, allow-listing, and live verification SHALL remain authoritative for both caller types.
 
 #### Scenario: React caller receives a JSON set-default outcome
 - **WHEN** a React/JSON caller marks an adapter as the active default
@@ -1039,7 +1039,7 @@ FastAPI SHALL expose a new authenticated JSON handoff for Project Settings that 
 - **AND** it SHALL NOT include raw exception text
 
 ### Requirement: React negotiates the project archive outcome and consumes the existing project actions
-The existing `POST /projects/{id}/archive` action SHALL return a bounded, sanitized JSON outcome to React/JSON callers while preserving the current Jinja redirects for HTML callers, including the block-reason redirect. The existing `POST /settings/project/connect`, `POST /projects/{id}/restore`, and `POST /settings/project/{id}/read-only-proof` actions SHALL keep their current negotiated JSON outcomes unchanged. Project connection, capability evaluation, archive/restore, and the read-only proof launch SHALL remain authoritative for both caller types.
+The existing `POST /projects/{id}/archive` action SHALL return a bounded, sanitized JSON outcome to React/JSON callers while preserving the current redirects for HTML callers, including the block-reason redirect. The existing `POST /settings/project/connect`, `POST /projects/{id}/restore`, and `POST /settings/project/{id}/read-only-proof` actions SHALL keep their current negotiated JSON outcomes unchanged. Project connection, capability evaluation, archive/restore, and the read-only proof launch SHALL remain authoritative for both caller types.
 
 #### Scenario: React caller receives a JSON archive outcome
 - **WHEN** a React/JSON caller archives a connected project that is eligible for archiving
@@ -1105,7 +1105,7 @@ FastAPI SHALL expose a new authenticated JSON handoff for Setup Overview that re
 
 #### Scenario: Setup Overview readiness is computed by the backend
 - **WHEN** the Setup Overview JSON handoff builds its response
-- **THEN** it SHALL reuse the existing control-plane setup state, budget confirmation, active-adapter launchability, project capability evaluation, and next-setup-step derivation that power the Jinja setup page
+- **THEN** it SHALL reuse the existing control-plane setup state, budget confirmation, active-adapter launchability, project capability evaluation, and next-setup-step derivation that power the canonical setup route
 - **AND** the frontend SHALL render the returned steps and next action rather than deriving readiness from their parts
 
 #### Scenario: Setup Overview adapter projection is allow-listed

@@ -1,10 +1,10 @@
 import React from "react";
 
-// Client-side navigation for the three React-owned routes: /app, project
+// Client-side navigation for the React-owned canonical routes: dashboard, project
 // workspace, and project board. App provides the navigate function; AppLink
 // renders a real anchor so deep links, middle-click, and modifier-click open
-// normally while plain clicks stay in-shell. Non-migrated Jinja surfaces keep
-// using ordinary <a> full navigations.
+// normally while plain clicks stay in-shell. The server-rendered login and
+// missing-build recovery pages keep using ordinary <a> full navigations.
 export const NavContext = React.createContext(() => {});
 export const NavigationGuardContext = React.createContext(() => {});
 

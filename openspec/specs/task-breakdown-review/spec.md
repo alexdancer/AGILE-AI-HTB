@@ -46,7 +46,7 @@ The system SHALL provide a separate canonical review page for Proposed Task Brea
 - **AND** creates Estimated Orchestration Board Tasks for successful estimates
 - **AND** returns the operator to the canonical project-scoped or global Orchestration Board
 ### Requirement: Review shows candidates and non-task classifications
-The breakdown review page SHALL show candidate vertical slices and explicitly show rejected or non-task source items with reasons. React SHALL preserve all source-contract and classification evidence visible in the Jinja review, while allowing dense slicing and Repo Context evidence to use progressive disclosure.
+The breakdown review page SHALL show candidate vertical slices and explicitly show rejected or non-task source items with reasons. React SHALL preserve all source-contract and classification evidence visible in the server-rendered review, while allowing dense slicing and Repo Context evidence to use progressive disclosure.
 
 #### Scenario: Constraint bullet is not a task
 - **WHEN** the source contains a bullet such as “Do not add network dependencies.”

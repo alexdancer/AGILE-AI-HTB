@@ -18,9 +18,9 @@ import WorkerSettings from "./views/WorkerSettings.jsx";
 import Setup from "./views/Setup.jsx";
 import { NavigationGuardContext } from "./nav.jsx";
 
-// Client routes mirror the Jinja URLs so the two surfaces stay legible during
-// migration. The canonical /projects/:id and /projects/:id/board routes also
-// keep /app aliases until the Jinja retirement change converts them to redirects.
+// Client routes mirror the canonical React-owned Portal URLs. The /app prefix
+// is a permanent redirect alias supported by the server; the client also
+// recognizes it so in-shell navigation from legacy bookmarks stays smooth.
 export function parseRoute(pathname) {
   const normalized = pathname.replace(/\/$/, "");
   if (normalized === "/app") return { view: "dashboard" };

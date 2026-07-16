@@ -1853,9 +1853,9 @@ def test_react_shell_chrome_contract():
 
 
 def test_react_shell_non_migrated_links_are_anchors():
-    """Non-migrated Jinja routes render as full-page <a href>, not AppLink."""
+    """Server-rendered routes render as full-page <a href>, not AppLink."""
     shell_source = Path("frontend/src/components/Shell.jsx").read_text(encoding="utf-8")
-    for jinja_href in (
+    for server_href in (
         "/settings/control-plane",
         "/settings/budget",
         "/settings/project",
@@ -1863,7 +1863,7 @@ def test_react_shell_non_migrated_links_are_anchors():
         "/board",
         "/projects",
     ):
-        assert f'href="{jinja_href}"' in shell_source
+        assert f'href="{server_href}"' in shell_source
 
 
 def test_react_dashboard_source_contract():

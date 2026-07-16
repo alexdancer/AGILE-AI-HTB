@@ -8,7 +8,7 @@ from tests.portal.helpers import PORTAL_TOKEN, _client, _portal_headers, _projec
 
 
 @pytest.fixture(autouse=True)
-def _jinja_fallback(tmp_path, monkeypatch):
+def _missing_react_build(tmp_path, monkeypatch):
     build_dir = tmp_path / "missing-react-build"
     build_dir.mkdir(exist_ok=True)
     monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)

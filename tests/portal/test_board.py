@@ -430,20 +430,6 @@ def test_board_redirects_when_no_project(tmp_path, monkeypatch):
     assert response.status_code == 303
 
 
-def test_board_filter_input_is_present(tmp_path, monkeypatch):
-    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    with _client(tmp_path) as client:
-        database_path = tmp_path / "harness.db"
-        project_root = tmp_path / "connected-project"
-        _connect_project(database_path, project_root)
-        response = client.get("/board", headers=_portal_headers(), follow_redirects=False)
-
-    assert response.status_code in (200, 303)
-    if response.status_code == 200:
-        assert 'id="board-filter"' in response.text
-        assert 'id="filter-indicator"' in response.text
-
-
 def test_mark_done_keeps_task_visible_until_archived(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"

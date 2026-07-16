@@ -217,10 +217,10 @@ def react_portal_nav(request: Request):
 
 @router.get("/api/dashboard", dependencies=[Depends(require_portal_auth)])
 def react_dashboard_state(request: Request):
-    """Bounded read-only dashboard state using the Jinja dashboard calculation."""
+    """Bounded read-only dashboard state reusing the existing backend calculation."""
 
     # Imported lazily because portal imports router-adjacent modules while the
-    # app wires routes. The Jinja route and React handoff must share this state.
+    # app wires routes. The canonical route and React handoff must share this state.
     from foreman_ai_hq.routes.portal import _dashboard_context
 
     context = _dashboard_context(request)
@@ -320,8 +320,8 @@ def _budget_json(budget: dict) -> dict:
 def react_budget_settings(request: Request):
     """Bounded, authenticated budget-setup state for the React Budget Settings view.
 
-    Reuses the same ``_effective_budget_settings`` helper that powers the Jinja
-    ``budget.html`` page so the React surface never recomputes budget rules.
+    Reuses the same ``_effective_budget_settings`` helper that powers the canonical
+    budget setup route so the React surface never recomputes budget rules.
     """
 
     from foreman_ai_hq.routes.portal import _effective_budget_settings
@@ -340,9 +340,9 @@ def react_worker_settings(request: Request):
     """Bounded, authenticated Worker Settings handoff for the React shell.
 
     Reuses the same view-model builders and active-adapter selection that power
-    the Jinja ``workers.html`` page. The projection is allow-listed and already
-    sanitized through the shared evidence helpers so React never recomputes
-    Worker adapter rules.
+    the canonical Worker Settings route. The projection is allow-listed and
+    already sanitized through the shared evidence helpers so React never
+    recomputes Worker adapter rules.
     """
 
     database_path = request.app.state.settings.database_path
@@ -368,7 +368,7 @@ def react_setup_state(request: Request):
     """Bounded, authenticated Setup Overview handoff for the React shell.
 
     Reuses the same readiness builders and next-step derivation that power the
-    Jinja ``setup.html`` page. The projection is allow-listed and the full
+    canonical Setup Overview route. The projection is allow-listed and the full
     Worker verification evidence is not serialized.
     """
 
@@ -408,7 +408,7 @@ def react_control_plane_settings(request: Request):
     """Bounded, authenticated control-plane setup state for the React shell.
 
     Reuses the same settings and connection-status computation that powers the
-    Jinja control-plane page. The projection is placeholder-only: it never
+    canonical control-plane route. The projection is placeholder-only: it never
     serializes the API key value in any field.
     """
 
@@ -448,8 +448,8 @@ def react_project_settings(request: Request):
     """Bounded, authenticated project settings handoff for the React shell.
 
     Reuses the same Local Runner backend, project capability evaluation, and
-    connected/archived project listings that power the Jinja ``project.html``
-    page. The projection is allow-listed and sanitized so React never
+    connected/archived project listings that power the canonical project settings
+    route. The projection is allow-listed and sanitized so React never
     recomputes project rules or leaks raw backend/capability evidence.
     """
 
@@ -649,8 +649,8 @@ def _react_alarm(alarm: dict[str, Any], resolved_action: dict[str, Any] | None) 
 def react_projects_state(request: Request):
     """JSON connected-project list for the shell home / project picker.
 
-    Reuses the same project-list and task-count helpers that feed the Jinja
-    projects page; no new schema and no parallel API semantics.
+    Reuses the same project-list and task-count helpers that feed the canonical
+    projects route; no new schema and no parallel API semantics.
     """
 
     database_path = request.app.state.settings.database_path
@@ -839,7 +839,7 @@ def _workspace_action_href(value, project_id: str) -> str | None:
     dependencies=[Depends(require_portal_auth)],
 )
 def react_project_board_state(project_id: str, request: Request):
-    """Bounded operator board state; Jinja context stays backend source of truth."""
+    """Bounded operator board state; existing backend context stays source of truth."""
 
     database_path = request.app.state.settings.database_path
     project = _ensure_project(database_path, project_id)
@@ -864,7 +864,7 @@ def react_project_board_state(project_id: str, request: Request):
 def react_project_task_history(project_id: str, request: Request):
     """Bounded, read-only project task history for the React shell.
 
-    Reuses the same Jinja context builder and projection helpers so filter
+    Reuses the same backend context builder and projection helpers so filter
     counts, archive state, and per-task evidence stay single-sourced.
     """
 
@@ -879,7 +879,7 @@ def react_project_task_history(project_id: str, request: Request):
 
 
 def _react_board_projection(project: dict, context: dict) -> dict:
-    """Convert broad Jinja context into an explicit browser-safe allowlist."""
+    """Convert broad backend board context into an explicit browser-safe allowlist."""
 
     board_summary = context["board_summary"]
     automation = context.get("automation_summary") or {}
