@@ -1,7 +1,8 @@
 # project-task-history Specification
 
 ## Purpose
-TBD - created by archiving change add-project-task-history-archive. Update Purpose after archive.
+
+Define how operators inspect, filter, and restore archived tasks for a connected project.
 ## Requirements
 ### Requirement: Project task history page lists repo tasks
 The system SHALL provide a project-scoped task history page that lists task cards for one connected repository outside the active board.
@@ -70,7 +71,7 @@ Archived tasks SHALL remain normal task records with their lifecycle status, Wor
 - **AND** the task SHALL be eligible to appear in the selected project's Estimated board column again
 
 ### Requirement: React project task history reaches presentation parity
-When the complete React build is available, the canonical project task history page SHALL be presented by React with parity to the existing Jinja page: bookmarkable archive filters, full per-task evidence, and the inline restore path. React SHALL NOT change task lifecycle status, archive metadata semantics, or delete any task record, and the Jinja history page SHALL remain the missing/partial-build fallback and parity oracle.
+When the complete React build is available, the canonical project task history page SHALL be presented by React: bookmarkable archive filters, full per-task evidence, and the inline restore path. React SHALL NOT change task lifecycle status, archive metadata semantics, or delete any task record. When the React build is missing or partial, the canonical URL SHALL return the missing-build recovery response; no server-rendered history page SHALL remain as fallback or oracle.
 
 #### Scenario: React history shows the same filtered repo tasks
 - **WHEN** an authenticated operator opens the React project task history for an existing project with a selected archive filter
@@ -90,7 +91,11 @@ When the complete React build is available, the canonical project task history p
 - **AND** the task lifecycle status SHALL be unchanged
 - **AND** React SHALL refresh authoritative history state so the restored task reflects its removed archive state
 
+#### Scenario: Missing or partial build returns the recovery response at canonical task history
+- **WHEN** an authenticated operator opens `/projects/{project_id}/task-history` while the React build is missing or partial
+- **THEN** the system SHALL return the missing-build recovery response at the same canonical URL
+- **AND** archive inspection and restore SHALL be unavailable until the frontend is built, rather than diverting to a server-rendered history page
+
 #### Scenario: Unknown React project history is not found
 - **WHEN** an authenticated operator opens the React project task history for a project id that does not exist
 - **THEN** the system SHALL return a not-found response before serving any task data
-

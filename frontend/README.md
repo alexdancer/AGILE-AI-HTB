@@ -1,10 +1,11 @@
 # Foreman AI HQ Portal frontend
 
 A minimal [Vite](https://vitejs.dev/) + React shell for the Portal. It owns the
-**home / project picker**, the project **workspace**, and the project **board
-shell** as an explicit `/app` surface. The full FastAPI/Jinja Portal remains the
-default authenticated landing while React parity work continues. Every other
-Portal page stays server-rendered by FastAPI/Jinja.
+authenticated operator console: the **dashboard**, **Projects list**, project
+**workspace**, project **board**, **Sessions/Session Report**, **Project Task
+History**, **Alarms inbox**, **Setup**, and the full **Settings** group. The
+only remaining server-rendered Portal pages are the **login page** and the
+**missing-build recovery response**.
 
 FastAPI owns auth, persistence, estimation, launch guardrails, Worker Runs,
 budget governance, and review disposition. This app only renders state from
@@ -23,17 +24,21 @@ npm run build      # or: npm run check
 ```
 
 After building, start the app as usual. Logging in (or opening `/` with auth
-disabled) still lands on the server-rendered Portal. Open `/app` explicitly to
-use the React project picker. Navigation between its home, workspace, and board
-is client-side (History API); these exact deep links resolve on a full load:
+disabled) lands on the React dashboard. The former `/app` aliases are permanent
+redirects to their canonical URLs:
 
-- `/app` — React home / project picker
-- `/app/projects/<project_id>` — React project workspace
-- `/app/projects/<project_id>/board` — React project board shell
+- `/app` → `/dashboard`
+- `/app/projects/<project_id>` → `/projects/<project_id>`
+- `/app/projects/<project_id>/board` → `/projects/<project_id>/board`
 
-Unknown `/app/*` paths return 404. If the build is missing, the three supported
-React routes return a clear "frontend build missing" response instead of a
-blank shell; the default server-rendered Portal remains usable.
+Canonical React routes include `/dashboard`, `/projects`, `/projects/<project_id>`,
+`/projects/<project_id>/board`, `/sessions`, `/sessions/<session_id>`,
+`/projects/<project_id>/task-history`, `/alarms`, `/setup`, `/task-breakdowns/<id>/review`,
+and `/settings/*`.
+
+If the build is missing, the canonical React routes return a clear "frontend build
+missing" recovery response instead of a blank shell; the login page remains
+available as the Portal Recovery Surface.
 
 ## Develop
 

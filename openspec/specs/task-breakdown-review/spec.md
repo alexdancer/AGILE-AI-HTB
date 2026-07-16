@@ -1,6 +1,7 @@
 # task-breakdown-review Specification
 
 ## Purpose
+
 Define how Proposed Task Breakdown review preserves decomposition intent, global source-contract context, and acceptance-verification work before accepted candidates become estimated Orchestration Board Tasks.
 ## Requirements
 ### Requirement: Durable task breakdown review records
@@ -16,7 +17,7 @@ The system SHALL persist Task Breakdown Agent output as a durable Proposed Task 
 - **THEN** the record preserves source metadata, candidate tasks, rejected/non-task items, constraints, verification criteria, Task Breakdown Model identity, and linked orchestration token/session evidence when available
 
 ### Requirement: Breakdown review page
-The system SHALL provide a separate canonical review page for Proposed Task Breakdowns rather than representing breakdown review as an Orchestration Board column or Task state. When the complete React build is available, `/task-breakdowns/{breakdown_id}/review` SHALL render inside the React Portal shell; when the build is missing or partial, the same canonical URL SHALL preserve the existing Jinja review.
+The system SHALL provide a separate canonical review page for Proposed Task Breakdowns rather than representing breakdown review as an Orchestration Board column or Task state. When the complete React build is available, `/task-breakdowns/{breakdown_id}/review` SHALL render inside the React Portal shell; when the build is missing or partial, the same canonical URL SHALL return the missing-build recovery response.
 
 #### Scenario: Markdown intake redirects to review page
 - **WHEN** Markdown intake successfully produces a Proposed Task Breakdown
@@ -29,10 +30,10 @@ The system SHALL provide a separate canonical review page for Proposed Task Brea
 - **AND** React SHALL render the review inside the shared Portal chrome
 - **AND** no `/app/task-breakdowns` alias SHALL be introduced
 
-#### Scenario: Missing or partial build preserves Jinja review
+#### Scenario: Missing or partial build returns the recovery response at the canonical review
 - **WHEN** an authenticated operator opens an existing Task Breakdown Review while the frontend build is missing or partial
-- **THEN** FastAPI SHALL render the existing Jinja review at the same canonical URL
-- **AND** the operator SHALL retain the complete acceptance and recovery workflow
+- **THEN** FastAPI SHALL return the missing-build recovery response at the same canonical URL
+- **AND** the acceptance and recovery workflow SHALL be unavailable until the frontend is built, rather than diverting to a server-rendered review
 
 #### Scenario: Unknown review stays backend-authoritative
 - **WHEN** an authenticated operator opens the canonical review URL for an unknown breakdown id
@@ -44,7 +45,6 @@ The system SHALL provide a separate canonical review page for Proposed Task Brea
 - **THEN** the system immediately sends the accepted candidates to Task Estimation
 - **AND** creates Estimated Orchestration Board Tasks for successful estimates
 - **AND** returns the operator to the canonical project-scoped or global Orchestration Board
-
 ### Requirement: Review shows candidates and non-task classifications
 The breakdown review page SHALL show candidate vertical slices and explicitly show rejected or non-task source items with reasons. React SHALL preserve all source-contract and classification evidence visible in the Jinja review, while allowing dense slicing and Repo Context evidence to use progressive disclosure.
 

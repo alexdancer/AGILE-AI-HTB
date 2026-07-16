@@ -10,7 +10,7 @@ from foreman_ai_hq.native_usage import token_usage_components
 TOKEN_EVIDENCE_KEYS = {"prompt_tokens", "completion_tokens", "total_tokens"}
 TOKEN_EVIDENCE_CONTAINERS = {"token_log"}
 SECRET_TEXT_PATTERN = re.compile(
-    r"(sk-[A-Za-z0-9_.-]+|sk_[A-Za-z0-9_.-]+|Bearer\s+[A-Za-z0-9_.-]+|password\s*[:=]\s*\S+)",
+    r"((?<!\w)sk[-_][A-Za-z0-9_.-]+|Bearer\s+[A-Za-z0-9_.-]+|password\s*[:=]\s*\S+)",
     re.IGNORECASE,
 )
 

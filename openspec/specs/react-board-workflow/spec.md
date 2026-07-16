@@ -1,10 +1,11 @@
 # react-board-workflow Specification
 
 ## Purpose
-TBD - created by archiving change react-board-functional-parity. Update Purpose after archive.
+
+Define the React project board workflow that lets operators intake, estimate, launch, review, and archive project-scoped tasks with FastAPI authority.
 ## Requirements
 ### Requirement: React project board provides the normal governed task loop
-The React project board at `/app/projects/{project_id}/board` SHALL let an authenticated operator perform the existing normal project-scoped workflow: submit task intake, receive estimated work or an authoritative Task Breakdown Review handoff, launch an Estimated task, refresh Running work, use Review Disposition, and archive or dismiss cards. FastAPI SHALL remain authoritative for every lifecycle transition, project-binding check, estimation, launch guardrail, Worker Run, queue, review, and archive decision.
+The React project board at the canonical `/projects/{project_id}/board` SHALL let an authenticated operator perform the existing normal project-scoped workflow: submit task intake, receive estimated work or an authoritative Task Breakdown Review handoff, launch an Estimated task, refresh Running work, use Review Disposition, and archive or dismiss cards. FastAPI SHALL remain authoritative for every lifecycle transition, project-binding check, estimation, launch guardrail, Worker Run, queue, review, and archive decision.
 
 #### Scenario: React intake creates an estimated project task
 - **WHEN** an operator submits a valid short task from the React project board
@@ -15,7 +16,7 @@ The React project board at `/app/projects/{project_id}/board` SHALL let an authe
 - **WHEN** an operator submits Markdown text or an uploaded Markdown file from the React project board
 - **THEN** the system SHALL preserve the existing review-first intake behavior
 - **AND** the response SHALL provide the authoritative Task Breakdown Review URL
-- **AND** the browser SHALL navigate to that existing server-rendered review route rather than creating unreviewed board tasks
+- **AND** the browser SHALL navigate to that canonical review route rather than creating unreviewed board tasks
 
 #### Scenario: Single-task Markdown and file precedence remain intact
 - **WHEN** an operator submits Markdown that the Task Breakdown Agent classifies as one coherent task, or submits both pasted text and an uploaded Markdown file
@@ -33,12 +34,13 @@ The React project board at `/app/projects/{project_id}/board` SHALL let an authe
 - **AND** the React client SHALL NOT directly mutate lifecycle, budget, queue, token, or review state
 
 ### Requirement: React board action responses support in-shell workflow
-Existing authenticated board action paths used by the React board SHALL preserve their existing browser/form redirect behavior and SHALL provide negotiated JSON outcomes for explicit React callers. JSON outcomes SHALL identify success or a sanitized validation/guardrail failure and SHALL provide an explicit next URL when the existing workflow requires a non-migrated page.
+Existing authenticated board action paths used by the React board SHALL preserve their existing redirect behavior for non-JSON callers and SHALL provide negotiated JSON outcomes for explicit React callers. JSON outcomes SHALL identify success or a sanitized validation/guardrail failure and SHALL provide an explicit next URL when the existing workflow directs the operator to another canonical route.
 
-#### Scenario: Existing Jinja form behavior remains available
-- **WHEN** a Jinja board form submits an existing intake, launch, refresh, queue, review, archive, or dismiss action
+#### Scenario: Non-JSON callers keep the existing redirect behavior
+- **WHEN** a non-JSON caller submits an existing intake, launch, refresh, queue, review, archive, or dismiss action
 - **THEN** the system SHALL preserve its existing redirect/error behavior
-- **AND** the change SHALL NOT require Jinja callers to use JSON
+- **AND** the redirect target SHALL remain the canonical route it names, which the React shell then renders
+- **AND** the change SHALL NOT require those callers to use JSON
 
 #### Scenario: Explicit JSON negotiation returns a stable outcome
 - **WHEN** a React caller submits JSON or multipart board data with `Accept: application/json`
@@ -54,13 +56,12 @@ Existing authenticated board action paths used by the React board SHALL preserve
 #### Scenario: React action stays in board after outcome
 - **WHEN** a React board action completes with an in-board outcome
 - **THEN** the client SHALL receive a structured JSON result
-- **AND** the client SHALL reload bounded authoritative project-board state instead of navigating to the Jinja board
+- **AND** the client SHALL reload bounded authoritative project-board state instead of performing a full-page navigation
 
 #### Scenario: React action reports authoritative guardrail failure
 - **WHEN** a React launch or automation action is rejected by existing project, adapter, allowed-model, budget, native-usage acknowledgement, or lifecycle guardrails
 - **THEN** the response SHALL expose only sanitized actionable failure information
 - **AND** the React board SHALL retain the task's backend-authoritative state and relevant setup link when one exists
-
 ### Requirement: React board state is authenticated, project-scoped, and bounded
 The React project-board state endpoint SHALL require portal authentication, reject archived or unknown projects using existing project boundaries, and return an explicit operator-facing projection rather than raw board context, raw task metadata, or raw adapter records.
 

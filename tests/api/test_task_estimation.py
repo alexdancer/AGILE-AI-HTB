@@ -564,7 +564,7 @@ def test_estimate_uses_llm_structured_json_creates_estimated_task_and_tracks_usa
             },
         )
         task = response.json()
-        dashboard = client.get("/dashboard", headers=_auth_headers())
+        dashboard = client.get("/api/dashboard", headers=_auth_headers())
         with db.connect(tmp_path / "harness.db") as conn:
             token_turn = conn.execute("select * from token_turns").fetchone()
             estimation_session = conn.execute("select * from sessions").fetchone()
@@ -592,7 +592,7 @@ def test_estimate_uses_llm_structured_json_creates_estimated_task_and_tracks_usa
     assert estimation_session["session_key_hash"] != "estimation:Add an endpoint and tests for sessions"
     assert len(estimation_session["session_key_hash"]) == 64
     assert all(char in "0123456789abcdef" for char in estimation_session["session_key_hash"])
-    assert "133" in dashboard.text
+    assert dashboard.json()["budget"]["total_tokens"] == 133
 
 
 def test_estimate_without_allowed_worker_models_blocks_launch_with_setup_reason(tmp_path, monkeypatch):
@@ -759,7 +759,7 @@ def test_estimate_form_accepts_pasted_markdown_task(tmp_path, monkeypatch):
         assert response.headers["location"].endswith("/review")
         assert db.list_tasks(tmp_path / "harness.db") == []
         breakdown_id = response.headers["location"].split("/")[2]
-        review = client.get(response.headers["location"], headers=_auth_headers())
+        review = client.get(f"/api/task-breakdowns/{breakdown_id}/review", headers=_auth_headers())
         accept = client.post(
             f"/task-breakdowns/{breakdown_id}/accept",
             headers={**_auth_headers(), "accept": "text/html"},
@@ -789,13 +789,17 @@ def test_estimate_form_accepts_pasted_markdown_task(tmp_path, monkeypatch):
             follow_redirects=False,
         )
         tasks = db.list_tasks(tmp_path / "harness.db")
-        board = client.get("/board", headers=_auth_headers())
         breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
+        board = client.get(
+            f"/api/projects/{breakdown['intake_metadata']['connected_project_id']}/board",
+            headers=_auth_headers(),
+        )
 
-    assert "Add parser" in review.text
-    assert "constraint, not a task" in review.text
-    assert "Confidence" not in review.text
-    assert f'href="/projects/{breakdown["intake_metadata"]["connected_project_id"]}/board"' in review.text
+    review_json = review.json()
+    assert any("Add parser" in c["title"]["preview"] for c in review_json["candidates"]["items"])
+    assert "constraint, not a task" in review_json["context"]["rejected_items"]["items"][0]["reason"]["preview"]
+    # "Confidence" was a UI label assertion; dropped per final-jinja-retirement.
+    assert review_json["links"]["board_href"] == f"/projects/{breakdown['intake_metadata']['connected_project_id']}/board"
     assert accept.status_code == 303
     assert accept.headers["location"].startswith("/projects/")
     assert accept.headers["location"].endswith("/board")
@@ -808,7 +812,12 @@ def test_estimate_form_accepts_pasted_markdown_task(tmp_path, monkeypatch):
     assert tasks[0]["metadata"]["task_breakdown_verification"] == ["Run pytest."]
     assert breakdown["status"] == "accepted"
     assert breakdown["created_task_ids"] == [task["id"] for task in tasks]
-    assert "Add parser" in board.text
+    board_json = board.json()
+    assert any(
+        "Add parser" in task["summary"]["text"]
+        for column in board_json["tasks_by_status"].values()
+        for task in column
+    )
 
 
 def test_accepting_legacy_afk_breakdown_preserves_afk_and_clears_hitl_reason(tmp_path, monkeypatch):
@@ -844,7 +853,7 @@ def test_accepting_legacy_afk_breakdown_preserves_afk_and_clears_hitl_reason(tmp
             confidence=0.8,
             rationale="Legacy candidate before execution_mode existed.",
         )
-        review = client.get(f"/task-breakdowns/{breakdown['id']}/review", headers=_auth_headers())
+        review = client.get(f"/api/task-breakdowns/{breakdown['id']}/review", headers=_auth_headers())
         accept = client.post(
             f"/task-breakdowns/{breakdown['id']}/accept",
             headers={**_auth_headers(), "accept": "text/html"},
@@ -864,7 +873,7 @@ def test_accepting_legacy_afk_breakdown_preserves_afk_and_clears_hitl_reason(tmp
         )
         tasks = db.list_tasks(db_path)
 
-    assert 'value="AFK" selected' in review.text
+    assert review.json()["candidates"]["items"][0]["execution_mode"] == "AFK"
     assert accept.status_code == 303
     assert tasks[0]["metadata"]["task_breakdown_execution_mode"] == "AFK"
     assert tasks[0]["metadata"]["task_breakdown_hitl_reason"] == ""
@@ -1040,7 +1049,7 @@ The final artifact must be verified with a CLI smoke check and must never use re
             follow_redirects=False,
         )
         breakdown_id = response.headers["location"].split("/")[2]
-        review = client.get(response.headers["location"], headers=_auth_headers())
+        review = client.get(f"/api/task-breakdowns/{breakdown_id}/review", headers=_auth_headers())
         accept = client.post(
             f"/task-breakdowns/{breakdown_id}/accept",
             headers={**_auth_headers(), "accept": "text/html"},
@@ -1074,11 +1083,14 @@ The final artifact must be verified with a CLI smoke check and must never use re
         breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
 
     assert response.status_code == 303
-    assert "Global contract summary" in review.text
-    assert "acceptance_verification" in review.text
-    assert "Execution mode" in review.text
-    assert "Candidate proof / verification path" in review.text
-    assert "Task slicing evidence" in review.text
+    review_json = review.json()
+    assert review_json["candidates"]["items"][2]["kind"] == "acceptance_verification"
+    assert review_json["candidates"]["items"][2]["execution_mode"] == "HITL"
+    assert review_json["context"]["global_contract_summary"]["preview"] == (
+        "DEMO_CLI_2099 must parse input and emit DEMO_REPORT_2099 with 999-style IDs."
+    )
+    assert review_json["context"]["verification"]["items"][0]["preview"] == "Run a CLI smoke check."
+    # UI label assertions ("Global contract summary", "Execution mode", etc.) dropped per final-jinja-retirement.
     assert accept.status_code == 303
     assert [task["metadata"]["task_breakdown_kind"] for task in tasks] == [
         "implementation",
@@ -1265,7 +1277,7 @@ def test_estimate_form_invalid_breakdown_output_creates_manual_recovery_review(t
         )
         breakdown_id = response.headers["location"].split("/")[2]
         breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
-        review = client.get(response.headers["location"], headers=_auth_headers())
+        review = client.get(f"/api/task-breakdowns/{breakdown_id}/review", headers=_auth_headers())
         retry = client.post(
             f"/task-breakdowns/{breakdown_id}/retry",
             headers={**_auth_headers(), "accept": "text/html"},
@@ -1278,10 +1290,11 @@ def test_estimate_form_invalid_breakdown_output_creates_manual_recovery_review(t
     assert db.list_tasks(tmp_path / "harness.db") == []
     assert breakdown["status"] == "failed"
     assert breakdown["failure_type"] == "TaskBreakdownValidationError"
-    assert "Breakdown failed" in review.text
-    assert "Retry breakdown" in review.text
-    assert "Create one manual candidate" in review.text
-    assert "Cancel" in review.text
+    review_json = review.json()
+    assert review_json["review"]["status"] == "failed"
+    assert review_json["controls"]["can_retry"] is True
+    assert review_json["controls"]["can_create_manual_candidate"] is True
+    # UI label assertions ("Breakdown failed", "Retry breakdown", etc.) dropped per final-jinja-retirement.
     assert retry.status_code == 303
     assert retry.headers["location"] == f"/task-breakdowns/{breakdown_id}/review"
     assert retried["status"] == "proposed"
@@ -1306,7 +1319,7 @@ def test_estimate_form_timeout_breakdown_failure_has_safe_actionable_diagnostics
         )
         breakdown_id = response.headers["location"].split("/")[2]
         breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
-        review = client.get(response.headers["location"], headers=_auth_headers())
+        review = client.get(f"/api/task-breakdowns/{breakdown_id}/review", headers=_auth_headers())
 
     assert response.status_code == 303
     assert breakdown["status"] == "failed"
@@ -1318,10 +1331,12 @@ def test_estimate_form_timeout_breakdown_failure_has_safe_actionable_diagnostics
     assert "timeout_seconds=120" in breakdown["failure_message"]
     assert markdown not in breakdown["failure_message"]
     assert raw_secret not in breakdown["failure_message"]
-    assert "Breakdown failed" in review.text
-    assert "Retry breakdown" in review.text
-    assert "Create manual candidate" in review.text
-    assert raw_secret not in review.text
+    review_json = review.json()
+    assert review_json["review"]["status"] == "failed"
+    assert review_json["controls"]["can_retry"] is True
+    assert review_json["controls"]["can_create_manual_candidate"] is True
+    assert raw_secret not in json.dumps(review_json)
+    # UI label assertions ("Breakdown failed", "Retry breakdown", "Create manual candidate") dropped per final-jinja-retirement.
 
 
 def test_estimate_form_provider_rejection_breakdown_failure_is_sanitized(tmp_path, monkeypatch):
@@ -1373,7 +1388,7 @@ def test_estimate_form_provider_echoed_source_payload_is_redacted(tmp_path, monk
         )
         breakdown_id = response.headers["location"].split("/")[2]
         breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
-        review = client.get(response.headers["location"], headers=_auth_headers())
+        review = client.get(f"/api/task-breakdowns/{breakdown_id}/review", headers=_auth_headers())
 
     assert response.status_code == 303
     assert breakdown["status"] == "failed"
@@ -1382,9 +1397,11 @@ def test_estimate_form_provider_echoed_source_payload_is_redacted(tmp_path, monk
     assert markdown not in breakdown["failure_message"]
     assert escaped_source not in breakdown["failure_message"]
     assert normalized_source not in breakdown["failure_message"]
-    assert "[REDACTED_SOURCE_TEXT]" in review.text
-    assert escaped_source not in review.text
-    assert normalized_source not in review.text
+    review_json = review.json()
+    failure_preview = review_json["review"]["failure_message"]["preview"]
+    assert "[REDACTED_SOURCE_TEXT]" in failure_preview
+    assert escaped_source not in failure_preview
+    assert normalized_source not in failure_preview
 
 
 def test_estimate_form_rejects_non_markdown_upload_without_creating_task(tmp_path, monkeypatch):

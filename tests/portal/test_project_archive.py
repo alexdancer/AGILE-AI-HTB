@@ -12,7 +12,7 @@ def test_projects_page_hides_archived_project_from_active_list_and_restores(tmp_
     db.archive_connected_project(database_path, archived["id"])
 
     with _client(tmp_path) as client:
-        response = client.get("/projects", headers=_portal_headers())
+        response = client.get("/api/projects", headers=_portal_headers())
         restored = client.post(
             f"/projects/{archived['id']}/restore",
             headers=_portal_headers(),
@@ -20,13 +20,12 @@ def test_projects_page_hides_archived_project_from_active_list_and_restores(tmp_
         )
 
     assert response.status_code == 200
-    active_section = response.text.split("Archived projects", 1)[0]
-    archived_section = response.text.split("Archived projects", 1)[1]
-    assert "Active projects" in response.text
-    assert active["name"] in active_section
-    assert archived["name"] not in active_section
-    assert archived["name"] in archived_section
-    assert f'action="/projects/{archived["id"]}/restore"' in archived_section
+    payload = response.json()
+    active_names = {p["name"] for p in payload["projects"]}
+    archived_names = {p["name"] for p in payload["archived_projects"]}
+    assert active["name"] in active_names
+    assert archived["name"] not in active_names
+    assert archived["name"] in archived_names
     assert restored.status_code == 303
     assert restored.headers["location"] == f"/projects/{archived['id']}"
     assert db.get_connected_project(database_path, archived["id"])["archived_at"] is None
@@ -52,12 +51,14 @@ def test_sidebar_and_global_board_ignore_archived_projects(tmp_path, monkeypatch
     db.archive_connected_project(database_path, archived["id"])
 
     with _client(tmp_path) as client:
-        projects = client.get("/projects", headers=_portal_headers())
+        projects = client.get("/api/projects", headers=_portal_headers())
         board = client.get("/board", headers=_portal_headers(), follow_redirects=False)
 
-    sidebar = projects.text.split('<div class="group">Setup</div>', 1)[0]
-    assert active["name"] in sidebar
-    assert archived["name"] not in sidebar
+    assert projects.status_code == 200
+    payload = projects.json()
+    active_names = {p["name"] for p in payload["projects"]}
+    assert active["name"] in active_names
+    assert archived["name"] not in active_names
     assert board.status_code == 303
     assert board.headers["location"] == f"/projects/{active['id']}/board"
 
@@ -156,21 +157,25 @@ def test_archived_project_workspace_has_restore_action_and_blocks_active_board(t
     db.archive_connected_project(database_path, project["id"])
 
     with _client(tmp_path) as client:
-        workspace = client.get(f"/projects/{project['id']}", headers=_portal_headers())
-        board = client.get(f"/projects/{project['id']}/board", headers=_portal_headers(), follow_redirects=False)
-        history = client.get(f"/projects/{project['id']}/task-history", headers=_portal_headers())
+        workspace = client.get(f"/api/projects/{project['id']}/workspace", headers=_portal_headers())
+        board = client.get(f"/api/projects/{project['id']}/board", headers=_portal_headers())
+        history = client.get(f"/api/projects/{project['id']}/task-history", headers=_portal_headers())
 
     assert workspace.status_code == 200
-    assert "Archived project" in workspace.text
-    assert f'action="/projects/{project["id"]}/restore"' in workspace.text
-    assert f'href="/projects/{project["id"]}/board"' not in workspace.text
-    assert '<span class="pill muted">archived</span>' in workspace.text
-    assert '<span class="pill green">' not in workspace.text
-    assert "Restore this project before launching new Worker work" in workspace.text
-    assert board.status_code == 303
-    assert board.headers["location"].startswith(f"/projects/{project['id']}?error=")
+    workspace_payload = workspace.json()
+    assert workspace_payload["project"]["archived_at"] is not None
+    assert workspace_payload["controls"]["can_restore"] is True
+    assert workspace_payload["controls"]["can_open_board"] is False
+    assert workspace_payload["links"]["restore_href"] == f"/projects/{project['id']}/restore"
+    assert workspace_payload["links"]["board_href"] is None
+    assert any(
+        "Restore this project before launching new Worker work" in a["detail"]
+        for a in workspace_payload["summary"]["attention_actions"]
+    )
+    assert board.status_code == 409
     assert history.status_code == 200
-    assert "Archived project evidence" in history.text
+    history_payload = history.json()
+    assert any("Archived project evidence" in t["description"] for t in history_payload["tasks"])
 
 
 def test_connecting_archived_root_restores_existing_project_identity(tmp_path, monkeypatch):

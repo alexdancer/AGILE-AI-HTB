@@ -1609,6 +1609,97 @@ test("Settings views show a fixed message when their handoff fails", () => {
   }
 });
 
+// Curated models mirror CURATED_CONTROL_PLANE_MODELS in routes/portal.py so the
+// dropdown cannot drift between the two surfaces.
+function controlPlaneData(overrides = {}) {
+  return {
+    provider: "anthropic",
+    model: "claude-sonnet-4-6",
+    base_url: null,
+    api_key_env: "TEST_CONTROL_PLANE_KEY",
+    api_key_present: true,
+    estimator_model: "claude-sonnet-4-6",
+    task_breakdown_model: "claude-sonnet-4-6",
+    legacy_api_key_configured: false,
+    shadowed_settings: {},
+    curated_models: [
+      { provider: "openai", model: "gpt-5.4", label: "OpenAI · gpt-5.4" },
+      { provider: "openai", model: "gpt-5.4-mini", label: "OpenAI · gpt-5.4-mini" },
+      { provider: "openai", model: "gpt-5.5", label: "OpenAI · gpt-5.5" },
+      { provider: "anthropic", model: "claude-fable-5", label: "Anthropic · Claude Fable 5" },
+      { provider: "anthropic", model: "claude-sonnet-5", label: "Anthropic · Claude Sonnet 5" },
+      { provider: "anthropic", model: "claude-opus-4-8", label: "Anthropic · Claude Opus 4.8" },
+      { provider: "anthropic", model: "claude-sonnet-4-6", label: "Anthropic · Claude Sonnet 4.6" },
+      { provider: "anthropic", model: "claude-haiku-4-5", label: "Anthropic · Claude Haiku 4.5" },
+    ],
+    connection_status: { state: "needs_test", checked_at: null, details: null },
+    ...overrides,
+  };
+}
+
+// This is the client-side replacement for the retired Jinja
+// <option selected>/hidden/disabled markup: dataToForm() in
+// ControlPlaneSettings.jsx now decides "is this model custom" itself, by
+// checking whether the stored (provider, model) pair is in curated_models.
+// Table-driven over the one curated case plus the three ways a stored model
+// can fail to match (wrong provider namespace entirely, a curated model name
+// reused under the wrong provider, and a stale provider-prefixed id).
+test("ControlPlaneSettings dataToForm resolves curated vs. custom models by provider+model pair", async () => {
+  const cases = [
+    {
+      name: "a curated model for its own provider renders selected, not custom",
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      expectCustom: false,
+    },
+    {
+      name: "an openai-compatible model is never curated for any provider",
+      provider: "openai-compatible",
+      model: "openai-compatible/custom-control-plane-999",
+      expectCustom: true,
+    },
+    {
+      name: "a curated model name reused under the wrong provider is custom",
+      provider: "openai",
+      model: "claude-sonnet-4-6",
+      expectCustom: true,
+    },
+    {
+      name: "a stale provider-prefixed model id is custom",
+      provider: "anthropic",
+      model: "anthropic/claude-sonnet-4-20250514",
+      expectCustom: true,
+    },
+  ];
+
+  for (const testCase of cases) {
+    const data = controlPlaneData({ provider: testCase.provider, model: testCase.model });
+    let renderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(ControlPlaneSettingsState, {
+          data, error: null, loading: false, onRefresh: () => {},
+        }),
+      );
+    });
+
+    const modelSelect = renderer.root.findByProps({ id: "control-plane-model" });
+    if (testCase.expectCustom) {
+      assert.equal(modelSelect.props.value, "__custom__", testCase.name);
+      const customInput = renderer.root.findByProps({ id: "control-plane-custom-model" });
+      assert.equal(customInput.props.value, testCase.model, testCase.name);
+    } else {
+      assert.equal(modelSelect.props.value, testCase.model, testCase.name);
+      assert.throws(
+        () => renderer.root.findByProps({ id: "control-plane-custom-model" }),
+        testCase.name,
+      );
+    }
+
+    await act(async () => { renderer.unmount(); });
+  }
+});
+
 test("the not-found branch routes to a canonical URL", async () => {
   const { default: App } = await server.ssrLoadModule("/src/App.jsx");
   assert.equal(parseRoute("/nonsense-route-2099").view, "notFound");

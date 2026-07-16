@@ -1,14 +1,14 @@
 # React Portal Parity Migration Plan
 
-> **Status:** Portal chrome, Dashboard, Projects, project workspace, Orchestration Board, Sessions/Session Report, Task Breakdown Review, Project Task History, Alarms inbox, the full Settings group, Setup, and the React default-enable gate are complete, and every canonical Portal URL now renders React build-aware (slices 11a/11b closed the [Known gap](#known-gap-the-original-app-surfaces-never-took-their-canonical-urls)). Only the final Jinja retirement remains.
+> **Status:** Portal chrome, Dashboard, Projects, project workspace, Orchestration Board, Sessions/Session Report, Task Breakdown Review, Project Task History, Alarms inbox, the full Settings group, Setup, and the React default-enable gate are complete, and every canonical Portal URL now renders React build-aware (slices 11a/11b closed the [Known gap](#known-gap-the-original-app-surfaces-never-took-their-canonical-urls)). The final Jinja retirement is complete: `base.html` and the 14 templates that extended it are deleted, `login.html` is the only server-rendered page, and every React-owned route returns the missing-build recovery response instead of a Jinja fallback.
 
 **Goal:** Move Foreman AI HQ toward a coherent React authenticated operator console without leaving operators in a partial `/app` island that lacks the real Portal layout, dashboard, and Orchestration Board behavior.
 
-**Architecture:** FastAPI remains authoritative for authentication, persistence, task estimation, launch guardrails, Worker Run execution, token budget governance, review disposition, and audit evidence. React owns every normal user-facing route after each surface reaches parity. During migration, Jinja may continue implementing non-migrated surfaces. In the final state, only a minimal server-rendered Portal Recovery Surface remains for login and recovery when the React build is missing or partial; it is not a second operator console.
+**Architecture:** FastAPI remains authoritative for authentication, persistence, task estimation, launch guardrails, Worker Run execution, token budget governance, review disposition, and audit evidence. React owns every operator-facing canonical route. Only a minimal server-rendered Portal Recovery Surface remains: the login page, and the missing-build response for every other route when the React build is missing or partial; it is not a second operator console.
 
-**Current state:** A complete React build owns the authenticated front door, Dashboard, project workspace, normal governed Orchestration Board loop, Sessions/Session Report, canonical Task Breakdown Review, Project Task History, the Alarms inbox, all four Settings surfaces (Budget, Control Plane, Worker, Project), and Setup Overview. FastAPI selects the existing Jinja page when the React index or any referenced asset is missing.
+**Current state:** A complete React build owns the authenticated front door, Dashboard, project workspace, normal governed Orchestration Board loop, Sessions/Session Report, canonical Task Breakdown Review, Project Task History, the Alarms inbox, all four Settings surfaces (Budget, Control Plane, Worker, Project), and Setup Overview. FastAPI returns the missing-build recovery response when the React index or any referenced asset is missing; there is no Jinja page left to fall back to.
 
-Every canonical Portal URL now renders React build-aware, including `/dashboard`, `/projects`, `/projects/{id}`, and `/projects/{id}/board`. `/app/*` remains a transitional alias that resolves for existing deep links but is no longer any link's target, and `/board` stays a redirect shim onto the first connected project's board. Login stays server-rendered by decision, as the standalone Portal Recovery Surface. The final change retires the duplicated Jinja surfaces and makes `/app` redirect-only.
+Every canonical Portal URL now renders React build-aware, including `/dashboard`, `/projects`, `/projects/{id}`, and `/projects/{id}/board`. `/app/*` are permanent redirect aliases to their canonical URLs, and `/board` stays a redirect shim onto the first connected project's board. Login stays server-rendered by decision, as the standalone Portal Recovery Surface.
 
 ---
 
@@ -18,7 +18,7 @@ React owns the main authenticated operator-console front door without becoming a
 
 Normal login remains server-rendered as the Portal Recovery Surface. The React build owns the authenticated console after login; the standalone server-rendered login is the only entry point when the React build cannot load.
 
-Migrated React surfaces take over the existing canonical user-facing URLs (`/sessions`, `/alarms`, `/setup`, `/settings/*`, and equivalent project routes). Do not create a parallel `/app/*` route tree for remaining surfaces. During migration, each canonical GET may select React when the build is complete and its existing Jinja page when React is unavailable. Existing FastAPI mutation routes remain authoritative. `/app` is a transitional alias, not the final URL namespace.
+Migrated React surfaces take over the existing canonical user-facing URLs (`/sessions`, `/alarms`, `/setup`, `/settings/*`, and equivalent project routes). Do not create a parallel `/app/*` route tree for remaining surfaces. Every React-owned canonical GET returns the React shell when the build is complete and the missing-build recovery response when it is unavailable; no server-rendered Jinja equivalent remains. Existing FastAPI mutation routes remain authoritative. `/app/*` are permanent redirect aliases to their canonical URLs.
 
 After final migration, `/app`, `/app/projects/{project_id}`, and `/app/projects/{project_id}/board` stop rendering the frontend and remain only as permanent redirects to `/dashboard`, `/projects/{project_id}`, and `/projects/{project_id}/board`. This preserves old bookmarks without preserving duplicate route ownership.
 
@@ -39,7 +39,7 @@ Target end state:
 The server-rendered login page is the Portal Recovery Surface.
 
 FastAPI owns all backend rules and workflow state.
-Jinja remains non-migrated support until replaced surface-by-surface.
+Server-rendered Portal pages are retired except for the login page and the missing-build recovery response.
 The standalone server-rendered login page is the only recovery surface when React cannot load.
 ```
 
@@ -54,13 +54,13 @@ Non-goals:
 
 ## Phase 1: Roll Back the Incomplete React Default
 
-**Objective:** Restore the full existing Portal as the authenticated landing while React parity work continues.
+**Objective:** The authenticated landing is the React dashboard at `/dashboard`.
 
 **Behavior:**
 
-- Root `/` and successful login should land on the existing full Portal surface, likely `/dashboard` or `/projects`.
-- `/app` remains available as an experimental/migrated route.
-- Missing React build behavior remains safe: no blank shell, clear fallback/error.
+- Root `/` and successful login land on the React dashboard at `/dashboard`.
+- `/app` is a permanent redirect alias to its canonical React URL.
+- Missing React build behavior remains safe: no blank shell; the missing-build recovery response is shown instead.
 
 **Likely files:**
 
@@ -80,9 +80,9 @@ git diff --check
 
 **Acceptance criteria:**
 
-- Authenticated root/login do not land users in incomplete `/app` by default.
-- `/app` still works when built.
-- Missing/partial React build still never renders a broken blank shell.
+- Authenticated root/login land on `/dashboard`.
+- `/app` redirects to its canonical React URL.
+- Missing/partial React build returns the missing-build recovery response, not a broken blank shell.
 
 ---
 
@@ -90,7 +90,7 @@ git diff --check
 
 **Objective:** Make the React shell feel like the same app before adding more React surfaces.
 
-React shell must preserve the Jinja layout contract from `src/foreman_ai_hq/templates/base.html`:
+React shell must preserve the original Jinja layout contract that `base.html` once defined:
 
 - top brand
 - sidebar
@@ -116,22 +116,21 @@ React shell must preserve the Jinja layout contract from `src/foreman_ai_hq/temp
 
 **Implementation rule:**
 
-React navigation may use client-side routing for React-owned paths, but links to non-migrated Jinja surfaces should remain normal full-page anchors until those surfaces are migrated.
+React navigation uses client-side routing for React-owned paths. No non-migrated Jinja Portal surfaces remain.
 
 **Acceptance criteria:**
 
-- React and Jinja share the same visual app frame.
+- React preserves the original Portal visual app frame.
 - Sidebar project entries are available in React.
-- Non-migrated pages remain reachable from React chrome.
 - Active route/project state is clear.
 
 ---
 
 ## Phase 3: React Dashboard Parity
 
-**Objective:** `/app` should become a real dashboard-equivalent front door, not only a project picker.
+**Objective:** The React dashboard at `/dashboard` is the authenticated front door.
 
-React dashboard should include the same operator intent as `src/foreman_ai_hq/templates/dashboard.html`:
+React dashboard should include the same operator intent as the retired Jinja dashboard:
 
 - Operator next actions
 - Daily governed budget KPI
@@ -157,15 +156,15 @@ React dashboard should include the same operator intent as `src/foreman_ai_hq/te
 - `/app` answers “what should the operator do next?”
 - Dashboard data comes from authenticated FastAPI JSON.
 - Dashboard links route to existing workflows without duplicating backend actions.
-- React dashboard does not regress the existing Jinja dashboard until replacement is complete.
+- React dashboard is the sole operator dashboard; the Jinja dashboard is removed.
 
 ---
 
 ## Phase 4: React Orchestration Board Functional Parity
 
-**Objective:** React board must not replace the Jinja board until it supports the real operator workflow.
+**Objective:** React board is the only Orchestration Board surface and supports the full operator workflow.
 
-Parity with `src/foreman_ai_hq/templates/board.html` must include:
+The React board must include:
 
 - board status toolbar
 - project-scoped counts and history link
@@ -208,13 +207,13 @@ Parity with `src/foreman_ai_hq/templates/board.html` must include:
 
 **Implementation rule:**
 
-If a feature cannot be ported safely yet, the React board should clearly link to the Jinja board and must not be promoted as the replacement/default board.
+The React board is the sole Orchestration Board surface; it must not present a fallback link to a server-rendered board.
 
 **Acceptance criteria:**
 
 - Operators can perform the normal board loop in React: intake → estimate → launch → running refresh/status → review → done/block/archive.
 - React uses backend-authoritative routes/data for every workflow decision.
-- Jinja board and React board agree on task state, launch readiness, and evidence display.
+- React board reflects authoritative task state, launch readiness, and evidence display.
 - Tests cover every launch/review/action form that matters.
 
 ---
@@ -238,7 +237,7 @@ Candidate order:
 11a. ✅ Canonical URL ownership for Dashboard and Projects
 11b. ✅ Canonical URL ownership for project workspace and Board — closed the [Known gap](#known-gap-the-original-app-surfaces-never-took-their-canonical-urls)
 10. ✅ Login and Portal Recovery Surface — the login page stays server-rendered and standalone; see the superseded Decision Log entry for why React does not own it
-—. **Next:** Final Jinja retirement — delete `base.html` and the duplicated templates, flip `/app/*` to redirects, keep the standalone login
+12. ✅ Final Jinja retirement — deleted `base.html` and the duplicated templates, flipped `/app/*` to permanent redirects, kept the standalone login
 
 ### Slice ledger
 
@@ -259,13 +258,13 @@ Live record of each Phase 5 slice, the OpenSpec change that delivers it, and its
 | 11a | Canonical URL ownership for Dashboard and Projects | `react-canonical-dashboard-projects` | Archived |
 | 11b | Canonical URL ownership for project workspace and Board | `react-canonical-project-workspace-board` | Archived |
 | 10 | Login + Portal Recovery Surface | `standalone-portal-recovery-login` | Archived |
-| — | Final Jinja retirement | — | Not started |
+| 12 | Final Jinja retirement | `final-jinja-retirement` | Archived |
 
-The Final Jinja retirement change may now delete `base.html` together with the duplicated templates; the login page is self-contained and no authenticated route depends on it.
+The Final Jinja retirement change deletes `base.html` together with the duplicated templates; the login page was already self-contained with no authenticated route depending on it.
 
 ### Known gap: the original `/app` surfaces never took their canonical URLs
 
-> **Closed by slice 11b** (`react-canonical-project-workspace-board`, archived). Every canonical Portal URL now renders React build-aware, and `/app/*` is a transitional alias that nothing targets. This section is kept as the record of why the inversion was needed and how it was sequenced; the retirement change is no longer blocked.
+> **Closed by slice 11b** (`react-canonical-project-workspace-board`, archived). Every canonical Portal URL now renders React build-aware, and `/app/*` are permanent redirect aliases to their canonical URLs. This section is kept as the record of why the inversion was needed and how it was sequenced; the retirement change is no longer blocked.
 
 Slices 1–9 each moved a surface onto its existing canonical URL, because that rule was adopted after Phases 3–4 had already shipped. Dashboard, project workspace, and Orchestration Board predated the rule and lived only under `/app`. Their ✅ marks above were accurate but scoped to `/app/*`, not to the canonical routes an operator actually visits.
 
@@ -273,11 +272,11 @@ Verified route ownership as of slice 11b:
 
 | Canonical URL | Renders | React equivalent |
 |---|---|---|
-| `/dashboard` | React build-aware | `/app` (transitional alias) |
+| `/dashboard` | React build-aware | `/app` (permanent redirect alias) |
 | `/projects` | React build-aware | — |
-| `/projects/{id}` | React build-aware | `/app/projects/{id}` (transitional alias) |
-| `/projects/{id}/board` | React build-aware | `/app/projects/{id}/board` (transitional alias) |
-| `/board` | Jinja redirect shim | — |
+| `/projects/{id}` | React build-aware | `/app/projects/{id}` (permanent redirect alias) |
+| `/projects/{id}/board` | React build-aware | `/app/projects/{id}/board` (permanent redirect alias) |
+| `/board` | redirect shim | — |
 | `/sessions`, `/sessions/{id}` | React | — |
 | `/setup` | React | — |
 | `/settings/*` (all four) | React | — |
@@ -286,7 +285,7 @@ Verified route ownership as of slice 11b:
 
 This blocked the final retirement. Retirement makes `/app` a permanent redirect to `/dashboard`, but `/dashboard` rendered Jinja: deleting the Jinja templates would break it, and keeping them would make `/app` redirect to the Jinja dashboard and strand the React one. Either outcome is a regression that presents as a working redirect.
 
-Slice 11 closed the gap by inverting the relationship: canonical URLs render React build-aware, `/app/*` became the transitional alias it was always specified to be. It was split as suggested. Slice 11a (`react-canonical-dashboard-projects`) took `/dashboard` and `/projects`, including the net-new React Projects view, and moved `_default_portal_landing` to `/dashboard`. Slice 11b (`react-canonical-project-workspace-board`) took the remaining half: `/projects/{id}` and `/projects/{id}/board`, and moved every in-shell project target — entry cards, the projected `board_href` and Restore `next_href`, the Task Breakdown Review board link, and the sidebar — onto the canonical URLs. Retirement now only has to delete templates and flip `/app` to a redirect.
+Slice 11 closed the gap by inverting the relationship: canonical URLs render React build-aware, `/app/*` became the permanent redirect alias it was always specified to be. It was split as suggested. Slice 11a (`react-canonical-dashboard-projects`) took `/dashboard` and `/projects`, including the net-new React Projects view, and moved `_default_portal_landing` to `/dashboard`. Slice 11b (`react-canonical-project-workspace-board`) took the remaining half: `/projects/{id}` and `/projects/{id}/board`, and moved every in-shell project target — entry cards, the projected `board_href` and Restore `next_href`, the Task Breakdown Review board link, and the sidebar — onto the canonical URLs. Retirement now only has to delete templates and flip `/app` to a redirect.
 
 **Ordering: settled, inversion-first.** Slice 11 was listed after Login, but ran first. Login redirects through `_default_portal_landing`, which returned `/app` when the build was available, so Login-first would have hardcoded a URL slice 11 immediately rewrote. Slice 11a moved that landing to `/dashboard`, so Login can now be written against its final URL once. The slice numbers keep their original meaning — 10 is still Login — and the ledger orders rows by execution rather than renumbering.
 
@@ -295,10 +294,10 @@ For each surface:
 - Read the Jinja template and route helper first.
 - Add authenticated JSON endpoint only if needed.
 - Extend React routing to the existing canonical user-facing URL; do not add a parallel `/app/*` URL for the migrated surface.
-- Keep build-aware Jinja fallback on that canonical GET until the final retirement change.
+- React owns the canonical GET; the only fallback when the build is missing is the missing-build recovery response.
 - Keep FastAPI authoritative for mutations.
 - Add regression tests for auth, JSON shape, and action behavior.
-- Do not remove the Jinja path until React parity is verified or fallback is explicitly retained.
+- The Jinja templates have been removed; the missing-build recovery response is the only retained fallback.
 
 First remaining change: migrate `/sessions` and `/sessions/{session_id}` together. The list and report form one operator evidence workflow; splitting them would preserve an immediate React-to-Jinja transition and leave Alarms and Task Breakdown links dependent on an unmigrated report. This slice should add no new workflow mutations.
 
@@ -312,13 +311,11 @@ The React Alarms inbox must not copy the current Dismiss-only limitation or expo
 
 React Alarms provides bookmarkable Open, Resolved, and All filters, defaulting to Open. Resolved entries retain action, sanitized payload summary, resolution timestamp, and Session Report link so the existing `Audit kept` claim is visible rather than hidden in backend data.
 
-Settings migrate before Setup Overview. Budget Settings establishes the simplest authenticated React mutation pattern, followed by Control Plane, Worker, and Project Settings. Setup migrates after those destinations so its next-action flow no longer sends operators back into Jinja. Do not combine all setup/settings work into one large change.
+Settings migrate before Setup Overview. Budget Settings establishes the simplest authenticated React mutation pattern, followed by Control Plane, Worker, and Project Settings. Setup migrates after those destinations so its next-action flow links to React Settings surfaces. Do not combine all setup/settings work into one large change.
 
-Setup Overview may show `Ready to launch` only when Control Plane, Token Budget, and Worker Adapter requirements pass and at least one Connected Project has `launch_ready` capability. The current Jinja implementation incorrectly treats Projects as optional and must be corrected before or with the relevant approved change; React must not copy that drift.
+Setup Overview shows `Ready to launch` only when Control Plane, Token Budget, and Worker Adapter requirements pass and at least one Connected Project has `launch_ready` capability. This is enforced by the backend and surfaced by the React Setup Overview without drift.
 
-Before remaining React slices begin, use a small standalone OpenSpec change to correct that current Jinja Setup readiness claim and add targeted tests. Do not fold the truthfulness fix into Sessions or wait until the later React Setup migration.
-
-Board-linked surfaces take priority over admin surfaces. Task Breakdown Review follows Sessions because it links orchestration-token Sessions into Session Reports; Project Task History follows so both Markdown intake and archive/history branches of the React Board stop exiting into Jinja. Alarms and Settings migrate after those primary Board journeys are coherent.
+Board-linked surfaces take priority over admin surfaces. Task Breakdown Review follows Sessions because it links orchestration-token Sessions into Session Reports; Project Task History follows so Markdown intake and archive/history branches remain inside the React Board workflow. Alarms and Settings migrate after those primary Board journeys are coherent.
 
 React Task Breakdown Review preserves every current editable contract field. Candidate decision fields remain immediately visible; detailed slicing evidence uses progressive disclosure. Global contract, constraints, verification, rejected items, non-goals, and recommended sequence remain visible alongside candidates. React must not reduce review to accept/reject cards that hide or drop contract data.
 
@@ -334,7 +331,7 @@ Successful login always opens the React Dashboard. The login flow does not prese
 
 When the React app has loaded, it owns branded not-found pages and recoverable data/action errors inside the normal Portal experience, with retry/navigation paths and sanitized messages. React owns not-found only for routes it navigates to in-shell; FastAPI keeps answering unknown URLs, because a shell catch-all would turn a mistyped API path into a `200`. The server-rendered Portal Recovery Surface handles only frontend boot failure and fallback login; it is not the normal error renderer. Raw backend exception details must not reach operator-facing error UI: a failed JSON handoff renders a fixed per-surface message, while a negotiated action outcome still surfaces the sanitized text the backend authored for the operator. A frontend invariant enforces this (`react-sanitized-load-errors`); it is not left to convention, which is how five of thirteen views drifted before it existed.
 
-Each migrated Jinja surface is frozen rather than extended once React owns its canonical route. It remains temporarily executable only as missing-build fallback and a parity oracle. After every normal surface, login, and recovery behavior passes final browser proof, a separate Jinja-retirement change removes all duplicated templates/routes/assets together, preserves only the Portal Recovery Surface, and adds an invariant test preventing normal routes from rendering retired templates.
+React owns every normal operator-facing canonical route. The Jinja templates that served as missing-build fallbacks and parity oracles have been deleted; the only server-rendered Portal pages are the login page and the missing-build recovery response. The test suite includes an invariant that the templates directory contains only `login.html`.
 
 Each numbered remaining migration slice is its own OpenSpec change and verification gate. Sessions list/report remain paired by explicit decision; no other slices are bundled by default. Sync and archive each completed change before proposing the next one.
 
@@ -346,19 +343,18 @@ Remaining slices preserve the established React shell, design tokens, visual lan
 
 ---
 
-## Phase 6: Make React the Default Again
+## Phase 6: React is the Default Authenticated Landing
 
-**Objective:** Re-enable React as the authenticated landing only after parity gates pass.
+**Objective:** React is the authenticated landing unconditionally; the final Jinja retirement is complete.
 
-**Status:** Complete through `react-portal-default-enable`; the landing is build-aware and preserves Jinja fallback.
+**Status:** Complete. The canonical landing is `/dashboard`, served by the React shell when the build is present and by the missing-build recovery response when it is not. No Jinja fallback remains.
 
-Default landing can return to React when:
+Default landing requirements:
 
 - React shell uses full Portal chrome.
 - React dashboard is dashboard-equivalent.
 - React Orchestration Board is functionally equivalent for the normal governed task lifecycle.
-- Missing/partial build fallback is safe.
-- Non-migrated fallback links are explicit and not confusing.
+- Missing/partial build returns the missing-build recovery response instead of a blank shell or a Jinja page.
 - Tests prove root/login routing behavior under auth-required and auth-disabled modes.
 
 **Verification gate:**
@@ -378,8 +374,7 @@ Add browser/manual smoke evidence before declaring the UI replacement complete:
 3. Open project workspace.
 4. Open project board.
 5. Confirm task intake, filtering, launch/review controls, and details are present.
-6. Confirm non-migrated pages still reachable.
-7. Confirm missing-build fallback still works.
+6. Confirm missing-build recovery response still works when the build is moved aside.
 
 ---
 
@@ -447,10 +442,10 @@ git diff --check
 - React is the right long-term direction for the authenticated operator console because Foreman AI HQ is becoming an interactive control plane: dashboard next actions, project switching, board controls, setup workflows, queue state, review controls, evidence panels, and future live updates are app-like interactions.
 - React should not be an incomplete separate `/app` island.
 - Backend authority remains in FastAPI. React is a presentation/client-state layer, not a duplicate workflow engine.
-- The existing Jinja Portal remains the reliable fallback until each React surface reaches parity.
+- The Jinja Portal surfaces have been retired; the missing-build recovery response is the only fallback when the React build is unavailable.
 - Final frontend boundary: React owns every normal user-facing route except login. The server-rendered login page is the normal entry point and the Portal Recovery Surface; it does not retain duplicated operator workflows.
-- Migrated React surfaces own existing canonical user-facing URLs. `/app` remains only a transitional alias and must not grow into a parallel route namespace.
-- Final `/app/*` compatibility is redirect-only; canonical Portal URLs are the only rendered route tree.
+- Migrated React surfaces own existing canonical user-facing URLs. `/app` is a permanent redirect alias and must not grow into a parallel route namespace.
+- `/app/*` redirect compatibility is permanent; canonical Portal URLs are the only rendered route tree.
 - Sessions list and full Session Report migrate together as the first remaining read-only vertical slice.
 - React Session Report preserves all existing summary and audit evidence; collapsible presentation is allowed, omission is not.
 - React Sessions list auto-refreshes only while at least one session is active, then stops polling.

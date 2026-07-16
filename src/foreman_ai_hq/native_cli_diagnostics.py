@@ -9,7 +9,7 @@ MAX_NEXT_ACTION_CHARS = 220
 MAX_DETAIL_CHARS = 500
 SETUP_HREF = "/settings/workers"
 _SECRET_PATTERNS = (
-    re.compile(r"sk[-_][A-Za-z0-9_.-]+"),
+    re.compile(r"(?<!\w)sk[-_][A-Za-z0-9_.-]+"),
     re.compile(r"Bearer\s+[A-Za-z0-9_.-]+", re.IGNORECASE),
     re.compile(r"(?i)(api[_-]?key|token|secret|password|authorization)\s*[:=]\s*[^\s,;]+"),
 )

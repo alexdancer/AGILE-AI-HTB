@@ -67,40 +67,40 @@ def test_portal_renders_worker_token_component_breakdown(tmp_path, monkeypatch):
     )
 
     with _client(tmp_path) as client:
-        dashboard = client.get("/dashboard", headers=_portal_headers())
-        report = client.get(f"/sessions/{session['id']}", headers=_portal_headers())
-        board = client.get(f"/projects/{project['id']}/board", headers=_portal_headers())
+        dashboard = client.get("/api/dashboard", headers=_portal_headers())
+        report = client.get(f"/api/sessions/{session['id']}/report", headers=_portal_headers())
+        board = client.get(f"/api/projects/{project['id']}/board", headers=_portal_headers())
 
     assert dashboard.status_code == 200
-    assert "Worker token component breakdown" in dashboard.text
-    assert "completed 90" in dashboard.text
-    assert "normalized actual/task budget" in dashboard.text
-    assert "provider raw total/evidence" in dashboard.text
-    assert "fresh input/new prompt text" in dashboard.text
-    assert "cache read/reused context" in dashboard.text
-    assert "reported cost" in dashboard.text
+    dashboard_payload = dashboard.json()
+    worker = dashboard_payload["worker_execution"]
+    assert worker["status_split"]["completed"] == 90
+    assert worker["components"]["cost"] == 0.25
+    component_labels = {item["label"] for item in worker["components"]["items"]}
+    assert "normalized actual/task budget" in component_labels
+    assert "provider raw total/evidence" in component_labels
+    assert "fresh input/new prompt text" in component_labels
+    assert "cache read/reused context" in component_labels
+
     assert report.status_code == 200
-    assert "Worker token components" in report.text
-    assert "normalized_budget_tokens" in report.text
-    assert "provider/raw total_tokens" in report.text
-    assert "provider raw total/evidence" in report.text
-    assert "reasoning" in report.text
-    assert "Raw usage JSON" in report.text
-    assert "cache_read_input_tokens" in report.text
+    report_payload = report.json()
+    assert report_payload["tokens"]["worker_components"]["available"] is True
+    report_labels = {item["label"] for item in report_payload["tokens"]["worker_components"]["items"]}
+    assert "normalized actual/task budget" in report_labels
+    assert "provider raw total/evidence" in report_labels
+    assert "reasoning" in report_labels
+
     assert board.status_code == 200
-    assert "Actual token components recorded · expand Details" in board.text
-    assert "<summary>Actual token components</summary>" in board.text
-    assert "normalized actual/task budget" in board.text
-    assert "provider raw total/evidence" in board.text
-    assert "cache read/reused context" in board.text
-    assert "Actual: 90" in board.text
+    board_payload = board.json()
+    review_tasks = board_payload["tasks_by_status"]["Review"]
+    assert any(t["id"] == task["id"] and t["actual_tokens"] == 90 for t in review_tasks)
 
 
 def test_dashboard_empty_worker_components_show_unavailable_state(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
 
     with _client(tmp_path) as client:
-        response = client.get("/dashboard", headers=_portal_headers())
+        response = client.get("/api/dashboard", headers=_portal_headers())
 
     assert response.status_code == 200
-    assert "Component breakdown unavailable" in response.text
+    assert response.json()["worker_execution"]["components"]["available"] is False

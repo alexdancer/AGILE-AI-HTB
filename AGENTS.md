@@ -46,3 +46,5 @@ For implementation work, keep changes minimal, run targeted tests, then mark com
 ## Project verification
 
 Use `uv run pytest` for the Python test suite when using the repo-managed uv environment. If the environment is already active and dependencies are installed, `pytest` is acceptable.
+Run `openspec validate --specs --strict --no-interactive` to verify OpenSpec spec consistency.
+Run `npm run check` in `frontend/` to run the React shell tests and production build.

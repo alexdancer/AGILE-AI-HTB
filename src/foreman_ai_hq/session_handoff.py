@@ -99,10 +99,10 @@ def build_session_report_context(request: Request, session_id: str) -> dict[str,
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="session not found") from exc
     artifact = dict(artifact)
-    artifact["worker_run_events"] = [
+    artifact["worker_run_events"] = list(reversed([
         {**event, "detail": _redact(event.get("detail") or {})}
         for event in artifact.get("worker_run_events", [])
-    ]
+    ]))
     review = _related_agent_review(database_path, session_id)
     if review and review.get("_relation") == "session":
         artifact["session"]["guardrail_overrides"] = {

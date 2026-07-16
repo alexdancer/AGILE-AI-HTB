@@ -31,18 +31,24 @@ def test_sessions_index_renders_mockup_style_session_table(tmp_path, monkeypatch
             cost=0.01,
             raw_usage={"total_tokens": 100},
         )
-        response = client.get("/sessions", headers=_portal_headers())
+        # /sessions is now the React shell (or the missing-build recovery page); the
+        # row data it renders comes from the JSON handoff, so assert against that
+        # directly instead of the retired Jinja markup.
+        response = client.get("/api/sessions", headers=_portal_headers())
 
     assert response.status_code == 200
-    html = response.text
-    assert "All sessions" in html
-    assert "summary before raw report" in html
-    assert "table-wrap" in html
-    assert "Review live portal" in html
-    assert "100" in html
-    assert "0 runs" in html
-    assert "0 events" in html
-    assert "zone:" in html
+    payload = response.json()
+    rows = {row["id"]: row for row in payload["sessions"]}
+    row = rows[started["session_id"]]
+    # "All sessions" (page heading), "summary before raw report" (an ordering
+    # hint), and "table-wrap" (a CSS class) were pure Jinja-mockup presentation
+    # with no backend data behind them; the React Sessions view owns that layout.
+    assert row["task_preview"] == "Review live portal"
+    assert row["token_totals"]["total_tokens"] == 100
+    assert row["evidence_counts"]["worker_runs"] == 0
+    assert row["evidence_counts"]["worker_events"] == 0
+    # "zone:" was just a label prefix; the zone value itself is backend state.
+    assert row["current_zone"] == "green"
 
 
 def test_sessions_index_compacts_long_task_text_preserves_scan_fields(tmp_path, monkeypatch):
@@ -64,24 +70,33 @@ def test_sessions_index_compacts_long_task_text_preserves_scan_fields(tmp_path, 
             raw_usage={"total_tokens": 1290},
         )
 
-        index = client.get("/sessions", headers=_portal_headers())
-        report = client.get(f"/sessions/{started['session_id']}", headers=_portal_headers())
+        index = client.get("/api/sessions", headers=_portal_headers())
+        report = client.get(f"/api/sessions/{started['session_id']}/report", headers=_portal_headers())
 
     assert index.status_code == 200
-    html = index.text
-    assert "compact-text lines-2" in html
-    assert "Review compact sessions" in html
-    assert "FULL_TASK_TAIL_2099" not in html
-    assert f"/sessions/{started['session_id']}" in html
-    assert "claude-haiku" in html
-    assert "1,234" in html
-    assert "56" in html
-    assert "1,290" in html
-    assert "0 runs" in html
-    assert "0 events" in html
-    assert "zone:" in html
+    index_payload = index.json()
+    rows = {row["id"]: row for row in index_payload["sessions"]}
+    row = rows[started["session_id"]]
+    # The index row's task_preview is bounded to 240 chars by the handoff itself
+    # (session_handoff.sessions_projection), so the tail is genuinely dropped here
+    # -- that's backend truncation, not a CSS "compact-text lines-2" clamp (which
+    # was purely presentational and is dropped with this migration).
+    assert row["task_preview"].startswith("Review compact sessions")
+    assert "FULL_TASK_TAIL_2099" not in row["task_preview"]
+    assert row["report_href"] == f"/sessions/{started['session_id']}"
+    assert row["model"] == "claude-haiku"
+    assert row["token_totals"]["prompt_tokens"] == 1234
+    assert row["token_totals"]["completion_tokens"] == 56
+    assert row["token_totals"]["total_tokens"] == 1290
+    assert row["evidence_counts"]["worker_runs"] == 0
+    assert row["evidence_counts"]["worker_events"] == 0
+    assert row["current_zone"] == "green"
     assert report.status_code == 200
-    assert "FULL_TASK_TAIL_2099" in report.text
+    report_payload = report.json()
+    # The full report bounds the task at 20,000 chars, so this short task is
+    # returned in full -- the tail that the index compacted away is preserved here.
+    assert report_payload["session"]["task"]["preview"].endswith("FULL_TASK_TAIL_2099")
+    assert report_payload["session"]["task"]["truncated"] is False
 
 
 def test_sessions_index_and_report_label_agent_review_accounting(tmp_path, monkeypatch):
@@ -125,21 +140,25 @@ def test_sessions_index_and_report_label_agent_review_accounting(tmp_path, monke
     )
 
     with _client(tmp_path) as client:
-        index = client.get("/sessions", headers=_portal_headers())
-        report = client.get(f"/sessions/{review_session['id']}", headers=_portal_headers())
+        index = client.get("/api/sessions", headers=_portal_headers())
+        report = client.get(f"/api/sessions/{review_session['id']}/report", headers=_portal_headers())
 
     assert index.status_code == 200
-    assert "Agent Review" in index.text
-    assert "100" in index.text
-    assert "0 runs" in index.text
+    index_rows = {row["id"]: row for row in index.json()["sessions"]}
+    index_row = index_rows[review_session["id"]]
+    assert index_row["kind"] == "Agent Review"
+    assert index_row["token_totals"]["total_tokens"] == 100
+    assert index_row["evidence_counts"]["worker_runs"] == 0
     assert report.status_code == 200
-    assert "Agent Review" in report.text
-    assert "Review source" in report.text
-    assert "Control Plane" in report.text
-    assert "reporting_summary" in report.text
-    assert "approve · DEMO review summary 2099." in report.text
-    assert "Agent Review for task DEMO_TASK_999" in report.text
-    assert "missing Worker Run evidence" not in report.text
+    report_payload = report.json()
+    assert report_payload["session"]["kind"] == "Agent Review"
+    # "Review source" was just the Summary label used for Agent Review sessions
+    # (SessionReport.jsx); the data behind it is adapter_id/tracking_mode below.
+    assert report_payload["summary"]["adapter_id"] == "Control Plane"
+    assert report_payload["summary"]["tracking_mode"] == "reporting_summary"
+    assert report_payload["summary"]["result"]["preview"] == "approve · DEMO review summary 2099."
+    assert report_payload["summary"]["selected_project"]["preview"] == "Agent Review for task DEMO_TASK_999"
+    assert "missing Worker Run evidence" not in report_payload["summary"]["missing_labels"]
     breakdown = db.session_token_breakdown(tmp_path / "harness.db", review_session["id"])
     assert breakdown["by_category"]["reporting_summary"] == 100
     assert breakdown["by_source"]["control_plane"] == 100
@@ -205,19 +224,24 @@ def test_worker_session_report_shows_related_agent_review_results_and_tokens(tmp
     )
 
     with _client(tmp_path) as client:
-        response = client.get(f"/sessions/{worker_session['id']}", headers=_portal_headers())
+        response = client.get(f"/api/sessions/{worker_session['id']}/report", headers=_portal_headers())
 
     assert response.status_code == 200
-    html = response.text
-    assert "Agent Review results" in html
-    assert "completed · approve" in html
-    assert "DEMO Agent Review summary 2099" in html
-    assert "DEMO finding 2099" in html
-    assert "reviewed: 2099-01-02T03:04:05+00:00" in html
-    assert "anthropic/claude-sonnet-4-20250514" in html
-    assert "49 review/control-plane tokens" in html
-    assert f'/sessions/{review_session["id"]}' in html
-    assert "500" in html
+    payload = response.json()
+    review = payload["related_agent_review"]
+    assert review is not None  # presence of this block *is* "Agent Review results"
+    # "completed · approve" was the joined display string; status and
+    # recommendation are the backend fields behind it.
+    assert review["status"] == "completed"
+    assert review["recommendation"] == "approve"
+    assert review["summary"]["preview"] == "DEMO Agent Review summary 2099"
+    finding_previews = [item["preview"] for item in review["findings"]["items"]]
+    assert any("DEMO finding 2099" in preview for preview in finding_previews)
+    assert review["reviewed_at"] == "2099-01-02T03:04:05+00:00"
+    assert review["model"] == "anthropic/claude-sonnet-4-20250514"
+    assert review["review_total_tokens"] == 49
+    assert review["review_session_href"] == f'/sessions/{review_session["id"]}'
+    assert payload["tokens"]["provider_totals"]["total_tokens"] == 500
     worker_breakdown = db.session_token_breakdown(database_path, worker_session["id"])
     assert worker_breakdown["by_category"]["worker_execution"] == 500
     assert worker_breakdown["by_category"]["reporting_summary"] == 0
@@ -266,17 +290,24 @@ def test_worker_session_report_shows_failed_agent_review_without_fabricated_zero
     )
 
     with _client(tmp_path) as client:
-        response = client.get(f"/sessions/{worker_session['id']}", headers=_portal_headers())
+        response = client.get(f"/api/sessions/{worker_session['id']}/report", headers=_portal_headers())
 
     assert response.status_code == 200
-    html = response.text
-    assert "Agent Review results" in html
-    assert "failed · needs_changes" in html
-    assert "Agent Review failed; operator can still mark done or block manually." in html
-    assert "DEMO provider timeout 2099" in html
-    assert "reviewed: 2099-01-02T03:04:05+00:00" in html
-    assert "review tokens unavailable" in html
-    assert "0 review/control-plane tokens" not in html
+    payload = response.json()
+    review = payload["related_agent_review"]
+    assert review is not None
+    # "failed · needs_changes" was the joined display string; status and
+    # recommendation are the backend fields behind it.
+    assert review["status"] == "failed"
+    assert review["recommendation"] == "needs_changes"
+    assert review["summary"]["preview"] == "Agent Review failed; operator can still mark done or block manually."
+    assert review["error"]["preview"] == "DEMO provider timeout 2099"
+    assert review["reviewed_at"] == "2099-01-02T03:04:05+00:00"
+    # "review tokens unavailable" is the client's label for a null value here --
+    # the review's own token_totals are all zero, but no token_turn was ever
+    # recorded for the review session, so review_total_tokens stays None rather
+    # than fabricating a "0 review/control-plane tokens" total.
+    assert review["review_total_tokens"] is None
 
 
 def test_session_report_renders_totals_alarm_checkpoint_without_internal_artifact_link(tmp_path, monkeypatch):
@@ -358,45 +389,53 @@ def test_session_report_renders_totals_alarm_checkpoint_without_internal_artifac
             },
         )
 
-        response = client.get(f"/sessions/{session_id}", headers=_portal_headers())
+        response = client.get(f"/api/sessions/{session_id}/report", headers=_portal_headers())
 
     assert response.status_code == 200
-    html = response.text
-    assert "Audit session" in html
-    assert "500" in html
-    assert "yellow" in html
-    assert "CHECKPOINT_FAIL" in html
-    assert "budget_health" in html
-    assert "Requires review" in html
-    assert "Status / result" in html
-    assert "review needed" in html
-    assert "Worker launch" in html
-    assert "opencode" in html
-    assert "proxy_governed" in html
-    assert "target: opencode" in html
-    assert "Usage / guardrails" in html
-    assert "Evidence coverage" in html
-    assert "1 runs" in html
-    assert "1 timeline events" in html
-    assert "1 errors" in html
-    assert "missing project evidence" in html
-    assert "raw timeline evidence" in html
-    assert "raw prompt context evidence" in html
-    assert f"/session/{session_id}/artifact" not in html
-    assert "session_key_hash" not in html
-    assert "guardrail_overrides" not in html
-    assert "Worker Run timeline" in html
-    assert "Worker Run failed" in html
-    assert "error_type=workdir_mismatch" in html
-    assert "returncode=124" in html
-    assert "retryable=True" in html
-    assert "control_plane" in html
-    assert "Repo Context Brief" in html
-    assert "AGENTS.md" in html
-    assert "pyproject.toml" in html
-    assert "Agent Review results" not in html
-    assert "review/control-plane tokens" not in html
-    assert "***" not in html
+    payload = response.json()
+    assert payload["session"]["task"]["preview"] == "Audit session"
+    # The projected session object never carries the internal-only fields.
+    assert set(payload["session"]) == {"id", "kind", "task", "model", "status", "started_at", "active"}
+    assert payload["tokens"]["provider_totals"]["total_tokens"] == 500
+    assert any(item["zone"] == "yellow" for item in payload["zone_timeline"]["items"])
+    assert payload["alarms"]["items"][0]["type"] == "CHECKPOINT_FAIL"
+    assert payload["checkpoints"]["items"][0]["name"] == "budget_health"
+    assert payload["checkpoints"]["items"][0]["passed"] is False
+    # "Requires review" (a pill) and "review needed" (inline text) were two Jinja
+    # labels for the same boolean; the React view keeps only the inline text, so
+    # one backend assertion now covers both retired labels.
+    assert payload["summary"]["requires_review"] is True
+    # "Status / result", "Worker launch", "Usage / guardrails", and "Evidence
+    # coverage" were section headings with no data of their own -- dropped.
+    assert payload["summary"]["adapter_id"] == "opencode"
+    assert payload["summary"]["tracking_mode"] == "proxy_governed"
+    # The Jinja "target: " prefix is retired; the launch-target value is backend state.
+    assert payload["summary"]["launch_target"]["preview"] == "opencode"
+    assert payload["summary"]["evidence_counts"]["worker_runs"] == 1
+    assert payload["summary"]["evidence_counts"]["worker_events"] == 1
+    assert payload["summary"]["evidence_counts"]["error_events"] == 1
+    assert payload["summary"]["selected_project"]["preview"] == "missing project evidence"
+    # "Worker Run timeline" (heading) and "raw timeline evidence" /
+    # "raw prompt context evidence" (static <summary> labels next to those
+    # sections) carried no data of their own in the deleted Jinja template and
+    # have no equivalent literal in SessionReport.jsx -- retired, dropped.
+    worker_event = payload["worker_timeline"]["items"][0]
+    assert worker_event["title"] == "Worker Run failed"
+    assert "error_type=workdir_mismatch" in worker_event["detail_summary"]
+    assert "returncode=124" in worker_event["detail_summary"]
+    assert "retryable=True" in worker_event["detail_summary"]
+    assert "control_plane" in payload["tokens"]["normalized"]["by_category"]
+    repo_brief = payload["repo_context_briefs"]["items"][0]
+    assert repo_brief["documents"]["items"][0]["path"] == "AGENTS.md"
+    assert repo_brief["manifests"]["items"][0] == "pyproject.toml"
+    # No related Agent Review for this plain Worker session.
+    assert payload["related_agent_review"] is None
+    serialized = json.dumps(payload)
+    assert "/artifact" not in serialized
+    assert "session_key_hash" not in serialized
+    assert "guardrail_overrides" not in serialized
+    assert "api_key" not in serialized
+    assert "***" not in serialized
 
 
 def test_session_report_compacts_summary_but_preserves_full_evidence(tmp_path, monkeypatch):
@@ -469,27 +508,38 @@ def test_session_report_compacts_summary_but_preserves_full_evidence(tmp_path, m
             detail={"custom_payload": ("timeline payload " * 30) + long_detail_tail},
         )
 
-        response = client.get(f"/sessions/{session_id}", headers=_portal_headers())
+        response = client.get(f"/api/sessions/{session_id}/report", headers=_portal_headers())
 
     assert response.status_code == 200
-    html = response.text
-    assert "compact-text lines-2" in html
-    assert "compact-text lines-3" in html
-    assert "Full task and launch evidence" in html
-    assert "Full launch target" in html
-    assert "Full status/result" in html
-    assert "Timeline detail" in html
-    assert "raw-evidence" in html
-    assert "Repo Context Brief" in html
-    assert "REPORT_TASK_TAIL_2099" in html
-    assert long_command_tail in html
-    assert long_detail_tail in html
-    assert "custom_payload" in html
-    assert long_result_tail in html
-    assert repo_tail in html
-    assert "opencode" in html
-    assert "native_usage" in html
-    assert "compact-report-project" in html
+    payload = response.json()
+    # "compact-text lines-2/3" were CSS line-clamp classes -- the Jinja page
+    # relied on the browser to visually clip already-bounded preview text; the
+    # React BoundedText component does the same with no equivalent class name.
+    # "Full task and launch evidence" / "Full launch target" / "Full status/
+    # result" / "Timeline detail" were <details><summary> toggle labels for
+    # revealing the same data; React's BoundedText exposes truncated/full_href
+    # instead, so the underlying data is asserted below rather than the labels.
+    # "raw-evidence" was a CSS hook with no data of its own. "Repo Context
+    # Brief" is a bare heading. All dropped as pure presentation.
+    task = payload["session"]["task"]
+    assert task["preview"].endswith("REPORT_TASK_TAIL_2099")
+    assert task["truncated"] is False
+    launch_target = payload["summary"]["launch_target"]
+    assert long_command_tail in launch_target["preview"]
+    assert launch_target["truncated"] is False
+    result = payload["summary"]["result"]
+    assert long_result_tail in result["preview"]
+    assert result["truncated"] is False
+    worker_event = payload["worker_timeline"]["items"][0]
+    assert "custom_payload" in worker_event["detail"]["preview"]
+    assert long_detail_tail in worker_event["detail"]["preview"]
+    assert worker_event["detail"]["truncated"] is False
+    repo_brief = payload["repo_context_briefs"]["items"][0]
+    assert repo_tail in repo_brief["text"]["preview"]
+    assert repo_brief["text"]["truncated"] is False
+    assert payload["summary"]["adapter_id"] == "opencode"
+    assert payload["summary"]["tracking_mode"] == "native_usage"
+    assert payload["summary"]["selected_project"]["preview"] == "compact-report-project"
 
 
 def test_session_report_missing_session_returns_404(tmp_path, monkeypatch):

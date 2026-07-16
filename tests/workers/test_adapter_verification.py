@@ -1032,17 +1032,23 @@ def test_workers_page_renders_verify_form_without_secrets(tmp_path, monkeypatch)
             supported_models=["opencode/gpt-5.1"],
         )
 
-        response = client.get("/settings/workers?adapter_id=opencode", headers=_auth_headers())
+        response = client.get("/api/settings/workers?adapter_id=opencode", headers=_auth_headers())
 
     assert response.status_code == 200
-    assert 'action="/settings/workers/opencode/verify"' in response.text
-    assert 'name="model"' in response.text
-    assert 'name="proxy_url"' in response.text
-    assert "http://127.0.0.1:8000/v1" in response.text
-    assert "CLI Worker" in response.text
-    assert "CLI: Track native usage after run" in response.text
-    assert "Proxy URL hidden: this adapter is currently treated as a CLI Worker" in response.text
-    assert "API / Proxy: Governed through Harness Proxy" not in response.text
+    payload = response.json()
+    assert payload["active_adapter_id"] == "opencode"
+    adapter = next(a for a in payload["adapters"] if a["id"] == "opencode")
+    assert adapter["configured"] is True
+    assert adapter["connection_type"] == "CLI Worker"
+    assert adapter["tracking"]["mode"] == "unverified"
+    assert adapter["tracking"]["label"] == "Unverified"
+    assert any(option["mode"] == "native_usage" for option in adapter["tracking_mode_options"])
+    assert adapter["supported_models"] == ["opencode/gpt-5.1"]
+    assert adapter["discovered_models"] == []
+    assert adapter["launchable"] is False
+    assert adapter["diagnostics"] is None
+    assert adapter["verification_evidence"] is None
+    assert adapter["verification_diagnostic"] is None
     assert "super-secret-key" not in response.text
     assert "sk_sess_" not in response.text
 
@@ -1068,13 +1074,24 @@ def test_workers_page_separates_api_proxy_worker_from_cli_modes(tmp_path, monkey
             supported_models=["openai/gpt-5.4-mini"],
         )
 
-        response = client.get("/settings/workers?adapter_id=opencode", headers=_auth_headers())
+        response = client.get("/api/settings/workers?adapter_id=opencode", headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "API / Proxy-capable CLI Worker" in response.text
-    assert "API / Proxy: Governed through Harness Proxy" in response.text
-    assert "API / Proxy settings" in response.text
-    assert "Only used by API / Proxy mode" in response.text
+    payload = response.json()
+    assert payload["active_adapter_id"] == "opencode"
+    adapter = next(a for a in payload["adapters"] if a["id"] == "opencode")
+    assert adapter["configured"] is True
+    assert adapter["connection_type"] == "API / Proxy-capable CLI Worker"
+    option_modes = {option["mode"] for option in adapter["tracking_mode_options"]}
+    assert option_modes == {"proxy_governed", "native_usage", "observed_only"}
+    assert any(
+        option["mode"] == "proxy_governed" and option["label"] == "API / Proxy: Governed through Harness Proxy"
+        for option in adapter["tracking_mode_options"]
+    )
+    assert adapter["supported_models"] == ["openai/gpt-5.4-mini"]
+    assert adapter["discovered_models"] == []
+    assert adapter["launchable"] is False
+    assert adapter["verification_evidence"] is None
 
 
 def test_workers_page_does_not_trust_proxy_mode_config_without_proxy_template(tmp_path, monkeypatch):
@@ -1088,12 +1105,19 @@ def test_workers_page_does_not_trust_proxy_mode_config_without_proxy_template(tm
             supported_models=["opencode/gpt-5.1"],
         )
 
-        response = client.get("/settings/workers?adapter_id=opencode", headers=_auth_headers())
+        response = client.get("/api/settings/workers?adapter_id=opencode", headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "CLI Worker" in response.text
-    assert "API / Proxy: Governed through Harness Proxy" not in response.text
-    assert "native_usage, observed_only" in response.text
+    payload = response.json()
+    assert payload["active_adapter_id"] == "opencode"
+    adapter = next(a for a in payload["adapters"] if a["id"] == "opencode")
+    assert adapter["configured"] is True
+    assert adapter["connection_type"] == "CLI Worker"
+    option_modes = {option["mode"] for option in adapter["tracking_mode_options"]}
+    assert "proxy_governed" not in option_modes
+    assert option_modes == {"native_usage", "observed_only"}
+    assert adapter["supported_models"] == ["opencode/gpt-5.1"]
+    assert adapter["launchable"] is False
 
 
 def test_workers_page_offers_codex_native_usage_mode(tmp_path, monkeypatch):
@@ -1107,12 +1131,23 @@ def test_workers_page_offers_codex_native_usage_mode(tmp_path, monkeypatch):
             supported_models=["gpt-5.4"],
         )
 
-        response = client.get("/settings/workers?adapter_id=codex", headers=_auth_headers())
+        response = client.get("/api/settings/workers?adapter_id=codex", headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "CLI Worker" in response.text
-    assert "native_usage, observed_only" in response.text
-    assert 'value="native_usage"' in response.text
+    payload = response.json()
+    assert payload["active_adapter_id"] == "codex"
+    adapter = next(a for a in payload["adapters"] if a["id"] == "codex")
+    assert adapter["configured"] is True
+    assert adapter["connection_type"] == "CLI Worker"
+    option_modes = {option["mode"] for option in adapter["tracking_mode_options"]}
+    assert option_modes == {"native_usage", "observed_only"}
+    assert any(
+        option["mode"] == "native_usage" and option["label"] == "CLI: Track native usage after run"
+        for option in adapter["tracking_mode_options"]
+    )
+    assert "gpt-5.4" in adapter["discovered_models"]
+    assert adapter["supported_models"] == ["gpt-5.4"]
+    assert adapter["launchable"] is False
 
 
 def test_worker_verify_route_rejects_proxy_mode_for_cli_only_adapter(tmp_path, monkeypatch):
@@ -1151,9 +1186,22 @@ def test_workers_page_normalizes_legacy_native_tracking_mode(tmp_path, monkeypat
             supported_models=["opencode/gpt-5.1"],
         )
 
-        response = client.get("/settings/workers?adapter_id=opencode", headers=_auth_headers())
+        response = client.get("/api/settings/workers?adapter_id=opencode", headers=_auth_headers())
 
     assert response.status_code == 200
-    assert "native_usage" in response.text
-    assert "CLI: Track native usage after run" in response.text
-    assert "API / Proxy: Governed through Harness Proxy" not in response.text
+    payload = response.json()
+    assert payload["active_adapter_id"] == "opencode"
+    adapter = next(a for a in payload["adapters"] if a["id"] == "opencode")
+    assert adapter["configured"] is True
+    assert adapter["connection_type"] == "CLI Worker"
+    option_modes = {option["mode"] for option in adapter["tracking_mode_options"]}
+    assert option_modes == {"native_usage"}
+    assert any(
+        option["mode"] == "native_usage" and option["label"] == "CLI: Track native usage after run"
+        for option in adapter["tracking_mode_options"]
+    )
+    assert not any(
+        option["label"] == "API / Proxy: Governed through Harness Proxy" for option in adapter["tracking_mode_options"]
+    )
+    assert adapter["supported_models"] == ["opencode/gpt-5.1"]
+    assert adapter["launchable"] is False

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the React/Vite Portal shell contract served by FastAPI, including build-aware fallbacks, authenticated JSON handoff endpoints, migrated project workspace and board surfaces, and client-side navigation for React-owned routes while preserving server-rendered Jinja pages for non-migrated workflows.
+Define the React/Vite Portal shell contract served by FastAPI, including missing-build recovery responses, authenticated JSON handoff endpoints, and client-side navigation for React-owned routes.
 ## Requirements
 ### Requirement: FastAPI serves the React Portal shell
 The system SHALL serve a built Vite React Portal shell from the existing FastAPI application without introducing a separate Node runtime server.
@@ -14,15 +14,16 @@ The system SHALL serve a built Vite React Portal shell from the existing FastAPI
 
 #### Scenario: React assets are missing
 - **WHEN** an authenticated operator opens a React-owned route and the built frontend assets are not available
-- **THEN** the system SHALL return a clear missing-build response or keep the existing Jinja route available for that surface
+- **THEN** the system SHALL return the missing-build recovery response
 - **AND** the response SHALL NOT silently render a broken blank shell
+- **AND** no server-rendered equivalent of that surface SHALL exist to fall back to
 
 #### Scenario: No separate frontend server is required in production
 - **WHEN** Foreman AI HQ is served for normal operator use after the React frontend is built
 - **THEN** the operator SHALL NOT need to run `vite`, `npm run dev`, or another Node server to use the migrated Portal surface
 
 ### Requirement: React shell provides a dashboard home
-The React Portal shell SHALL render its dashboard home at the canonical `/dashboard` URL when the complete frontend build is available, and FastAPI SHALL render the existing Jinja dashboard at the same URL when the build is missing or partial. `/app` SHALL remain a transitional alias that serves the same React dashboard until the Jinja retirement change converts it to a redirect. The dashboard SHALL present operator next actions, daily governed budget, Worker execution tokens, open/critical alarm counts, budget spend breakdown and token component details, active sessions, recent open alarms, estimation accuracy when available, and connected-project entry cards.
+The React Portal shell SHALL render its dashboard home at the canonical `/dashboard` URL when the complete frontend build is available, and that URL SHALL return the missing-build recovery response when the build is missing or partial. `/app` SHALL permanently redirect to `/dashboard`. The dashboard SHALL present operator next actions, daily governed budget, Worker execution tokens, open/critical alarm counts, budget spend breakdown and token component details, active sessions, recent open alarms, estimation accuracy when available, and connected-project entry cards.
 
 #### Scenario: Built canonical dashboard opens in React
 - **WHEN** an authenticated operator opens `/dashboard` while the complete React build is available
@@ -30,15 +31,15 @@ The React Portal shell SHALL render its dashboard home at the canonical `/dashbo
 - **AND** the shell SHALL render the React dashboard inside the shared Portal chrome
 - **AND** it SHALL load dashboard state from an authenticated FastAPI JSON handoff
 
-#### Scenario: Missing or partial build keeps canonical dashboard in Jinja
+#### Scenario: Missing or partial build returns the recovery response at the canonical dashboard
 - **WHEN** an authenticated operator opens `/dashboard` while the React build is missing or partial
-- **THEN** FastAPI SHALL render the existing Jinja dashboard at the same canonical URL
-- **AND** it SHALL NOT return a blank shell or require an alternate fallback URL
+- **THEN** FastAPI SHALL return the missing-build recovery response at the same canonical URL
+- **AND** it SHALL NOT return a blank shell or redirect to an alternate URL
 
-#### Scenario: Explicit React home shows dashboard data
-- **WHEN** an authenticated operator opens the `/app` alias after React assets are built
-- **THEN** the shell SHALL render the same React dashboard inside the shared Portal chrome
-- **AND** it SHALL load dashboard state from an authenticated FastAPI JSON handoff
+#### Scenario: Explicit `/app` deep link redirects to the canonical dashboard
+- **WHEN** an authenticated operator opens the `/app` alias
+- **THEN** FastAPI SHALL issue a permanent redirect to `/dashboard`
+- **AND** the canonical route SHALL then decide between the React dashboard and the recovery response according to build availability
 
 #### Scenario: Dashboard retains project entry
 - **WHEN** the dashboard has connected projects
@@ -48,7 +49,7 @@ The React Portal shell SHALL render its dashboard home at the canonical `/dashbo
 #### Scenario: Project entry cards stay in-shell
 - **WHEN** an operator follows a workspace or board entry from a React dashboard project card
 - **THEN** the shell SHALL use existing React in-shell navigation to the canonical `/projects/{id}` or `/projects/{id}/board`
-- **AND** it SHALL NOT target the `/app` aliases, which exist only for deep links until the Jinja retirement change
+- **AND** it SHALL NOT target the `/app` aliases, which are permanent redirects retained only for existing bookmarks and external links
 
 #### Scenario: Dashboard routes actions to authoritative workflows
 - **WHEN** an operator follows a dashboard next action, session, alarm, or full-board link
@@ -57,18 +58,16 @@ The React Portal shell SHALL render its dashboard home at the canonical `/dashbo
 
 #### Scenario: Dashboard does not offer a server-rendered escape link
 - **WHEN** the React dashboard cannot load its state and renders an error
-- **THEN** it SHALL NOT link to the server-rendered dashboard, which is a missing-build fallback rather than an operator destination
-- **AND** the error SHALL be sanitized rather than rendering raw backend detail
+- **THEN** it SHALL render a sanitized error rather than raw backend detail
+- **AND** it SHALL NOT link to a server-rendered dashboard equivalent, which no longer exists
 
 #### Scenario: Estimation accuracy renders only when available
 - **WHEN** the backend reports estimation accuracy as unavailable because no completed task carries both an estimate and an actual
 - **THEN** the React dashboard SHALL NOT render the estimation-accuracy panel
-- **AND** this SHALL match what the server-rendered dashboard shows for the same state
 
 #### Scenario: Available accuracy below the reporting threshold shows progress
 - **WHEN** estimation accuracy is available but fewer than three completed tasks are tracked
 - **THEN** the React dashboard SHALL render the concise progress state rather than accuracy figures
-- **AND** this SHALL match what the server-rendered dashboard shows for the same state
 
 #### Scenario: Empty dashboard sections explain the state
 - **WHEN** no active sessions, open alarms, or connected projects exist
@@ -76,15 +75,16 @@ The React Portal shell SHALL render its dashboard home at the canonical `/dashbo
 - **AND** it SHALL preserve an existing relevant workflow link where one exists
 
 ### Requirement: React dashboard JSON is authenticated and bounded
-The system SHALL expose an authenticated read-only dashboard JSON handoff for the React dashboard. It SHALL derive its values from the same backend dashboard calculations as the Jinja dashboard and SHALL project only operator-facing dashboard fields.
+The system SHALL expose an authenticated read-only dashboard JSON handoff for the React dashboard. It SHALL derive its values from the existing backend dashboard calculation rather than a parallel computation, and SHALL project only operator-facing dashboard fields.
 
 #### Scenario: Dashboard JSON requires portal auth
 - **WHEN** an unauthenticated request calls the React dashboard JSON endpoint while portal auth is required
 - **THEN** the system SHALL reject the request using the existing portal authentication boundary
 
-#### Scenario: Dashboard JSON agrees with Jinja dashboard state
-- **WHEN** an authenticated operator requests the React dashboard JSON and Jinja `/dashboard` for the same database state
-- **THEN** both surfaces SHALL use the same budget window, governed and Worker token totals, open-alarm state, active-session state, next-action decisions, and estimation-accuracy state
+#### Scenario: Dashboard JSON derives from the single backend dashboard calculation
+- **WHEN** an authenticated operator requests the React dashboard JSON
+- **THEN** the budget window, governed and Worker token totals, open-alarm state, active-session state, next-action decisions, and estimation-accuracy state SHALL be read from the existing shared dashboard context builder
+- **AND** the endpoint SHALL NOT recompute any of those values independently of that builder
 
 #### Scenario: Dashboard JSON does not expose raw internal records
 - **WHEN** an authenticated operator requests React dashboard JSON
@@ -99,22 +99,19 @@ The system SHALL expose an authenticated read-only dashboard JSON handoff for th
 - **AND** tests SHALL assert the nested response-key allowlists
 
 ### Requirement: React owns only the migrated project surfaces
-The React Portal shell SHALL own its dashboard home, the Projects list, selected project workspace, project board workflow, Sessions list, Session Report, Task Breakdown Review, Project Task History, and the Alarms inbox while existing Jinja pages remain available for non-migrated workflows and as build-aware fallback for migrated surfaces. The selected React project workspace SHALL preserve the existing project overview's identity, profile, readiness, actionable summary, archive safety, and workflow navigation. The canonical `/dashboard`, `/projects`, `/projects/{project_id}`, `/projects/{project_id}/board`, `/sessions`, `/sessions/{session_id}`, `/task-breakdowns/{breakdown_id}/review`, `/projects/{project_id}/task-history`, and `/alarms` routes SHALL select React only when the complete frontend build is available. `/app/projects/{project_id}` and `/app/projects/{project_id}/board` SHALL remain transitional aliases serving the same React surfaces until the Jinja retirement change converts them to redirects.
+The React Portal shell SHALL own its dashboard home, the Projects list, selected project workspace, project board workflow, Sessions list, Session Report, Task Breakdown Review, Project Task History, and the Alarms inbox. No server-rendered equivalent of those surfaces SHALL remain. The selected React project workspace SHALL preserve the existing project overview's identity, profile, readiness, actionable summary, archive safety, and workflow navigation. The canonical `/dashboard`, `/projects`, `/projects/{project_id}`, `/projects/{project_id}/board`, `/sessions`, `/sessions/{session_id}`, `/task-breakdowns/{breakdown_id}/review`, `/projects/{project_id}/task-history`, and `/alarms` routes SHALL serve React when the complete frontend build is available and SHALL return the missing-build recovery response otherwise. `/app/projects/{project_id}` and `/app/projects/{project_id}/board` SHALL permanently redirect to their canonical URLs.
 
 #### Scenario: Unknown React paths are not claimed
 - **WHEN** an operator opens a path under `/app` other than `/app`, `/app/projects/{project_id}`, or `/app/projects/{project_id}/board`
-- **THEN** the system SHALL return not found instead of silently rendering a React surface
-- **AND** this change SHALL NOT add `/app/sessions`, `/app/sessions/{session_id}`, `/app/task-breakdowns/{breakdown_id}/review`, `/app/projects/{project_id}/task-history`, `/app/projects`, or `/app/alarms` aliases
+- **THEN** the system SHALL return not found instead of silently redirecting or rendering a React surface
 
 #### Scenario: Dashboard opens in React shell
-- **WHEN** an authenticated operator opens the canonical `/dashboard` or the `/app` alias while the complete build is available
+- **WHEN** an authenticated operator opens the canonical `/dashboard` while the complete build is available
 - **THEN** the React shell SHALL show dashboard-equivalent operator state using data supplied by FastAPI
-- **AND** the existing Jinja dashboard SHALL remain reachable as the missing/partial-build fallback at the same canonical URL
 
 #### Scenario: Projects list opens in React shell
 - **WHEN** an authenticated operator opens the canonical `/projects` while the complete build is available
 - **THEN** the React shell SHALL show the connected and archived project lists using data supplied by FastAPI
-- **AND** the existing Jinja projects page SHALL remain reachable as the missing/partial-build fallback at the same canonical URL
 
 #### Scenario: Global board shim is unchanged
 - **WHEN** an authenticated operator opens `/board`
@@ -126,28 +123,28 @@ The React Portal shell SHALL own its dashboard home, the Projects list, selected
 - **THEN** FastAPI SHALL return the React shell for that canonical URL
 - **AND** React SHALL render the project workspace inside the shared Portal chrome
 
-#### Scenario: Missing or partial build keeps canonical project workspace in Jinja
+#### Scenario: Missing or partial build returns the recovery response at the canonical project workspace
 - **WHEN** an authenticated operator opens `/projects/{project_id}` while the React build is missing or partial
-- **THEN** FastAPI SHALL render the existing Jinja project workspace at the same canonical URL
-- **AND** it SHALL NOT return a blank shell or require an alternate fallback URL
+- **THEN** FastAPI SHALL return the missing-build recovery response at the same canonical URL
+- **AND** it SHALL NOT return a blank shell or redirect to an alternate URL
 
 #### Scenario: Built canonical project board opens in React
 - **WHEN** an authenticated operator opens `/projects/{project_id}/board` for an active connected project while the complete React build is available
 - **THEN** FastAPI SHALL return the React shell for that canonical URL
 - **AND** React SHALL render the project board inside the shared Portal chrome
 
-#### Scenario: Missing or partial build keeps canonical project board in Jinja
+#### Scenario: Missing or partial build returns the recovery response at the canonical project board
 - **WHEN** an authenticated operator opens `/projects/{project_id}/board` while the React build is missing or partial
-- **THEN** FastAPI SHALL render the existing Jinja project board at the same canonical URL
-- **AND** it SHALL NOT return a blank shell or require an alternate fallback URL
+- **THEN** FastAPI SHALL return the missing-build recovery response at the same canonical URL
+- **AND** it SHALL NOT return a blank shell or redirect to an alternate URL
 
 #### Scenario: Unknown project is rejected before the shell is served
 - **WHEN** an authenticated operator opens `/projects/{project_id}` or `/projects/{project_id}/board` for a project that does not exist
 - **THEN** FastAPI SHALL return its existing not-found response regardless of build availability
-- **AND** it SHALL NOT serve the React shell for an unknown project
+- **AND** it SHALL NOT serve the React shell or the recovery response for an unknown project
 
 #### Scenario: Active project workspace opens with full overview state
-- **WHEN** an authenticated operator opens the canonical `/projects/{project_id}` or the `/app/projects/{project_id}` alias for an active connected project
+- **WHEN** an authenticated operator opens the canonical `/projects/{project_id}` for an active connected project
 - **THEN** React SHALL show project identity, capability/readiness and reasons, canonical task counts, actionable attention state, and repository profile fields using authenticated FastAPI data
 - **AND** board-targeting actions SHALL use `/projects/{project_id}/board`
 - **AND** Worker setup and Project settings SHALL remain ordinary full-page links
@@ -155,25 +152,25 @@ The React Portal shell SHALL own its dashboard home, the Projects list, selected
 - **AND** Sessions SHALL use the canonical `/sessions` link
 
 #### Scenario: Archived project workspace is restore-first
-- **WHEN** an authenticated operator opens the canonical `/projects/{project_id}` or the `/app/projects/{project_id}` alias for an archived connected project
+- **WHEN** an authenticated operator opens the canonical `/projects/{project_id}` for an archived connected project
 - **THEN** React SHALL show an archived warning, Restore action, and retained task-history/session evidence links
 - **AND** React SHALL suppress active board and launch entry points until refreshed backend state reports the project restored
 
 #### Scenario: Project board completes normal workflow in React shell
-- **WHEN** an authenticated operator opens the migrated project board route for an active connected project
+- **WHEN** an authenticated operator opens the canonical project board route for an active connected project
 - **THEN** the React shell SHALL show project-scoped board columns, compact task cards, queue/run status, task intake, launch, refresh, review, archive/dismiss, and bounded task evidence controls using authenticated FastAPI data and actions
 - **AND** backend validation SHALL remain authoritative for every workflow decision
 
 #### Scenario: Archived React board routes to Restore
-- **WHEN** an authenticated operator opens the canonical `/projects/{project_id}/board` or the `/app/projects/{project_id}/board` alias for an archived project while the complete React build is available
+- **WHEN** an authenticated operator opens the canonical `/projects/{project_id}/board` for an archived project while the complete React build is available
 - **THEN** FastAPI SHALL serve the React shell rather than redirecting to the workspace
 - **AND** React SHALL clearly identify the archived state and provide a route to `/projects/{project_id}` for Restore
-- **AND** the surface SHALL not present launch controls or encourage navigation to an active Jinja board
+- **AND** the surface SHALL not present launch controls
 
-#### Scenario: Missing or partial build preserves the archived board redirect
+#### Scenario: Missing or partial build returns the recovery response for an archived board
 - **WHEN** an authenticated operator opens `/projects/{project_id}/board` for an archived project while the React build is missing or partial
-- **THEN** FastAPI SHALL preserve its existing redirect to the canonical project workspace carrying the existing restore-first message
-- **AND** the Jinja workspace SHALL render that message at the same canonical URL
+- **THEN** FastAPI SHALL return the missing-build recovery response
+- **AND** the restore-first message SHALL NOT require a server-rendered workspace to carry it
 
 #### Scenario: Built canonical Sessions list opens in React
 - **WHEN** an authenticated operator opens `/sessions` while the complete React build is available
@@ -183,7 +180,12 @@ The React Portal shell SHALL own its dashboard home, the Projects list, selected
 #### Scenario: Built canonical Session Report opens in React
 - **WHEN** an authenticated operator opens `/sessions/{session_id}` for an existing session while the complete React build is available
 - **THEN** FastAPI SHALL return the React shell for that canonical URL
-- **AND** React SHALL render the Session Report without requiring the Jinja report for audit inspection
+- **AND** React SHALL render the Session Report as the only audit-inspection surface
+
+#### Scenario: Missing or partial build returns the recovery response at canonical Sessions
+- **WHEN** an authenticated operator opens `/sessions` or `/sessions/{session_id}` while the React build is missing or partial
+- **THEN** FastAPI SHALL return the missing-build recovery response at the same canonical URL
+- **AND** session evidence SHALL be unavailable until the frontend is built, rather than diverting to a server-rendered sessions list or report
 
 #### Scenario: Built canonical Task Breakdown Review opens in React
 - **WHEN** an authenticated operator opens `/task-breakdowns/{breakdown_id}/review` for an existing review while the complete React build is available
@@ -193,22 +195,27 @@ The React Portal shell SHALL own its dashboard home, the Projects list, selected
 #### Scenario: Built canonical Project Task History opens in React
 - **WHEN** an authenticated operator opens `/projects/{project_id}/task-history` for an existing project while the complete React build is available
 - **THEN** FastAPI SHALL return the React shell for that canonical URL
-- **AND** React SHALL render the Project Task History inside the shared Portal chrome without requiring the Jinja history page for archive inspection or restore
+- **AND** React SHALL render the Project Task History as the only archive-inspection and restore surface
 
 #### Scenario: Built canonical Alarms inbox opens in React
 - **WHEN** an authenticated operator opens `/alarms` while the complete React build is available
 - **THEN** FastAPI SHALL return the React shell for that canonical URL
-- **AND** React SHALL render the Alarms inbox inside the shared Portal chrome without requiring the Jinja alarms page
+- **AND** React SHALL render the Alarms inbox inside the shared Portal chrome
 
-#### Scenario: Jinja surfaces remain reachable as fallback
-- **WHEN** an operator needs a missing/partial-build fallback for a migrated surface or opens setup, settings, alarms, login, or another non-migrated Portal workflow
-- **THEN** the corresponding existing FastAPI/Jinja page SHALL remain reachable
-- **AND** the React board SHALL not require the Jinja board to complete its normal in-board workflow
+#### Scenario: Missing or partial build returns the recovery response at the canonical Alarms inbox
+- **WHEN** an authenticated operator opens `/alarms` while the React build is missing or partial
+- **THEN** FastAPI SHALL return the missing-build recovery response at the same canonical URL
+- **AND** governance evidence SHALL remain in the database rather than being diverted to a server-rendered alarms page
+
+#### Scenario: Only the recovery surfaces remain server-rendered
+- **WHEN** the Jinja retirement change is implemented
+- **THEN** the only server-rendered Portal pages SHALL be the login page and the missing-build recovery response
+- **AND** no operator-facing route SHALL render a retired template
 
 #### Scenario: Migrated project surfaces do not offer server-rendered escape links
 - **WHEN** the React project workspace, project board, or Project Task History cannot load its state and renders an error
-- **THEN** it SHALL NOT link to the server-rendered equivalent, which is a missing-build fallback rather than an operator destination
-- **AND** the error SHALL be sanitized rather than rendering raw backend detail
+- **THEN** it SHALL render a sanitized error rather than raw backend detail
+- **AND** it SHALL NOT link to a server-rendered equivalent, which no longer exists
 
 ### Requirement: React Alarms JSON is authenticated, exact, and bounded
 FastAPI SHALL expose a new authenticated, bounded JSON handoff for the Alarms inbox that requires Portal authentication and echoes the selected filter. The response SHALL preserve every field the operator needs to triage and audit alarms without exposing unbounded payloads.
@@ -324,21 +331,20 @@ The system SHALL provide explicit commands or documented checks for building the
 - **WHEN** the repository verification suite runs for this change
 - **THEN** it SHALL include a check that FastAPI serves the React shell or reports missing assets clearly
 
-### Requirement: React is the build-aware default authenticated landing
-The normal Portal landing SHALL use the React dashboard at the canonical `/dashboard` when the complete built React shell is available. The system SHALL validate the React index and all referenced local React assets before choosing `/dashboard`; when that validation fails, the normal landing SHALL remain the existing server-rendered first-project or `/projects` route. This promotion SHALL NOT remove explicit Jinja fallback routes. React route ownership SHALL include `/dashboard`, `/projects`, `/projects/{id}`, `/projects/{id}/board`, `/app`, `/app/projects/{id}`, `/app/projects/{id}/board`, `/sessions`, `/sessions/{session_id}`, `/task-breakdowns/{breakdown_id}/review`, `/setup`, and the destination Settings routes `/settings/control-plane`, `/settings/budget`, `/settings/project`, and `/settings/workers` only for the migrated surfaces defined by this specification.
+### Requirement: React is the default authenticated landing
+The normal Portal landing SHALL be the React dashboard at the canonical `/dashboard`, unconditionally. The landing decision SHALL NOT inspect build availability, because no server-rendered destination remains to divert to; a missing or partial build SHALL surface as the missing-build recovery response at `/dashboard` rather than as a different landing target. React route ownership SHALL include `/dashboard`, `/projects`, `/projects/{id}`, `/projects/{id}/board`, `/sessions`, `/sessions/{session_id}`, `/task-breakdowns/{breakdown_id}/review`, `/projects/{id}/task-history`, `/alarms`, `/setup`, and the destination Settings routes `/settings/control-plane`, `/settings/budget`, `/settings/project`, and `/settings/workers`.
 
-#### Scenario: Auth-disabled local root opens built React dashboard
-- **WHEN** portal auth is not required and an operator opens `/` while the complete React build is available
+#### Scenario: Auth-disabled local root opens the React dashboard
+- **WHEN** portal auth is not required and an operator opens `/`
 - **THEN** the system SHALL redirect to `/dashboard`
-- **AND** the React shell SHALL render its dashboard inside the full Portal chrome
 
-#### Scenario: Successful login opens built React dashboard
-- **WHEN** portal auth is required and an operator submits a valid portal token while the complete React build is available
+#### Scenario: Successful login opens the React dashboard
+- **WHEN** portal auth is required and an operator submits a valid portal token
 - **THEN** the system SHALL preserve the existing signed cookie behavior
 - **AND** the successful login response SHALL redirect to `/dashboard`
 
-#### Scenario: Authenticated root opens built React dashboard
-- **WHEN** portal auth is required and an authenticated operator opens `/` while the complete React build is available
+#### Scenario: Authenticated root opens the React dashboard
+- **WHEN** portal auth is required and an authenticated operator opens `/`
 - **THEN** the system SHALL redirect to `/dashboard`
 
 #### Scenario: Unauthenticated shared root still requires login
@@ -346,45 +352,21 @@ The normal Portal landing SHALL use the React dashboard at the canonical `/dashb
 - **THEN** the system SHALL redirect to `/login`
 - **AND** build availability SHALL NOT bypass the existing authentication boundary
 
-#### Scenario: Auth-disabled login and logout use normal landing
+#### Scenario: Auth-disabled login and logout use the normal landing
 - **WHEN** portal auth is not required and an operator opens `/login`, submits a well-formed `/login` request containing the existing required token form field, or submits `/logout`
 - **THEN** the system SHALL preserve existing harmless login/logout behavior
-- **AND** it SHALL redirect to `/dashboard` when the complete React build is available
+- **AND** it SHALL redirect to `/dashboard`
 
-#### Scenario: Missing React index falls back to Jinja landing
-- **WHEN** a normal landing decision occurs and the React index is missing
-- **THEN** the system SHALL redirect to the existing server-rendered first-project route when a connected project exists, otherwise `/projects`
-- **AND** the operator SHALL NOT receive a blank shell or missing-build `503` as the default landing
+#### Scenario: Landing does not inspect build availability
+- **WHEN** a normal landing decision occurs while the React index is missing or one or more referenced local React assets are missing or invalid
+- **THEN** the system SHALL still redirect to `/dashboard`
+- **AND** `/dashboard` SHALL return the missing-build recovery response
+- **AND** the operator SHALL NOT be diverted to a server-rendered landing, which no longer exists
 
-#### Scenario: Partial React build falls back to Jinja landing
-- **WHEN** the React index exists but one or more referenced local React assets are missing or invalid
-- **THEN** the normal landing SHALL use the existing server-rendered first-project or `/projects` route
-- **AND** the system SHALL NOT promote the partial shell
-
-#### Scenario: Fallback landing on the canonical Projects route serves Jinja
-- **WHEN** the normal landing falls back to `/projects` because the React build is missing or partial
-- **THEN** that canonical route SHALL render the existing Jinja projects page for the same build state
-- **AND** the operator SHALL NOT be redirected into a shell that cannot load
-
-#### Scenario: Explicit React deep link retains clear missing-build behavior
-- **WHEN** an authenticated operator explicitly opens a declared `/app` route while the React build is unavailable or partial
-- **THEN** the existing clear missing-build response SHALL remain available
-- **AND** the response SHALL provide a usable Jinja fallback link rather than a blank shell
-
-#### Scenario: Missing or partial build keeps canonical Sessions in Jinja
-- **WHEN** an authenticated operator opens `/sessions` or `/sessions/{session_id}` while the React build is missing or partial
-- **THEN** FastAPI SHALL render the corresponding existing Jinja surface at the same canonical URL
-- **AND** it SHALL NOT return a blank shell or require an alternate fallback URL
-
-#### Scenario: Missing or partial build keeps canonical Task Breakdown Review in Jinja
-- **WHEN** an authenticated operator opens `/task-breakdowns/{breakdown_id}/review` while the React build is missing or partial
-- **THEN** FastAPI SHALL render the existing Jinja review at the same canonical URL
-- **AND** it SHALL preserve Accept, Retry, Manual Candidate, Cancel, and Session Report links
-
-#### Scenario: Non-migrated and fallback Jinja routes remain reachable
-- **WHEN** an operator on the default React shell follows a link to Alarms, Settings, task history, or an explicit server-rendered fallback surface
-- **THEN** the existing FastAPI/Jinja route SHALL remain reachable through ordinary full-page navigation, serving the Jinja page directly for non-migrated surfaces and as the missing/partial-build fallback for migrated canonical routes
-- **AND** no React client route SHALL claim a path that this specification has not migrated
+#### Scenario: Login remains reachable when the build is missing
+- **WHEN** the React build is missing or partial and an operator opens `/login` while portal auth is required
+- **THEN** the server-rendered login page SHALL render normally
+- **AND** it SHALL remain the operator's way into the Portal independent of build state
 
 ### Requirement: React shell navigates client-side between its surfaces
 The React Portal shell SHALL let operators move between its dashboard home, Projects list, project workspace, project board, Sessions, Session Report, and Task Breakdown Review without manual URL entry, while deep links to React-owned routes still resolve on a full page load.
@@ -418,37 +400,37 @@ The React Portal shell SHALL let operators move between its dashboard home, Proj
 
 ### Requirement: React shell preserves the full Portal chrome
 
-The React Portal shell SHALL render the same application frame as the server-rendered Jinja Portal (`base.html`): a top brand bar, a left sidebar with the connected-project list and the Setup, Governance, Planning (only when no projects connected), and Settings groups, a `+ Open local repo` action, a logout form when portal auth is required, and a footer. React-owned routes SHALL share that frame so migrated canonical Sessions routes read as the same product, not a separate mini-application.
+The React Portal shell SHALL render the full Portal application frame: a top brand bar, a left sidebar with the connected-project list and the Setup, Governance, Planning (only when no projects connected), and Settings groups, a `+ Open local repo` action, a logout form when portal auth is required, and a footer. React-owned routes SHALL share that frame so every canonical Portal route reads as the same product. React SHALL be the sole owner of this frame; no server-rendered template SHALL define it.
 
-#### Scenario: React shell renders the sidebar project list from the same source as Jinja
+#### Scenario: React shell renders the sidebar project list from the shared context helper
 
 - **WHEN** an authenticated operator opens a React-owned route with one or more connected projects
 - **THEN** the shell SHALL render a sidebar listing those projects, each with its name, a `Task board` subtitle when the project has tasks or a `No tasks` subtitle when it does not, and a `└ Task board` link under projects that have tasks
-- **AND** the project data SHALL come from an authenticated FastAPI JSON endpoint that reuses the same `portal_template_context` helper that feeds the Jinja sidebar
+- **AND** the project data SHALL come from an authenticated FastAPI JSON endpoint that reuses the existing `portal_template_context` helper
 - **AND** the shell SHALL render an empty `No projects` state and a reachable `+ Open local repo` action when no projects are connected
 
 #### Scenario: React shell renders the sidebar navigation groups
 
 - **WHEN** an authenticated operator opens a React-owned route
 - **THEN** the shell SHALL render the `Setup` group with a `First-run setup` link, the `Governance` group with an in-shell `Dashboard` link plus `Sessions` and full-page `Alarms` links, the `Settings` group with `Control plane model`, `Token budget`, `Projects`, and `Worker adapters` links, and a footer reading `Foreman AI HQ portal · operator-controlled budget governance`
-- **AND** the Planning group with a `Task board` link SHALL appear only when no projects are connected, matching the Jinja sidebar contract
+- **AND** the Planning group with a `Task board` link SHALL appear only when no projects are connected
 
 #### Scenario: React shell shows logout when portal auth is required
 
 - **WHEN** an authenticated operator opens a React-owned route while portal auth is required
-- **THEN** the shell SHALL render a logout control that posts to `/logout` the same way the Jinja sidebar does
+- **THEN** the shell SHALL render a logout control that posts to `/logout`
 - **AND** the shell SHALL NOT render a logout control when portal auth is not required
 
 #### Scenario: Dashboard is the sole active home navigation item
 
-- **WHEN** an authenticated operator opens `/app`
+- **WHEN** an authenticated operator opens `/dashboard`
 - **THEN** the Dashboard sidebar item SHALL be highlighted as active
 - **AND** no project sidebar entry SHALL be highlighted
 - **AND** the `+ Open local repo` action SHALL NOT be highlighted
 
 #### Scenario: Active project and board routes are highlighted in the sidebar
 
-- **WHEN** an authenticated operator opens a project workspace or project board at the canonical `/projects/{id}` or `/projects/{id}/board`, or at the `/app/projects/{id}` or `/app/projects/{id}/board` alias
+- **WHEN** an authenticated operator opens a project workspace or project board at the canonical `/projects/{id}` or `/projects/{id}/board`
 - **THEN** the sidebar SHALL highlight the active project's sidebar entry so the operator can tell which project the shell is showing
 - **AND** the `└ Task board` sub-link SHALL be highlighted only on the board route, not on the project workspace
 - **AND** the Dashboard sidebar item SHALL NOT be highlighted
@@ -478,10 +460,11 @@ The React Portal shell SHALL render the same application frame as the server-ren
 - **WHEN** an operator opens a path under `/app` other than `/app`, `/app/projects/{id}`, or `/app/projects/{id}/board`
 - **THEN** FastAPI SHALL return not found instead of serving a React surface
 
-#### Scenario: Non-migrated Jinja pages remain reachable from the React sidebar via full-page navigation
+#### Scenario: Full-page sidebar links remain full-page navigations
 
 - **WHEN** an authenticated operator follows an Alarms, Settings, Planning, task-history, or full-board link from the React sidebar
 - **THEN** the browser SHALL perform an ordinary full-page navigation to the corresponding canonical route rather than an in-shell transition
+- **AND** that canonical route SHALL serve the React shell, which renders the destination surface
 - **AND** the shell's own in-shell surfaces SHALL use client-side navigation so in-shell moves do not require a full reload
 
 #### Scenario: Sidebar navigation endpoint requires portal auth
@@ -869,17 +852,17 @@ The existing `POST /settings/budget` and `POST /settings/budget/reset` actions S
 - **AND** the negotiated JSON path SHALL NOT alter that HTML behavior
 
 ### Requirement: React Budget Settings navigates inside the shell
-React SHALL render Budget Settings inside the shared Portal chrome on the canonical `/settings/budget` URL when the complete build is available, keep `Back to setup` as an ordinary full-page link, and require confirmation before the destructive counter reset. When the React build is missing or partial, FastAPI SHALL render the existing Jinja budget page at the same canonical URL.
+React SHALL render Budget Settings inside the shared Portal chrome on the canonical `/settings/budget` URL when the complete build is available, keep `Back to setup` as an ordinary full-page link, and require confirmation before the destructive counter reset. When the React build is missing or partial, that URL SHALL return the missing-build recovery response.
 
 #### Scenario: Built canonical route opens React Budget Settings in-shell
 - **WHEN** an authenticated operator opens `/settings/budget` while the complete React build is available
 - **THEN** FastAPI SHALL serve the React shell and render Budget Settings inside the full Portal chrome
 - **AND** React SHALL request the authenticated Budget Settings JSON for its form and counter
 
-#### Scenario: Missing or partial build keeps canonical Budget Settings in Jinja
+#### Scenario: Missing or partial build returns the recovery response at canonical Budget Settings
 - **WHEN** an authenticated operator opens `/settings/budget` while the React build is missing or partial
-- **THEN** FastAPI SHALL render the existing Jinja budget page at the same canonical URL
-- **AND** it SHALL NOT return a blank shell or require an alternate fallback URL
+- **THEN** FastAPI SHALL return the missing-build recovery response at the same canonical URL
+- **AND** it SHALL NOT return a blank shell or redirect to an alternate URL
 
 #### Scenario: Save stays on page with inline outcome and authoritative refetch
 - **WHEN** an operator saves caps from the React Budget Settings view and the save succeeds
@@ -930,17 +913,17 @@ The existing `POST /settings/control-plane` and `POST /settings/control-plane/te
 - **AND** the negotiated JSON path SHALL NOT alter that HTML behavior
 
 ### Requirement: React Control Plane Settings navigates inside the shell
-React SHALL render Control Plane Settings inside the shared Portal chrome on the canonical `/settings/control-plane` URL when the complete build is available, and FastAPI SHALL render the existing Jinja page at the same URL when the build is missing or partial. The view SHALL preserve provider-filtered curated model selection with a custom-model path, placeholder-only key entry, the three-state connection status, and the environment-shadow warning.
+React SHALL render Control Plane Settings inside the shared Portal chrome on the canonical `/settings/control-plane` URL when the complete build is available, and that URL SHALL return the missing-build recovery response when the build is missing or partial. The view SHALL preserve provider-filtered curated model selection with a custom-model path, placeholder-only key entry, the three-state connection status, and the environment-shadow warning.
 
 #### Scenario: Built canonical route opens React Control Plane Settings in-shell
 - **WHEN** an authenticated operator opens `/settings/control-plane` while the complete React build is available
 - **THEN** FastAPI SHALL serve the React shell and render Control Plane Settings inside the full Portal chrome
 - **AND** React SHALL request the authenticated control-plane JSON for its form and status
 
-#### Scenario: Missing or partial build keeps canonical Control Plane Settings in Jinja
+#### Scenario: Missing or partial build returns the recovery response at canonical Control Plane Settings
 - **WHEN** an authenticated operator opens `/settings/control-plane` while the React build is missing or partial
-- **THEN** FastAPI SHALL render the existing Jinja control-plane page at the same canonical URL
-- **AND** it SHALL NOT return a blank shell or require an alternate fallback URL
+- **THEN** FastAPI SHALL return the missing-build recovery response at the same canonical URL
+- **AND** it SHALL NOT return a blank shell or redirect to an alternate URL
 
 #### Scenario: Key input is placeholder-only and blank keeps the existing key
 - **WHEN** the React Control Plane Settings form renders
@@ -1010,17 +993,17 @@ The existing `POST /settings/workers/{id}/configure`, `POST /settings/workers/{i
 - **AND** the negotiated JSON path SHALL NOT alter that HTML behavior
 
 ### Requirement: React Worker Settings navigates inside the shell
-React SHALL render Worker Settings inside the shared Portal chrome on the canonical `/settings/workers` URL when the complete build is available, and FastAPI SHALL render the existing Jinja page at the same URL when the build is missing or partial. The view SHALL preserve adapter selection, per-adapter configuration and evidence, the discover→approve model workflow, the live Verify and Discover actions, and the readiness next-action.
+React SHALL render Worker Settings inside the shared Portal chrome on the canonical `/settings/workers` URL when the complete build is available, and that URL SHALL return the missing-build recovery response when the build is missing or partial. The view SHALL preserve adapter selection, per-adapter configuration and evidence, the discover→approve model workflow, the live Verify and Discover actions, and the readiness next-action.
 
 #### Scenario: Built canonical route opens React Worker Settings in-shell
 - **WHEN** an authenticated operator opens `/settings/workers` while the complete React build is available
 - **THEN** FastAPI SHALL serve the React shell and render Worker Settings inside the full Portal chrome
 - **AND** React SHALL request the authenticated Worker Settings JSON for its adapters, selection, and next-action
 
-#### Scenario: Missing or partial build keeps canonical Worker Settings in Jinja
+#### Scenario: Missing or partial build returns the recovery response at canonical Worker Settings
 - **WHEN** an authenticated operator opens `/settings/workers` while the React build is missing or partial
-- **THEN** FastAPI SHALL render the existing Jinja workers page at the same canonical URL
-- **AND** it SHALL NOT return a blank shell or require an alternate fallback URL
+- **THEN** FastAPI SHALL return the missing-build recovery response at the same canonical URL
+- **AND** it SHALL NOT return a blank shell or redirect to an alternate URL
 
 #### Scenario: Approval is gated behind discovery
 - **WHEN** the React Worker Settings view renders an adapter that has no discovered models
@@ -1079,17 +1062,17 @@ The existing `POST /projects/{id}/archive` action SHALL return a bounded, saniti
 - **AND** the negotiated JSON path SHALL NOT alter that HTML behavior
 
 ### Requirement: React Project Settings navigates inside the shell
-React SHALL render Project Settings inside the shared Portal chrome on the canonical `/settings/project` URL when the complete build is available, and FastAPI SHALL render the existing Jinja page at the same URL when the build is missing or partial. The view SHALL preserve the connect-project form, the Local Runner backend-status panel, per-project capability, the read-only-proof action, and archive/restore.
+React SHALL render Project Settings inside the shared Portal chrome on the canonical `/settings/project` URL when the complete build is available, and that URL SHALL return the missing-build recovery response when the build is missing or partial. The view SHALL preserve the connect-project form, the Local Runner backend-status panel, per-project capability, the read-only-proof action, and archive/restore.
 
 #### Scenario: Built canonical route opens React Project Settings in-shell
 - **WHEN** an authenticated operator opens `/settings/project` while the complete React build is available
 - **THEN** FastAPI SHALL serve the React shell and render Project Settings inside the full Portal chrome
 - **AND** React SHALL request the authenticated Project Settings JSON for its projects, backend status, and capability
 
-#### Scenario: Missing or partial build keeps canonical Project Settings in Jinja
+#### Scenario: Missing or partial build returns the recovery response at canonical Project Settings
 - **WHEN** an authenticated operator opens `/settings/project` while the React build is missing or partial
-- **THEN** FastAPI SHALL render the existing Jinja project page at the same canonical URL
-- **AND** it SHALL NOT return a blank shell or require an alternate fallback URL
+- **THEN** FastAPI SHALL return the missing-build recovery response at the same canonical URL
+- **AND** it SHALL NOT return a blank shell or redirect to an alternate URL
 
 #### Scenario: Connect and archive stay on page with inline outcome and authoritative refetch
 - **WHEN** an operator connects a project or archives a connected project from the React view and the action succeeds
@@ -1103,7 +1086,7 @@ React SHALL render Project Settings inside the shared Portal chrome on the canon
 
 #### Scenario: Redirect-borne archive block reason survives into React
 - **WHEN** an HTML archive caller is blocked and redirected to the project settings page with an error query, and the complete React build serves that canonical URL
-- **THEN** React SHALL surface that block reason rather than silently dropping it, preserving what the Jinja page showed for the same redirect
+- **THEN** React SHALL surface that block reason rather than silently dropping it
 - **AND** the reason SHALL be sanitized and bounded by the backend rather than rendered from the URL directly
 - **AND** React SHALL clear the redirect-borne error once the operator takes a subsequent action
 
@@ -1136,17 +1119,17 @@ FastAPI SHALL expose a new authenticated JSON handoff for Setup Overview that re
 - **AND** the projects step state SHALL NOT report ready
 
 ### Requirement: React Setup Overview navigates inside the shell
-React SHALL render Setup Overview inside the shared Portal chrome on the canonical `/setup` URL when the complete build is available, and FastAPI SHALL render the existing Jinja page at the same URL when the build is missing or partial. The view SHALL preserve the next-action toolbar, the four readiness cards with their destination links, the launch-readiness panel, and the active Worker adapter panel. The Setup sidebar link SHALL use in-shell client navigation.
+React SHALL render Setup Overview inside the shared Portal chrome on the canonical `/setup` URL when the complete build is available, and that URL SHALL return the missing-build recovery response when the build is missing or partial. The view SHALL preserve the next-action toolbar, the four readiness cards with their destination links, the launch-readiness panel, and the active Worker adapter panel. The Setup sidebar link SHALL use in-shell client navigation.
 
 #### Scenario: Built canonical route opens React Setup Overview in-shell
 - **WHEN** an authenticated operator opens `/setup` while the complete React build is available
 - **THEN** FastAPI SHALL serve the React shell and render Setup Overview inside the full Portal chrome
 - **AND** React SHALL request the authenticated Setup Overview JSON for its readiness steps, next action, and active adapter
 
-#### Scenario: Missing or partial build keeps canonical Setup Overview in Jinja
+#### Scenario: Missing or partial build returns the recovery response at canonical Setup Overview
 - **WHEN** an authenticated operator opens `/setup` while the React build is missing or partial
-- **THEN** FastAPI SHALL render the existing Jinja setup page at the same canonical URL
-- **AND** it SHALL NOT return a blank shell or require an alternate fallback URL
+- **THEN** FastAPI SHALL return the missing-build recovery response at the same canonical URL
+- **AND** it SHALL NOT return a blank shell or redirect to an alternate URL
 
 #### Scenario: Setup adapter context is bookmarkable
 - **WHEN** an authenticated operator opens `/setup` with an `adapter_id` query parameter while the complete React build is available
@@ -1164,13 +1147,13 @@ React SHALL render Setup Overview inside the shared Portal chrome on the canonic
 - **THEN** React SHALL render a fixed sanitized message with a retry path, and a sign-in message when the failure is an authentication rejection
 - **AND** it SHALL NOT render the underlying error text into the page
 
-#### Scenario: Both renderers read one tracking source
-- **WHEN** the React Setup Overview and the Jinja fallback render the tracking of the same active Worker adapter
-- **THEN** both SHALL read the tracking mode from the Worker adapter view model rather than from raw verification evidence
-- **AND** an adapter whose tracking has not been verified SHALL render as unverified on both surfaces
+#### Scenario: Tracking is read from one source
+- **WHEN** the React Setup Overview renders the tracking of the active Worker adapter
+- **THEN** it SHALL read the tracking mode from the Worker adapter view model rather than from raw verification evidence
+- **AND** an adapter whose tracking has not been verified SHALL render as unverified
 
 ### Requirement: React Projects list JSON is authenticated, exact, and bounded
-The existing authenticated projects JSON handoff SHALL additionally project the archived connected projects and the Local Runner enablement flag, so the frontend can render the canonical Projects list without recomputing project rules in the browser. Both values SHALL derive from the same backend listings and settings flag the server-rendered projects page uses. The existing active-projects projection SHALL be unchanged so current consumers are unaffected.
+The existing authenticated projects JSON handoff SHALL additionally project the archived connected projects and the Local Runner enablement flag, so the frontend can render the canonical Projects list without recomputing project rules in the browser. Both values SHALL derive from the existing backend project listings and settings flag rather than a parallel computation. The existing active-projects projection SHALL be unchanged so current consumers are unaffected.
 
 #### Scenario: Projects JSON requires portal auth
 - **WHEN** an unauthenticated caller requests the projects JSON handoff while portal auth is required
@@ -1183,10 +1166,10 @@ The existing authenticated projects JSON handoff SHALL additionally project the 
 - **AND** each archived row SHALL contain only `id`, name, root path, sanitized capability state, and the archive timestamp
 - **AND** absent optional values SHALL be typed `null` rather than fabricated defaults
 
-#### Scenario: Projects JSON agrees with the server-rendered projects page
-- **WHEN** an authenticated operator requests the projects JSON handoff and the Jinja `/projects` page for the same database state
-- **THEN** both surfaces SHALL show the same active projects, archived projects, capability states, and Local Runner enablement
-- **AND** both SHALL derive those values from the same backend project listings rather than a parallel computation
+#### Scenario: Projects JSON derives from the single backend project listing
+- **WHEN** an authenticated operator requests the projects JSON handoff
+- **THEN** the active projects, archived projects, capability states, and Local Runner enablement SHALL be read from the existing backend project listings and settings flag
+- **AND** the endpoint SHALL NOT recompute those values independently of those listings
 
 #### Scenario: Projects JSON does not expose raw internal records
 - **WHEN** an authenticated operator requests the projects JSON handoff
@@ -1199,21 +1182,21 @@ The existing authenticated projects JSON handoff SHALL additionally project the 
 - **AND** the added fields SHALL NOT change those consumers' behavior
 
 ### Requirement: React Projects list navigates inside the shell
-React SHALL render the Projects list inside the shared Portal chrome on the canonical `/projects` URL when the complete build is available, and FastAPI SHALL render the existing Jinja projects page at the same URL when the build is missing or partial. The view SHALL preserve the open-local-repo form, the Local-Runner-disabled notice, per-project capability, project entry cards, Archive, and the archived list with Restore.
+React SHALL render the Projects list inside the shared Portal chrome on the canonical `/projects` URL when the complete build is available, and that URL SHALL return the missing-build recovery response when the build is missing or partial. The view SHALL preserve the open-local-repo form, the Local-Runner-disabled notice, per-project capability, project entry cards, Archive, and the archived list with Restore.
 
 #### Scenario: Built canonical route opens React Projects in-shell
 - **WHEN** an authenticated operator opens `/projects` while the complete React build is available
 - **THEN** FastAPI SHALL serve the React shell and render the Projects list inside the full Portal chrome
 - **AND** React SHALL request the authenticated projects JSON for its active projects, archived projects, capability, and Local Runner state
 
-#### Scenario: Missing or partial build keeps canonical Projects in Jinja
+#### Scenario: Missing or partial build returns the recovery response at canonical Projects
 - **WHEN** an authenticated operator opens `/projects` while the React build is missing or partial
-- **THEN** FastAPI SHALL render the existing Jinja projects page at the same canonical URL
-- **AND** it SHALL NOT return a blank shell or require an alternate fallback URL
+- **THEN** FastAPI SHALL return the missing-build recovery response at the same canonical URL
+- **AND** it SHALL NOT return a blank shell or redirect to an alternate URL
 
 #### Scenario: Project entry cards open the React workspace
 - **WHEN** an authenticated operator selects an active project from the React Projects list
-- **THEN** the shell SHALL open that project's React workspace without a full-page transition to a server-rendered workspace
+- **THEN** the shell SHALL open that project's React workspace without a full-page transition
 - **AND** the card SHALL show the project's sanitized capability state
 
 #### Scenario: Local Runner disabled is stated before connecting

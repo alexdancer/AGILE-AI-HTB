@@ -1,6 +1,6 @@
 import os
-import re
 
+import pytest
 from fastapi.testclient import TestClient
 
 from foreman_ai_hq import db
@@ -16,21 +16,6 @@ from tests.portal.helpers import (
     _portal_headers,
 )
 
-
-def _model_option(html: str, value: str) -> str:
-    match = re.search(rf'<option value="{re.escape(value)}"[^>]*>', html)
-    assert match, value
-    return match.group(0)
-
-
-def _assert_selectable(option: str) -> None:
-    assert "hidden" not in option
-    assert "disabled" not in option
-
-
-def _assert_not_selectable(option: str) -> None:
-    assert "hidden" in option
-    assert "disabled" in option
 
 def test_control_plane_save_persists_and_hot_swaps_settings(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
@@ -167,7 +152,10 @@ def test_control_plane_save_writes_submitted_api_key_without_config_leak(tmp_pat
                 "control_plane_api_key": "DEMO_KEY_VALUE_999",
             },
         )
-        page = client.get("/settings/control-plane", headers=_portal_headers())
+        # The Jinja settings page used to be the oracle for "the key was saved and
+        # never rendered back"; that page is retired, so both halves of the claim
+        # move to the JSON handoff (design Decision 9, bucket 1: backend state).
+        handoff = client.get("/api/settings/control-plane", headers=_portal_headers())
 
     assert response.status_code == 200
     assert os.getenv("ANTHROPIC_API_KEY") == "DEMO_KEY_VALUE_999"
@@ -176,8 +164,8 @@ def test_control_plane_save_writes_submitted_api_key_without_config_leak(tmp_pat
     assert "DEMO_KEY_VALUE_999" not in config_text
     assert "ANTHROPIC_API_KEY=DEMO_KEY_VALUE_999" in secrets_text
     assert "DEMO_KEY_VALUE_999" not in str(response.json())
-    assert "DEMO_KEY_VALUE_999" not in page.text
-    assert "API key present</div><div class=\"v\">yes" in page.text
+    assert "DEMO_KEY_VALUE_999" not in handoff.text
+    assert handoff.json()["api_key_present"] is True
 
 
 def test_control_plane_blank_api_key_preserves_existing_secret(tmp_path, monkeypatch):
@@ -289,7 +277,17 @@ def test_control_plane_save_failure_keeps_running_settings(tmp_path, monkeypatch
     assert before is after
     assert after.control_plane_model != "claude-haiku-4-5"
 
-def test_control_plane_settings_page_shows_presets_and_needs_test(tmp_path, monkeypatch):
+def test_control_plane_settings_json_handoff_shows_presets_and_needs_test(tmp_path, monkeypatch):
+    """Backend-state half of the retired preset/needs-test settings page.
+
+    The old test also asserted Jinja-only markup (a plain ``<select>`` with no
+    datalist, a password-typed input, an "Advanced connection settings"
+    <details> disclosure, static copy like "Leave blank to keep the existing
+    key"). None of that is backend state -- it is retired Jinja presentation
+    with no server-computed value behind it, so it is dropped rather than
+    reinvented against React's actual (structurally different) markup.
+    """
+
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
@@ -302,132 +300,116 @@ def test_control_plane_settings_page_shows_presets_and_needs_test(tmp_path, monk
         details={"status": "needs_test", "reason": "configuration changed; test required"},
     )
     with _client(tmp_path) as client:
-        response = client.get("/settings/control-plane", headers=_portal_headers())
-        setup = client.get("/setup", headers=_portal_headers())
+        response = client.get("/api/settings/control-plane", headers=_portal_headers())
+        setup = client.get("/api/setup", headers=_portal_headers())
 
     assert response.status_code == 200
-    assert "gpt-5.4" in response.text
-    assert "gpt-5.4-mini" in response.text
-    assert "gpt-5.5" in response.text
-    assert '<select id="control_plane_model" name="control_plane_model"' in response.text
-    assert 'list="control-plane-model-options"' not in response.text
-    assert "<datalist" not in response.text
-    assert "Custom model…" in response.text
-    assert 'name="custom_control_plane_model"' in response.text
-    assert "claude-fable-5" in response.text
-    assert "claude-sonnet-5" in response.text
-    assert "claude-opus-4-8" in response.text
-    assert "claude-sonnet-4-6" in response.text
-    assert "claude-haiku-4-5" in response.text
-    assert "anthropic/claude-sonnet-4-20250514" not in response.text
-    assert 'data-provider="openai"' in _model_option(response.text, "gpt-5.4")
-    _assert_selectable(_model_option(response.text, "gpt-5.4"))
-    _assert_selectable(_model_option(response.text, "gpt-5.4-mini"))
-    _assert_selectable(_model_option(response.text, "gpt-5.5"))
-    _assert_not_selectable(_model_option(response.text, "claude-fable-5"))
-    _assert_not_selectable(_model_option(response.text, "claude-sonnet-5"))
-    _assert_not_selectable(_model_option(response.text, "claude-opus-4-8"))
-    _assert_not_selectable(_model_option(response.text, "claude-sonnet-4-6"))
-    _assert_not_selectable(_model_option(response.text, "claude-haiku-4-5"))
-    assert "Save control-plane model" in response.text
-    assert 'name="control_plane_api_key" type="password"' in response.text
-    assert "Leave blank to keep the existing key" in response.text
-    assert "Required for OpenAI-compatible endpoints" in response.text
-    assert "Advanced connection settings" in response.text
-    assert "https://example.invalid/v1" not in response.text
-    assert "needs test" in response.text
-    assert "needs test" in setup.text
+    body = response.json()
+    curated = {(model["provider"], model["model"]): model["label"] for model in body["curated_models"]}
+    assert set(curated) == {
+        ("openai", "gpt-5.4"),
+        ("openai", "gpt-5.4-mini"),
+        ("openai", "gpt-5.5"),
+        ("anthropic", "claude-fable-5"),
+        ("anthropic", "claude-sonnet-5"),
+        ("anthropic", "claude-opus-4-8"),
+        ("anthropic", "claude-sonnet-4-6"),
+        ("anthropic", "claude-haiku-4-5"),
+    }
+    assert body["connection_status"]["state"] == "needs_test"
 
-def test_control_plane_settings_page_separates_control_model_from_worker_auth(tmp_path, monkeypatch):
+    assert setup.status_code == 200
+    control_plane_step = next(
+        step for step in setup.json()["steps"] if step["name"] == "Control plane model"
+    )
+    assert control_plane_step["state"] == "needs test"
+
+def test_control_plane_json_handoff_separates_control_model_from_worker_auth(tmp_path, monkeypatch):
+    """Backend-state half of the retired control-model/worker-auth separation page.
+
+    The static copy this used to check ("Foreman AI HQ orchestration model",
+    "Worker Harness") is presentational Jinja text with no backend computation
+    behind it -- dropped, not reinvented. The redaction claim (the raw secret
+    and its old truncated-markup form must never render) is real backend
+    behavior and stays, migrated to the JSON handoff.
+    """
+
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     monkeypatch.setenv("TEST_CONTROL_PLANE_KEY", "sk_should_not_render")
     with _client_with_control_plane_llm(tmp_path, FakeControlPlaneLLM()) as client:
-        response = client.get("/settings/control-plane", headers=_portal_headers())
+        response = client.get("/api/settings/control-plane", headers=_portal_headers())
 
     assert response.status_code == 200
-    html = response.text
-    assert "Control plane model" in html
-    assert "claude-sonnet-5" in html
-    assert "claude-sonnet-4-6" in html
-    assert 'data-provider="anthropic"' in _model_option(html, "claude-sonnet-4-6")
-    _assert_selectable(_model_option(html, "claude-fable-5"))
-    _assert_selectable(_model_option(html, "claude-sonnet-5"))
-    _assert_selectable(_model_option(html, "claude-opus-4-8"))
-    _assert_selectable(_model_option(html, "claude-sonnet-4-6"))
-    _assert_selectable(_model_option(html, "claude-haiku-4-5"))
-    _assert_not_selectable(_model_option(html, "gpt-5.4"))
-    _assert_not_selectable(_model_option(html, "gpt-5.4-mini"))
-    _assert_not_selectable(_model_option(html, "gpt-5.5"))
-    assert "TEST_CONTROL_PLANE_KEY" in html
-    assert "Foreman AI HQ orchestration model" in html
-    assert "Worker Harness" in html
-    assert "sk_sho...nder" not in html
+    body = response.json()
+    assert body["provider"] == "anthropic"
+    assert body["model"] == "claude-sonnet-4-6"
+    assert body["api_key_env"] == "TEST_CONTROL_PLANE_KEY"
+    assert body["api_key_present"] is True
+    curated_by_model = {model["model"]: model["provider"] for model in body["curated_models"]}
+    assert curated_by_model["gpt-5.4"] == "openai"
+    assert curated_by_model["gpt-5.4-mini"] == "openai"
+    assert curated_by_model["gpt-5.5"] == "openai"
+    assert curated_by_model["claude-fable-5"] == "anthropic"
+    assert curated_by_model["claude-sonnet-5"] == "anthropic"
+    assert curated_by_model["claude-opus-4-8"] == "anthropic"
+    assert curated_by_model["claude-sonnet-4-6"] == "anthropic"
+    assert curated_by_model["claude-haiku-4-5"] == "anthropic"
+    assert "sk_should_not_render" not in response.text
+    assert "sk_sho...nder" not in response.text
 
-def test_control_plane_settings_page_preserves_existing_custom_model(tmp_path, monkeypatch):
+
+@pytest.mark.parametrize(
+    "control_plane_provider,control_plane_model,control_plane_base_url",
+    [
+        pytest.param("anthropic", "acme/custom-control-plane-999", "", id="existing_custom_model"),
+        pytest.param(
+            "openai-compatible",
+            "openai-compatible/custom-control-plane-999",
+            "https://example.invalid/v1",
+            id="openai_compatible_model",
+        ),
+        pytest.param("openai", "claude-sonnet-4-6", "", id="provider_incompatible_curated_name"),
+        pytest.param(
+            "anthropic",
+            "anthropic/claude-sonnet-4-20250514",
+            "",
+            id="stale_provider_prefixed_model",
+        ),
+    ],
+)
+def test_control_plane_json_handoff_echoes_stored_model_verbatim_for_react_custom_resolution(
+    tmp_path, monkeypatch, control_plane_provider, control_plane_model, control_plane_base_url,
+):
+    """Consolidates the four retired "preserves ... as custom" tests.
+
+    Each used to assert Jinja rendered ``<option selected>``/``hidden``/
+    ``disabled`` markup, hand-picking which stored (provider, model) pair the
+    *server* decided was "custom". That decision no longer exists server-side:
+    ``ControlPlaneSettings.jsx``'s ``dataToForm`` now makes it entirely
+    client-side, by checking whether (provider, model) is present in
+    ``curated_models``. The four cases here differ only in *what string is
+    stored*, so the backend's whole remaining job is to store and echo that
+    string back unmodified -- which is what all four really tested underneath
+    the retired markup. The client-side custom-vs-curated resolution itself is
+    covered by "ControlPlaneSettings dataToForm resolves curated vs. custom
+    models by provider+model pair" in frontend/tests/shell.test.mjs.
+    """
+
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    custom_model = "acme/custom-control-plane-999"
-    with _client_with_control_plane_llm(tmp_path, FakeControlPlaneLLM(), control_plane_model=custom_model) as client:
-        response = client.get("/settings/control-plane", headers=_portal_headers())
-
-    assert response.status_code == 200
-    html = response.text
-    assert '<option value="__custom__" selected>Custom model…</option>' in html
-    assert f'name="custom_control_plane_model" value="{custom_model}"' in html
-
-def test_control_plane_settings_page_preserves_openai_compatible_model_as_custom(tmp_path, monkeypatch):
-    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    custom_model = "openai-compatible/custom-control-plane-999"
     with _client_with_control_plane_llm(
         tmp_path,
         FakeControlPlaneLLM(),
-        control_plane_provider="openai-compatible",
-        control_plane_model=custom_model,
-        control_plane_base_url="https://example.invalid/v1",
+        control_plane_provider=control_plane_provider,
+        control_plane_model=control_plane_model,
+        control_plane_base_url=control_plane_base_url,
     ) as client:
-        response = client.get("/settings/control-plane", headers=_portal_headers())
+        response = client.get("/api/settings/control-plane", headers=_portal_headers())
 
     assert response.status_code == 200
-    html = response.text
-    assert '<option value="openai-compatible" selected>openai-compatible</option>' in html
-    assert '<option value="__custom__" selected>Custom model…</option>' in html
-    assert f'name="custom_control_plane_model" value="{custom_model}"' in html
-    _assert_not_selectable(_model_option(html, "gpt-5.4"))
-    _assert_not_selectable(_model_option(html, "gpt-5.4-mini"))
-    _assert_not_selectable(_model_option(html, "gpt-5.5"))
-    _assert_not_selectable(_model_option(html, "claude-sonnet-5"))
-    _assert_not_selectable(_model_option(html, "claude-sonnet-4-6"))
-
-
-def test_control_plane_settings_page_preserves_provider_incompatible_model_as_custom(tmp_path, monkeypatch):
-    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    mismatched_model = "claude-sonnet-4-6"
-    with _client_with_control_plane_llm(
-        tmp_path,
-        FakeControlPlaneLLM(),
-        control_plane_provider="openai",
-        control_plane_model=mismatched_model,
-    ) as client:
-        response = client.get("/settings/control-plane", headers=_portal_headers())
-
-    assert response.status_code == 200
-    html = response.text
-    assert '<option value="openai" selected>openai</option>' in html
-    assert '<option value="__custom__" selected>Custom model…</option>' in html
-    assert f'name="custom_control_plane_model" value="{mismatched_model}"' in html
-    _assert_selectable(_model_option(html, "gpt-5.4"))
-    _assert_not_selectable(_model_option(html, mismatched_model))
-
-
-def test_control_plane_settings_page_preserves_stale_provider_prefixed_model_as_custom(tmp_path, monkeypatch):
-    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    stale_model = "anthropic/claude-sonnet-4-20250514"
-    with _client_with_control_plane_llm(tmp_path, FakeControlPlaneLLM(), control_plane_model=stale_model) as client:
-        response = client.get("/settings/control-plane", headers=_portal_headers())
-
-    assert response.status_code == 200
-    html = response.text
-    assert '<option value="__custom__" selected>Custom model…</option>' in html
-    assert f'name="custom_control_plane_model" value="{stale_model}"' in html
+    body = response.json()
+    assert body["provider"] == control_plane_provider
+    assert body["model"] == control_plane_model
+    assert body["api_key_env"] == "TEST_CONTROL_PLANE_KEY"
 
 def test_control_plane_form_custom_model_submission_uses_custom_value(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
@@ -435,6 +417,11 @@ def test_control_plane_form_custom_model_submission_uses_custom_value(tmp_path, 
     custom_model = "acme/custom-control-plane-999"
 
     with _client(tmp_path) as client:
+        # Any form-encoded POST to this route is treated as a browser submission
+        # and always 303-redirects to the (retired) settings page regardless of
+        # Accept (see `_control_plane_payload_from_request` in routes/portal.py),
+        # so the persisted state is verified through `load_operator_config`
+        # instead of reading the response body.
         response = client.post(
             "/settings/control-plane",
             headers=_portal_headers(),
@@ -446,10 +433,11 @@ def test_control_plane_form_custom_model_submission_uses_custom_value(tmp_path, 
                 "control_plane_api_key_env": "COMPATIBLE_API_KEY",
                 "apply_to_estimator_breakdown": "on",
             },
+            follow_redirects=False,
         )
 
-    assert response.status_code == 200
-    assert custom_model in response.text
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings/control-plane"
     config = load_operator_config(tmp_path / ".foreman" / "config.toml")
     assert config["control_plane_provider"] == "openai-compatible"
     assert config["control_plane_model"] == custom_model
@@ -473,19 +461,24 @@ def test_control_plane_connection_test_records_sanitized_status(tmp_path, monkey
 
 
 def test_control_plane_connection_test_browser_success_returns_to_settings_ui(tmp_path, monkeypatch):
+    """The POST redirect is unchanged (design Decision 8: action-endpoint
+    redirects stay as-is). The "then read the settings page" half migrates to
+    the JSON handoff -- the Jinja page it used to read no longer exists.
+    """
+
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     llm = FakeControlPlaneLLM()
     headers = {**_portal_headers(), "accept": "text/html"}
     with _client_with_control_plane_llm(tmp_path, llm) as client:
         response = client.post("/settings/control-plane/test", headers=headers, follow_redirects=False)
-        page = client.get("/settings/control-plane", headers=headers)
+        handoff = client.get("/api/settings/control-plane", headers=_portal_headers())
 
     assert response.status_code == 303
     assert response.headers["location"] == "/settings/control-plane"
-    assert "online" in page.text
-    assert "Total tokens</div><div class=\"v\">10" in page.text
-    assert "Raw sanitized details" in page.text
-    assert "sk_sho...nder" not in page.text
+    body = handoff.json()
+    assert body["connection_status"]["state"] == "online"
+    assert body["connection_status"]["details"]["usage"]["total_tokens"] == 10
+    assert "sk_sho...nder" not in handoff.text
 
 def test_control_plane_connection_test_does_not_cap_gpt5_smoke_response(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
@@ -518,17 +511,22 @@ def test_control_plane_connection_failure_records_no_secret_values(tmp_path, mon
 
 
 def test_control_plane_connection_test_browser_failure_returns_to_settings_ui(tmp_path, monkeypatch):
+    """The POST redirect is unchanged (design Decision 8). The "then read the
+    settings page" half migrates to the JSON handoff, same as the success case.
+    """
+
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     llm = FakeControlPlaneLLM(exc=RuntimeError("secret sk_bad_key"))
     headers = {**_portal_headers(), "accept": "text/html"}
     with _client_with_control_plane_llm(tmp_path, llm) as client:
         response = client.post("/settings/control-plane/test", headers=headers, follow_redirects=False)
-        page = client.get("/settings/control-plane", headers=headers)
+        handoff = client.get("/api/settings/control-plane", headers=_portal_headers())
 
     assert response.status_code == 303
     assert response.headers["location"] == "/settings/control-plane"
-    assert "offline" in page.text
-    assert "RuntimeError" in page.text
-    assert "***REDACTED***" in page.text
-    assert "sk_bad_key" not in page.text
+    body = handoff.json()
+    assert body["connection_status"]["state"] == "offline"
+    assert body["connection_status"]["details"]["error_type"] == "RuntimeError"
+    assert "***REDACTED***" in body["connection_status"]["details"]["error"]
+    assert "sk_bad_key" not in handoff.text
 

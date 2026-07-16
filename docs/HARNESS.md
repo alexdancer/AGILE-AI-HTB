@@ -192,7 +192,7 @@ Secrets are local and ignored. Operator config stores non-secret settings; provi
 |---|---|
 | Runtime | Python 3.11+ |
 | Web/API | FastAPI |
-| UI | Server-rendered HTML with Jinja2/HTMX patterns |
+| UI | React/Vite Portal shell built by FastAPI; server-rendered login and missing-build recovery only |
 | Storage | SQLite |
 | Packaging | `foremanctl` CLI, `uv`, Docker packaging support |
 

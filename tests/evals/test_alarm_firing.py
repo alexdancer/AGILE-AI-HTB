@@ -257,15 +257,17 @@ def test_eval_alarm_budget_red_visible_on_dashboard_and_session_report(tmp_path,
     with client:
         started = _start_session(client, daily_used_tokens=900_000)
         _proxy_request(client, started["session_api_key"])
-        dashboard = client.get("/dashboard", headers=_auth_headers())
-        report = client.get(f"/sessions/{started['session_id']}", headers=_auth_headers())
+        dashboard = client.get("/api/dashboard", headers=_auth_headers())
+        report = client.get(f"/api/sessions/{started['session_id']}/report", headers=_auth_headers())
 
     assert dashboard.status_code == 200
-    assert "BUDGET_RED" in dashboard.text
-    assert f"/sessions/{started['session_id']}" in dashboard.text
+    dashboard_payload = dashboard.json()
+    assert any(alarm["type"] == "BUDGET_RED" for alarm in dashboard_payload["alarms"]["recent"])
+    assert any(alarm["session_id"] == started["session_id"] for alarm in dashboard_payload["alarms"]["recent"])
     assert report.status_code == 200
-    assert "BUDGET_RED" in report.text
-    assert "Agent is in red budget zone" in report.text
+    report_payload = report.json()
+    assert any(alarm["type"] == "BUDGET_RED" for alarm in report_payload["alarms"]["items"])
+    assert any(zone["zone"] == "red" for zone in report_payload["zone_timeline"]["items"])
 
 
 def test_eval_alarm_budget_counts_control_plane_spend_for_daily_caps_only(tmp_path):

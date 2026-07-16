@@ -82,9 +82,16 @@ def _build(tmp_path, *, complete):
 
 
 @pytest.mark.parametrize(("complete", "expects_shell"), [(True, True), (False, False)])
-def test_canonical_review_selects_complete_react_or_jinja_fallback(
+def test_canonical_review_serves_shell_or_the_missing_build_recovery_response(
     tmp_path, monkeypatch, complete, expects_shell
 ):
+    """A partial build is retired's missing-build case, not a Jinja fallback.
+
+    The Jinja review page is gone, so an incomplete build must return the same
+    recovery response every other React-owned route returns, not a page named
+    "Task breakdown review".
+    """
+
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     breakdown = _seed_breakdown(tmp_path / "harness.db")
     build_dir = _build(tmp_path, complete=complete)
@@ -96,9 +103,12 @@ def test_canonical_review_selects_complete_react_or_jinja_fallback(
         )
         missing = client.get("/task-breakdowns/missing-DEMO-999/review", headers=_portal_headers())
     assert unauthorized.status_code == 401
-    assert response.status_code == 200
-    assert ('id="root"' in response.text) is expects_shell
-    assert ("Task breakdown review" in response.text) is (not expects_shell)
+    if expects_shell:
+        assert response.status_code == 200
+        assert 'id="root"' in response.text
+    else:
+        assert response.status_code == 503
+        assert "not built" in response.text
     assert missing.status_code == 404
 
 
@@ -716,39 +726,41 @@ def test_accepting_claim_fails_closed_and_surfaces_linked_tasks_without_reestima
     assert [task["id"] for task in db.list_tasks(path)] == [linked_task["id"]]
 
 
-@pytest.mark.parametrize(
-    ("status", "expected_heading"),
-    [
-        ("accepting", "Acceptance in progress"),
-        ("accepted", "Accepted review"),
-    ],
-)
-def test_jinja_fallback_claim_and_accepted_reviews_are_read_only(
-    tmp_path, monkeypatch, status, expected_heading
-):
+# The "accepting" case of this claim is already covered by
+# test_accepting_claim_fails_closed_and_surfaces_linked_tasks_without_reestimating,
+# which asserts can_accept is False and the linked task appears in
+# created_task_ids via the JSON handoff. Only "accepted" needed a replacement
+# here; the retired test asserted a Jinja page rendered "read-only" chrome for
+# both statuses, but that page is gone and the JSON handoff was always the
+# authoritative contract (design Decision 9).
+def test_accepted_review_is_read_only_and_surfaces_linked_task(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     path = tmp_path / "harness.db"
     breakdown = _seed_breakdown(path)
-    db.update_task_breakdown(path, breakdown["id"], {"status": status})
+    db.update_task_breakdown(path, breakdown["id"], {"status": "accepted"})
     linked_task = db.create_task(
         path,
-        task_id=f"task_DEMO_{status.upper()}_999",
-        description=f"Durable DEMO {status} Task 999",
+        task_id="task_DEMO_ACCEPTED_999",
+        description="Durable DEMO accepted Task 999",
         metadata={"task_breakdown_id": breakdown["id"]},
     )
-    build_dir = _build(tmp_path, complete=False)
-    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
 
     with _client(tmp_path) as client:
-        response = client.get(
-            f"/task-breakdowns/{breakdown['id']}/review", headers=_portal_headers()
+        review = client.get(
+            f"/api/task-breakdowns/{breakdown['id']}/review", headers=_portal_headers()
         )
 
-    assert response.status_code == 200
-    assert expected_heading in response.text
-    assert linked_task["id"] in response.text
-    assert f'/task-breakdowns/{breakdown["id"]}/accept' not in response.text
-    assert 'name="accept_0"' not in response.text
+    assert review.status_code == 200
+    payload = review.json()
+    assert payload["review"]["status"] == "accepted"
+    assert payload["controls"] == {
+        "can_accept": False,
+        "can_retry": False,
+        "can_create_manual_candidate": False,
+    }
+    assert [
+        item["preview"] for item in payload["review"]["created_task_ids"]["items"]
+    ] == [linked_task["id"]]
 
 
 def test_json_accept_never_stringifies_hidden_malformed_values(tmp_path, monkeypatch):

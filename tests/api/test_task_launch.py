@@ -271,7 +271,10 @@ def test_launch_blocks_unverified_adapter_without_session_or_runner(tmp_path, mo
             headers={**_auth_headers(), "accept": "application/json"},
             json={"adapter_id": "codex", "proxy_url": "http://127.0.0.1:8000/v1"},
         )
-        board = client.get("/board", headers=_auth_headers())
+        board = client.get(
+            f"/api/projects/{task['metadata']['connected_project_id']}/board",
+            headers=_auth_headers(),
+        )
         with db.connect(tmp_path / "harness.db") as conn:
             sessions = conn.execute("select * from sessions").fetchall()
 
@@ -291,7 +294,11 @@ def test_launch_blocks_unverified_adapter_without_session_or_runner(tmp_path, mo
     }
     assert runner_calls == []
     assert sessions == []
-    assert "Token tracking has not been verified for this adapter." in board.text
+    board_payload = board.json()
+    board_task = next(t for t in board_payload["tasks_by_status"]["Estimated"] if t["id"] == task["id"])
+    assert board_task["details"]["launch"]["blocked_reason"]["text"] == (
+        "Token tracking has not been verified for this adapter."
+    )
 
 
 def test_react_launch_validation_error_uses_stable_outcome(tmp_path, monkeypatch):
@@ -400,7 +407,10 @@ def test_launch_verified_adapter_creates_running_session_and_redacts_raw_session
             json={"adapter_id": "codex", "proxy_url": "http://127.0.0.1:8000/v1"},
         )
         launched = response.json()["task"]
-        board = client.get("/board", headers=_auth_headers())
+        board = client.get(
+            f"/api/projects/{task['metadata']['connected_project_id']}/board",
+            headers=_auth_headers(),
+        )
         artifact = client.get(f"/session/{launched['session_id']}/artifact", headers=_auth_headers()).json()
 
     assert response.status_code == 200
@@ -409,10 +419,20 @@ def test_launch_verified_adapter_creates_running_session_and_redacts_raw_session
     assert len(runner_calls) == 1
     assert runner_calls[0].env["OPENAI_API_KEY"].startswith("sk_sess_")
     assert runner_calls[0].env["FOREMAN_AI_HQ_SESSION_API_KEY"].startswith("sk_sess_")
-    serialized = json.dumps({"response": response.json(), "board": board.text, "artifact": artifact})
+    board_payload = board.json()
+    serialized = json.dumps({"response": response.json(), "board": board_payload, "artifact": artifact})
     assert "sk_sess_" not in serialized
-    assert "Session report" in board.text
-    assert f"/sessions/{launched['session_id']}" in board.text
+    # The background worker run may complete before we read the board, so the task
+    # can appear in Running or the column it settles into (e.g., Estimated on a
+    # recoverable proxy-governed failure). The session_href linkage is the
+    # backend-state invariant we care about.
+    board_task = next(
+        t
+        for column in board_payload["tasks_by_status"].values()
+        for t in column
+        if t["id"] == task["id"]
+    )
+    assert board_task["session_href"] == f"/sessions/{launched['session_id']}"
     assert artifact["session"]["session_key_hash"] != runner_calls[0].env["OPENAI_API_KEY"]
 
 def test_launch_sanitizes_runner_output_everywhere(tmp_path, monkeypatch):
@@ -428,10 +448,12 @@ def test_launch_sanitizes_runner_output_everywhere(tmp_path, monkeypatch):
 
     with _client(tmp_path) as client:
         client.app.state.task_launch_runner = fake_runner
+        project = db.list_connected_projects(tmp_path / "harness.db")[0]
         task = client.post(
             "/tasks",
             json={
                 "description": "Do not leak runner output secrets",
+                "project_id": project["id"],
                 "estimate_tokens": 8000,
                 "recommended_model": "gpt-5.4",
             },
@@ -452,13 +474,17 @@ def test_launch_sanitizes_runner_output_everywhere(tmp_path, monkeypatch):
             json={"adapter_id": "codex", "proxy_url": "http://127.0.0.1:8000/v1"},
         )
         launched = response.json()["task"]
-        board = client.get("/board", headers=_auth_headers())
+        board = client.get(
+            f"/api/projects/{project['id']}/board",
+            headers=_auth_headers(),
+        )
         artifact = client.get(f"/session/{launched['session_id']}/artifact", headers=_auth_headers()).json()
         with db.connect(tmp_path / "harness.db") as conn:
             metadata_json = conn.execute("select metadata_json from tasks where id = ?", (task["id"],)).fetchone()[0]
 
+    board_payload = board.json()
     serialized = json.dumps(
-        {"response": response.json(), "board": board.text, "artifact": artifact, "metadata_json": metadata_json}
+        {"response": response.json(), "board": board_payload, "artifact": artifact, "metadata_json": metadata_json}
     )
     assert response.status_code == 200
     assert leaked_key not in serialized
@@ -761,20 +787,25 @@ def test_board_shows_codex_trusted_directory_failure_as_retryable_setup_diagnost
         )
         _wait_for_worker_run(tmp_path / "harness.db", task["id"], "failed")
         refreshed = db.get_task(tmp_path / "harness.db", task["id"])
-        board = client.get(f"/projects/{project['id']}/board", headers=_auth_headers())
+        board = client.get(f"/api/projects/{project['id']}/board", headers=_auth_headers())
 
     assert response.status_code == 303
     assert refreshed["status"] == "Estimated"
     assert refreshed["metadata"]["launch_retryable"] is True
     assert refreshed["metadata"]["launch_diagnostic"]["code"] == "codex_untrusted_directory"
-    assert "Not inside a trusted directory and --skip-git-repo-check was not specified." in board.text
-    assert "Open Worker Setup" in board.text
-    assert "Adapter: codex" in board.text
-    assert "Model: gpt-5.4" in board.text
-    assert str(project["root_path"]) in board.text
-    assert f'action="/tasks/{task["id"]}/launch"' in board.text
-    assert "api_key=abc123" not in board.text
-    assert "Bearer abc.def" not in board.text
+    board_payload = board.json()
+    board_task = next(t for t in board_payload["tasks_by_status"]["Estimated"] if t["id"] == task["id"])
+    assert (
+        board_task["details"]["launch"]["diagnostic"]["summary"]["text"]
+        == "Not inside a trusted directory and --skip-git-repo-check was not specified."
+    )
+    # Backend sanitization must strip leaked credentials from the runner output.
+    retry_summary = board_task["details"]["launch"]["retryable_failure"]["summary"]["text"]
+    assert "api_key=abc123" not in retry_summary
+    assert "Bearer abc.def" not in retry_summary
+    board_text = json.dumps(board_payload)
+    assert "api_key=abc123" not in board_text
+    assert "Bearer abc.def" not in board_text
 
 
 def test_codex_native_sandbox_rejection_with_zero_exit_stays_retryable(tmp_path, monkeypatch):
@@ -865,17 +896,23 @@ def test_board_form_recoverable_launch_error_stays_on_task_card_with_launch_form
         )
         _wait_for_worker_run(tmp_path / "harness.db", task["id"], "failed")
         refreshed = db.get_task(tmp_path / "harness.db", task["id"])
-        board = client.get("/board", headers=_auth_headers())
+        board = client.get(
+            f"/api/projects/{task['metadata']['connected_project_id']}/board",
+            headers=_auth_headers(),
+        )
 
     assert response.status_code == 303
     assert response.headers["location"] == f"/projects/{task['metadata']['connected_project_id']}/board"
     assert refreshed["status"] == "Estimated"
     assert refreshed["metadata"]["launch_retryable"] is True
-    assert "Launch error:" in board.text
-    assert "Worker adapter launch failed." in board.text
-    assert "Command timed out after 60 seconds." in board.text
-    assert f'action="/tasks/{task["id"]}/launch"' in board.text
-    assert "Only Estimated tasks can launch." not in board.text
+    board_payload = board.json()
+    board_task = next(t for t in board_payload["tasks_by_status"]["Estimated"] if t["id"] == task["id"])
+    assert board_task["details"]["launch"]["error"]["text"] == "Worker adapter launch failed."
+    assert "Command timed out after 60 seconds." in board_task["details"]["launch"]["retryable_failure"]["summary"]["text"]
+    assert board_task["details"]["launch"]["retryable_failure"]["returncode"] == 124
+    # A recoverable timeout keeps the launch form available (Estimated, not a status gate).
+    assert "Only Estimated tasks can launch." not in board_task["details"]["launch"]["error"]["text"]
+    assert board_task["controls"]["can_launch"] is True
 
 
 def test_project_board_live_refresh_controls_and_status_endpoint(tmp_path, monkeypatch):
@@ -890,20 +927,16 @@ def test_project_board_live_refresh_controls_and_status_endpoint(tmp_path, monke
             metadata=project_task_metadata(project),
         )
 
-        board = client.get(f"/projects/{project['id']}/board", headers=_auth_headers())
-        global_board = client.get("/board", headers=_auth_headers(), follow_redirects=False)
+        board = client.get(f"/api/projects/{project['id']}/board", headers=_auth_headers())
         status_response = client.get(f"/projects/{project['id']}/board/status", headers=_auth_headers())
 
     assert task["status"] == "Running"
     assert board.status_code == 200
-    assert "Run automation" in board.text
-    assert "Eligible Estimated:" in board.text
-    assert "Auto Agent Review" in board.text
-    assert "Live refresh active" in board.text
-    assert f"/projects/{project['id']}/board/status" in board.text
-    assert global_board.status_code == 303
-    assert "Run automation" not in global_board.text
-    assert "Run queue" not in global_board.text
+    board_payload = board.json()
+    assert board_payload["project"]["id"] == project["id"]
+    assert board_payload["board_summary"]["counts"]["Running"] == 1
+    assert board_payload["automation"]["live_refresh_enabled"] is True
+    assert board_payload["automation"]["queue"]["status"] == "idle"
     assert status_response.status_code == 200
     body = status_response.json()
     assert body["project_id"] == project["id"]
@@ -1414,7 +1447,7 @@ def test_project_run_queue_no_eligible_and_operator_stop_reasons(tmp_path, monke
         no_eligible = client.get(f"/projects/{project['id']}/board/status", headers=_auth_headers()).json()
         stop = client.post(f"/projects/{project['id']}/queue/stop", headers=headers, follow_redirects=False)
         stopped = client.get(f"/projects/{project['id']}/board/status", headers=_auth_headers()).json()
-        board = client.get(f"/projects/{project['id']}/board", headers=_auth_headers())
+        board = client.get(f"/api/projects/{project['id']}/board", headers=_auth_headers())
 
     assert start.status_code == (200 if react_json else 303)
     if react_json:
@@ -1442,8 +1475,9 @@ def test_project_run_queue_no_eligible_and_operator_stop_reasons(tmp_path, monke
         assert stop_body["automation"]["status"] == "stopped"
         assert stop_body["automation"]["latest_stop_reason"] == "operator_stop"
     assert stopped["queue"]["latest_stop_reason"] == "operator_stop"
-    assert "operator_stop" in board.text
-    assert "Queue: stopped" in board.text
+    board_payload = board.json()
+    assert board_payload["automation"]["queue"]["status"] == "stopped"
+    assert board_payload["automation"]["queue"]["latest_stop_reason"] == "operator_stop"
 
 
 def test_launch_accepts_manual_estimate_payload_before_guardrails(tmp_path, monkeypatch):
@@ -1735,14 +1769,18 @@ def test_fake_worker_token_row_after_launch_appears_in_session_report(tmp_path, 
             json={"adapter_id": "codex", "proxy_url": "http://127.0.0.1:8000/v1"},
         ).json()["task"]
         _wait_for_worker_run(tmp_path / "harness.db", task["id"], "completed")
-        report = client.get(f"/sessions/{launched['session_id']}", headers=_auth_headers())
+        report = client.get(f"/api/sessions/{launched['session_id']}/report", headers=_auth_headers())
         artifact = client.get(f"/session/{launched['session_id']}/artifact", headers=_auth_headers()).json()
 
     assert artifact["token_log"][0]["usage_kind"] == "worker"
     assert artifact["token_log"][0]["total_tokens"] == 168
     assert report.status_code == 200
-    assert "168" in report.text
-    assert "worker" in report.text
+    report_payload = report.json()
+    assert report_payload["tokens"]["provider_totals"]["total_tokens"] == 168
+    assert report_payload["tokens"]["normalized"]["total_tokens"] == 168
+    log_items = report_payload["tokens"]["log"]["items"]
+    assert log_items[0]["usage_kind"] == "worker"
+    assert log_items[0]["total_tokens"] == 168
 
 def test_refresh_task_from_session_maps_completion_to_done_review_or_blocked(tmp_path):
     database_path = tmp_path / "harness.db"

@@ -185,6 +185,16 @@ def _client_with_llm(tmp_path, llm):
     )
     return TestClient(app)
 
+
+def _board_task(board_response, task_id):
+    assert board_response.status_code == 200
+    body = board_response.json()
+    for column in body["tasks_by_status"].values():
+        for task in column:
+            if task["id"] == task_id:
+                return task
+    raise AssertionError(f"task {task_id} not found on board")
+
 def test_review_action_save_prompt_and_mark_done_preserve_completed_session_evidence(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
@@ -452,7 +462,7 @@ def test_review_action_agent_review_uses_control_plane_and_stays_in_review(tmp_p
             headers=_auth_headers(),
             json={"action": "agent_review", "review_prompt": "Check DEMO edge case 2099."},
         )
-        board = client.get(f"/projects/{task['metadata']['connected_project_id']}/board", headers=_auth_headers())
+        board = client.get(f"/api/projects/{task['metadata']['connected_project_id']}/board", headers=_auth_headers())
 
     assert response.status_code == 200
     body = response.json()
@@ -488,11 +498,15 @@ def test_review_action_agent_review_uses_control_plane_and_stays_in_review(tmp_p
     assert all_breakdown["by_category"]["worker_execution"] == 133
     assert all_breakdown["by_category"]["reporting_summary"] == 49
     assert db.session_token_breakdown(database_path, session["id"])["by_category"]["worker_execution"] == body["actual_tokens"]
-    assert "Agent Review" in board.text
-    assert "approve" in board.text
-    assert "49 tokens" in board.text
-    assert "review session" in board.text
-    assert f"/sessions/{review['review_session_id']}" in board.text
+    board_task = _board_task(board, task["id"])
+    assert board_task["status"] == "Review"
+    agent = board_task["details"]["review"]["agent_review"]
+    assert agent["status"] == "completed"
+    assert agent["recommendation"] == "approve"
+    assert agent["summary"]["text"] == "DEMO review says the task is acceptable."
+    assert agent["findings"][0]["message"]["text"] == "DEMO finding only."
+    assert agent["token_total"] == 49
+    assert agent["review_session_href"] == f"/sessions/{review['review_session_id']}"
 
 
 def test_review_action_agent_review_parses_fenced_json_without_raw_board_dump(tmp_path, monkeypatch):
@@ -526,17 +540,20 @@ def test_review_action_agent_review_parses_fenced_json_without_raw_board_dump(tm
             headers=_auth_headers(),
             json={"action": "agent_review"},
         )
-        board = client.get(f"/projects/{task['metadata']['connected_project_id']}/board", headers=_auth_headers())
+        board = client.get(f"/api/projects/{task['metadata']['connected_project_id']}/board", headers=_auth_headers())
 
     assert response.status_code == 200
     review = response.json()["metadata"]["agent_review"]
     assert review["summary"] == "DEMO fenced review 2099 is clean."
     assert review["recommendation"] == "approve"
     assert review["findings"][0]["path"] == "README.md"
-    assert "DEMO fenced review 2099 is clean." in board.text
-    assert "DEMO fenced finding 2099." in board.text
-    assert "```json" not in board.text
-    assert "Here is the review" not in board.text
+    board_task = _board_task(board, task["id"])
+    agent = board_task["details"]["review"]["agent_review"]
+    assert agent["summary"]["text"] == "DEMO fenced review 2099 is clean."
+    assert agent["findings"][0]["message"]["text"] == "DEMO fenced finding 2099."
+    assert agent["findings"][0]["path"] == "README.md"
+    assert "```json" not in agent["summary"]["text"]
+    assert "Here is the review" not in agent["summary"]["text"]
 
 
 def test_review_action_agent_review_normalizes_markdown_to_plain_text(tmp_path, monkeypatch):
@@ -578,7 +595,7 @@ def test_review_action_agent_review_normalizes_markdown_to_plain_text(tmp_path, 
             headers=_auth_headers(),
             json={"action": "agent_review"},
         )
-        board = client.get(f"/projects/{task['metadata']['connected_project_id']}/board", headers=_auth_headers())
+        board = client.get(f"/api/projects/{task['metadata']['connected_project_id']}/board", headers=_auth_headers())
 
     assert response.status_code == 200
     review = response.json()["metadata"]["agent_review"]
@@ -588,12 +605,15 @@ def test_review_action_agent_review_normalizes_markdown_to_plain_text(tmp_path, 
         {"severity": "high", "message": "README.md still references the wrong DEMO_2099 path."},
         {"severity": "low", "message": "Minor wording still reads like markdown."},
     ]
-    assert "DEMO_2099 worker verification is incomplete because pip install was skipped." in board.text
-    assert "README.md still references the wrong DEMO_2099 path." in board.text
-    assert "# Agent Review" not in board.text
-    assert "**" not in board.text
-    assert "`pip install`" not in board.text
-    assert "- needs changes" not in board.text
+    board_task = _board_task(board, task["id"])
+    agent = board_task["details"]["review"]["agent_review"]
+    assert agent["summary"]["text"] == "DEMO_2099 worker verification is incomplete because pip install was skipped."
+    assert agent["recommendation"] == "needs_changes"
+    assert agent["findings"][0]["message"]["text"] == "README.md still references the wrong DEMO_2099 path."
+    assert agent["findings"][1]["message"]["text"] == "Minor wording still reads like markdown."
+    assert "#" not in agent["summary"]["text"]
+    assert "**" not in agent["summary"]["text"]
+    assert "`" not in agent["summary"]["text"]
 
 
 def test_review_action_agent_review_cleans_markdown_inside_json_fields(tmp_path, monkeypatch):
@@ -633,17 +653,20 @@ def test_review_action_agent_review_cleans_markdown_inside_json_fields(tmp_path,
             headers=_auth_headers(),
             json={"action": "agent_review"},
         )
-        board = client.get(f"/projects/{task['metadata']['connected_project_id']}/board", headers=_auth_headers())
+        board = client.get(f"/api/projects/{task['metadata']['connected_project_id']}/board", headers=_auth_headers())
 
     assert response.status_code == 200
     review = response.json()["metadata"]["agent_review"]
     assert review["summary"] == "DEMO_2099 review: Worker output is readable."
     assert review["recommendation"] == "approve"
     assert review["findings"][0] == {"severity": "low", "message": "No blocker in README.md.", "path": "README.md"}
-    assert "DEMO_2099 review: Worker output is readable." in board.text
-    assert "No blocker in README.md." in board.text
-    assert "**DEMO_2099" not in board.text
-    assert "`README.md`" not in board.text
+    board_task = _board_task(board, task["id"])
+    agent = board_task["details"]["review"]["agent_review"]
+    assert agent["summary"]["text"] == "DEMO_2099 review: Worker output is readable."
+    assert agent["findings"][0]["message"]["text"] == "No blocker in README.md."
+    assert agent["findings"][0]["path"] == "README.md"
+    assert "**DEMO_2099" not in agent["summary"]["text"]
+    assert "`" not in agent["findings"][0]["path"]
 
 def test_review_action_accepts_completed_worker_run_evidence_when_session_is_not_completed(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
@@ -736,7 +759,7 @@ def test_review_action_agent_review_failure_is_stored_and_task_remains_review(tm
             headers=_auth_headers(),
             json={"action": "agent_review"},
         )
-        board = client.get("/board", headers=_auth_headers())
+        board = client.get(f"/api/projects/{task['metadata']['connected_project_id']}/board", headers=_auth_headers())
 
     assert response.status_code == 200
     body = response.json()
@@ -747,5 +770,10 @@ def test_review_action_agent_review_failure_is_stored_and_task_remains_review(tm
     assert review["error_type"] == "RuntimeError"
     assert "DEMO control-plane outage 2099" in review["error"]
     assert db.get_session(database_path, review["review_session_id"])["status"] == "failed"
-    assert "Agent Review failed" in board.text
+    board_task = _board_task(board, task["id"])
+    assert board_task["status"] == "Review"
+    agent = board_task["details"]["review"]["agent_review"]
+    assert agent["status"] == "failed"
+    assert agent["failure"]["text"] == "DEMO control-plane outage 2099"
+    assert agent["token_total"] == 0
 

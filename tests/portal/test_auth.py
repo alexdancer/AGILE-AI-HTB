@@ -1,10 +1,31 @@
 from pathlib import Path
 
 from foreman_ai_hq import db
+from foreman_ai_hq.routes import react_shell
 from tests.portal.helpers import PORTAL_TOKEN, _client, _portal_headers
+
+
+def _build_react_assets(tmp_path):
+    # Matches tests/portal/test_react_shell.py::_build_react_assets. Duplicated
+    # locally rather than imported because this file is scoped to only touch
+    # tests/portal/test_auth.py.
+    build_dir = tmp_path / "react_build"
+    (build_dir / "assets").mkdir(parents=True)
+    (build_dir / "index.html").write_text(
+        '<!doctype html><div id="root"></div>'
+        '<script type="module" src="/static/react/assets/main.js"></script>',
+        encoding="utf-8",
+    )
+    (build_dir / "assets" / "main.js").write_text(
+        "console.log('react shell');", encoding="utf-8"
+    )
+    return build_dir
+
 
 def test_portal_routes_require_operator_bearer_token(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
     with _client(tmp_path) as client:
         started = client.post(
             "/session/start",
@@ -12,18 +33,32 @@ def test_portal_routes_require_operator_bearer_token(tmp_path, monkeypatch):
             json={"task_description": "Secured portal", "model": "claude-haiku"},
         ).json()
 
-        for path in ["/dashboard", "/board", f"/sessions/{started['session_id']}"]:
+        # /board is a redirect shim onto a project board (303), not a rendered
+        # page; /dashboard and /sessions/{id} are React-shell routes that need
+        # a build present to answer 200 instead of the missing-build 503.
+        expected_status = {
+            "/dashboard": 200,
+            "/board": 303,
+            f"/sessions/{started['session_id']}": 200,
+        }
+        for path, ok_status in expected_status.items():
             assert client.get(path).status_code == 401
             assert client.get(path, headers={"Authorization": "Bearer wrong"}).status_code == 401
-            assert client.get(path, headers=_portal_headers()).status_code == 200
+            response = client.get(path, headers=_portal_headers(), follow_redirects=False)
+            assert response.status_code == ok_status
 
 def test_portal_login_sets_signed_http_only_cookie_and_logout_clears_it(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
     with _client(tmp_path) as client:
         login = client.post("/login", data={"token": PORTAL_TOKEN}, follow_redirects=False)
 
         assert login.status_code == 303
-        assert login.headers["location"] == "/projects"
+        # Login now always lands on the React dashboard shell; the retired
+        # Jinja /projects landing no longer exists (final-jinja-retirement,
+        # design.md Decision 1: "Landing stops checking").
+        assert login.headers["location"] == "/dashboard"
         cookie = login.headers["set-cookie"]
         assert "foreman_ai_hq_portal=" in cookie
         assert "HttpOnly" in cookie
@@ -42,15 +77,19 @@ def test_portal_login_sets_signed_http_only_cookie_and_logout_clears_it(tmp_path
 
 def test_portal_auth_disabled_opens_local_pages_without_token(tmp_path, monkeypatch):
     monkeypatch.delenv("TOKEN_TRACKER_PORTAL_TOKEN", raising=False)
+    build_dir = _build_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
     with _client(tmp_path, portal_auth_required=False) as client:
         root = client.get("/", follow_redirects=False)
         login = client.get("/login", follow_redirects=False)
         dashboard = client.get("/dashboard")
 
     assert root.status_code == 307
-    assert root.headers["location"] == "/projects"
+    # Root and /login both bounce to the React dashboard shell now; the
+    # retired Jinja /projects landing no longer exists.
+    assert root.headers["location"] == "/dashboard"
     assert login.status_code == 307
-    assert login.headers["location"] == "/projects"
+    assert login.headers["location"] == "/dashboard"
     assert dashboard.status_code == 200
     assert "Logout" not in dashboard.text
 
@@ -61,10 +100,16 @@ def test_portal_auth_disabled_logout_clears_cookie_and_returns_to_landing(tmp_pa
         logout = client.post("/logout", follow_redirects=False)
 
     assert logout.status_code == 303
-    assert logout.headers["location"] == "/projects"
+    # Same landing consolidation as above: logout with auth disabled now
+    # returns to /dashboard, not the retired /projects Jinja page.
+    assert logout.headers["location"] == "/dashboard"
     assert "foreman_ai_hq_portal=\"\"" in logout.headers["set-cookie"]
 
-def test_portal_login_redirects_to_most_recent_project(tmp_path, monkeypatch):
+def test_portal_login_always_redirects_to_dashboard_regardless_of_recent_project(tmp_path, monkeypatch):
+    # Previously this asserted login redirected to the most recently touched
+    # project's page. final-jinja-retirement design.md Decision 1 collapsed
+    # that build-aware landing logic (`_default_portal_landing`), so login now
+    # always lands on /dashboard no matter which project was last connected.
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     db.init_db(tmp_path / "harness.db")
     db.upsert_connected_project(
@@ -74,7 +119,7 @@ def test_portal_login_redirects_to_most_recent_project(tmp_path, monkeypatch):
         profile={},
         capability={},
     )
-    recent = db.upsert_connected_project(
+    db.upsert_connected_project(
         tmp_path / "harness.db",
         name="second-project",
         root_path=str(tmp_path / "second-project"),
@@ -86,13 +131,16 @@ def test_portal_login_redirects_to_most_recent_project(tmp_path, monkeypatch):
         login = client.post("/login", data={"token": PORTAL_TOKEN}, follow_redirects=False)
 
     assert login.status_code == 303
-    assert login.headers["location"] == f"/projects/{recent['id']}"
+    assert login.headers["location"] == "/dashboard"
 
 def test_portal_rejects_tampered_or_expired_login_cookie(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     with _client(tmp_path) as client:
-        login = client.post("/login", data={"token": PORTAL_TOKEN})
-        assert login.status_code == 200
+        # Don't follow the post-login redirect: this test is about the cookie,
+        # not the destination page, and following it would hit /dashboard's
+        # missing-build 503 rather than the retired Jinja 200.
+        login = client.post("/login", data={"token": PORTAL_TOKEN}, follow_redirects=False)
+        assert login.status_code == 303
         signed_cookie = client.cookies.get("foreman_ai_hq_portal")
         assert signed_cookie is not None
 
@@ -208,5 +256,6 @@ def test_auth_disabled_login_never_renders_token_form(tmp_path, monkeypatch):
         response = client.get("/login", follow_redirects=False)
 
     assert response.status_code == 307
-    assert response.headers["location"] == "/projects"
+    # Login bounces to /dashboard now, not the retired /projects Jinja page.
+    assert response.headers["location"] == "/dashboard"
     assert "Portal token" not in response.text
