@@ -5,7 +5,7 @@ Parking lot for ideas I actually want to revisit. This is not a roadmap or a pro
 ## Build next
 
 - [ ] **Portal refresh:** make the project board easier to scan, especially project navigation, worker setup, queue status, review evidence, and empty/error states.
-- [ ] **Finish React Portal migration:** React now owns the authenticated front door, Dashboard, project workspace, Orchestration Board, Sessions/Session Report, Task Breakdown Review, Project Task History, and Alarms inbox. Remaining surfaces (Settings group, Setup, Login) still track in `docs/REACT_PORTAL_PARITY_PLAN.md`.
+- [x] **Finish React Portal migration:** React owns every canonical operator-facing route (Dashboard, Projects, project workspace, Orchestration Board, Sessions/Session Report, Task Breakdown Review, Project Task History, Alarms inbox, and the full Settings/Setup group); Jinja is retired except for the standalone login page. See `docs/REACT_PORTAL_PARITY_PLAN.md` for the full history.
 - [ ] **Full CLI:** turn `foremanctl` into a real terminal product for init, serve, check, projects, board tasks, worker setup, runs, reports, and budget status.
 - [ ] **CLI token usage summary:** add `foremanctl` commands to show token usage by run, task, and day for Foreman-governed sessions.
 - [ ] **CLI action sign-off:** let operators approve or deny commands/actions requested by Worker CLIs from the terminal, recording the decision as audit evidence without bypassing Harness guardrails.
