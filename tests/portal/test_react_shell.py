@@ -1853,25 +1853,31 @@ def test_react_shell_chrome_contract():
 
 
 def test_react_shell_non_migrated_links_are_anchors():
-    """Server-rendered routes render as full-page <a href>, not AppLink."""
+    """Genuinely server-rendered sidebar targets stay full-page <a href>; React-owned
+    targets navigate in-shell through the OwnedLink seam (reversed sidebar contract)."""
     shell_source = Path("frontend/src/components/Shell.jsx").read_text(encoding="utf-8")
-    for server_href in (
+    # Non-React-owned targets remain ordinary full-page anchors.
+    for server_href in ("/board", "/login"):
+        assert f'href="{server_href}"' in shell_source
+    # React-owned sidebar targets use OwnedLink for in-shell navigation, not raw href.
+    for owned_to in (
         "/settings/control-plane",
         "/settings/budget",
         "/settings/project",
         "/settings/workers",
-        "/board",
         "/projects",
     ):
-        assert f'href="{server_href}"' in shell_source
+        assert f'to="{owned_to}"' in shell_source
+        assert f'href="{owned_to}"' not in shell_source
 
 
 def test_react_dashboard_source_contract():
     app_source = Path("frontend/src/App.jsx").read_text(encoding="utf-8")
+    routes_source = Path("frontend/src/routes.js").read_text(encoding="utf-8")
     shell_source = Path("frontend/src/components/Shell.jsx").read_text(encoding="utf-8")
     dashboard_source = Path("frontend/src/views/Dashboard.jsx").read_text(encoding="utf-8")
 
-    assert 'view: "dashboard"' in app_source
+    assert 'view: "dashboard"' in routes_source
     assert "<Dashboard />" in app_source
     assert 'to="/app"' in shell_source
     assert 'activeView === "dashboard"' in shell_source
@@ -2248,14 +2254,15 @@ def test_canonical_settings_budget_route_serves_react_when_built(tmp_path, monke
 def test_react_budget_settings_source_contract():
     """Frontend BudgetSettings view matches the backend contract and route wiring."""
     app_source = Path("frontend/src/App.jsx").read_text(encoding="utf-8")
+    routes_source = Path("frontend/src/routes.js").read_text(encoding="utf-8")
     shell_source = Path("frontend/src/components/Shell.jsx").read_text(encoding="utf-8")
     source = Path("frontend/src/views/BudgetSettings.jsx").read_text(encoding="utf-8")
     api_source = Path("frontend/src/api.js").read_text(encoding="utf-8")
 
-    assert 'view: "budgetSettings"' in app_source
+    assert 'view: "budgetSettings"' in routes_source
     assert "<BudgetSettings />" in app_source
     assert 'activeView === "budgetSettings"' in shell_source
-    assert 'href="/settings/budget"' in shell_source
+    assert 'to="/settings/budget"' in shell_source
     assert 'href="/setup"' in source
     assert 'useResource("/api/settings/budget"' in source
     assert 'postJSON("/settings/budget"' in source
@@ -2469,10 +2476,11 @@ def test_react_alarms_canonical_route_serves_react_when_built(tmp_path, monkeypa
 def test_react_alarms_source_contract():
     """Frontend Alarms view matches the backend contract and routing expectations."""
     app_source = Path("frontend/src/App.jsx").read_text(encoding="utf-8")
+    routes_source = Path("frontend/src/routes.js").read_text(encoding="utf-8")
     shell_source = Path("frontend/src/components/Shell.jsx").read_text(encoding="utf-8")
     source = Path("frontend/src/views/Alarms.jsx").read_text(encoding="utf-8")
 
-    assert 'view: "alarms"' in app_source
+    assert 'view: "alarms"' in routes_source
     assert '<Alarms />' in app_source
     assert 'to="/alarms"' in shell_source
     assert 'activeView === "alarms"' in shell_source
@@ -2722,14 +2730,15 @@ def test_react_control_plane_curated_list_single_source(tmp_path, monkeypatch):
 def test_react_control_plane_settings_source_contract():
     """Frontend ControlPlaneSettings view matches the backend contract and route wiring."""
     app_source = Path("frontend/src/App.jsx").read_text(encoding="utf-8")
+    routes_source = Path("frontend/src/routes.js").read_text(encoding="utf-8")
     shell_source = Path("frontend/src/components/Shell.jsx").read_text(encoding="utf-8")
     source = Path("frontend/src/views/ControlPlaneSettings.jsx").read_text(encoding="utf-8")
     api_source = Path("frontend/src/api.js").read_text(encoding="utf-8")
 
-    assert 'view: "controlPlaneSettings"' in app_source
+    assert 'view: "controlPlaneSettings"' in routes_source
     assert "<ControlPlaneSettings />" in app_source
     assert 'activeView === "controlPlaneSettings"' in shell_source
-    assert 'href="/settings/control-plane"' in shell_source
+    assert 'to="/settings/control-plane"' in shell_source
     assert 'useResource("/api/settings/control-plane"' in source
     assert 'postJSON("/settings/control-plane"' in source
     assert 'postJSON("/settings/control-plane/test"' in source
@@ -3089,14 +3098,15 @@ def test_canonical_settings_workers_route_serves_react_when_built(
 def test_react_worker_settings_source_contract():
     """Frontend WorkerSettings view matches the backend contract and route wiring."""
     app_source = Path("frontend/src/App.jsx").read_text(encoding="utf-8")
+    routes_source = Path("frontend/src/routes.js").read_text(encoding="utf-8")
     shell_source = Path("frontend/src/components/Shell.jsx").read_text(encoding="utf-8")
     source = Path("frontend/src/views/WorkerSettings.jsx").read_text(encoding="utf-8")
     api_source = Path("frontend/src/api.js").read_text(encoding="utf-8")
 
-    assert 'view: "workerSettings"' in app_source
+    assert 'view: "workerSettings"' in routes_source
     assert "<WorkerSettings />" in app_source
     assert 'activeView === "workerSettings"' in shell_source
-    assert 'href="/settings/workers"' in shell_source
+    assert 'to="/settings/workers"' in shell_source
     assert 'useResource("/api/settings/workers"' in source
     assert 'postJSON(`/settings/workers/${' in source
     assert '/configure' in source
@@ -3334,14 +3344,15 @@ def test_react_project_settings_is_build_aware(tmp_path, monkeypatch):
 def test_react_project_settings_source_contract():
     """Frontend ProjectSettings view matches the backend contract and route wiring."""
     app_source = Path("frontend/src/App.jsx").read_text(encoding="utf-8")
+    routes_source = Path("frontend/src/routes.js").read_text(encoding="utf-8")
     shell_source = Path("frontend/src/components/Shell.jsx").read_text(encoding="utf-8")
     source = Path("frontend/src/views/ProjectSettings.jsx").read_text(encoding="utf-8")
     api_source = Path("frontend/src/api.js").read_text(encoding="utf-8")
 
-    assert 'view: "projectSettings"' in app_source
+    assert 'view: "projectSettings"' in routes_source
     assert "<ProjectSettings />" in app_source
     assert 'activeView === "projectSettings"' in shell_source
-    assert 'href="/settings/project"' in shell_source
+    assert 'to="/settings/project"' in shell_source
     assert "/api/settings/project" in source
     assert "useResource(url, refreshKey)" in source
     # Errors must read as errors, not as success text: the Jinja oracle renders
@@ -3532,11 +3543,12 @@ def test_setup_normalizes_tracking_through_the_view_model(tmp_path, monkeypatch)
 def test_react_setup_source_contract():
     """Frontend Setup view matches the backend contract and route wiring."""
     app_source = Path("frontend/src/App.jsx").read_text(encoding="utf-8")
+    routes_source = Path("frontend/src/routes.js").read_text(encoding="utf-8")
     shell_source = Path("frontend/src/components/Shell.jsx").read_text(encoding="utf-8")
     source = Path("frontend/src/views/Setup.jsx").read_text(encoding="utf-8")
     api_source = Path("frontend/src/api.js").read_text(encoding="utf-8")
 
-    assert 'view: "setup"' in app_source
+    assert 'view: "setup"' in routes_source
     assert "<Setup />" in app_source
     assert 'activeView === "setup"' in shell_source
     assert 'to="/setup"' in shell_source
