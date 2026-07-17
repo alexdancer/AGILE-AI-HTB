@@ -1,6 +1,6 @@
 import React from "react";
 
-import { AppLink } from "../nav.jsx";
+import { AppLink, OwnedLink } from "../nav.jsx";
 import { useResource } from "../useResource.js";
 
 // Shell renders the React Portal application frame: top brand bar, left sidebar
@@ -86,9 +86,9 @@ export function Sidebar({ activeView, activeProjectId, data, error, loading }) {
               </React.Fragment>
             );
           })}
-          <a href="/projects" className="sidebar-action">
+          <OwnedLink to="/projects" className="sidebar-action">
             + Open local repo
-          </a>
+          </OwnedLink>
         </div>
 
         <div className="group">Setup</div>
@@ -124,10 +124,10 @@ export function Sidebar({ activeView, activeProjectId, data, error, loading }) {
 
         <div className="group">Settings</div>
         <nav>
-          <a href="/settings/control-plane" className={activeView === "controlPlaneSettings" ? "active" : ""}>Control plane model</a>
-          <a href="/settings/budget" className={activeView === "budgetSettings" ? "active" : ""}>Token budget</a>
-          <a href="/settings/project" className={activeView === "projectSettings" ? "active" : ""}>Projects</a>
-          <a href="/settings/workers" className={activeView === "workerSettings" ? "active" : ""}>Worker adapters</a>
+          <OwnedLink to="/settings/control-plane" className={activeView === "controlPlaneSettings" ? "active" : ""}>Control plane model</OwnedLink>
+          <OwnedLink to="/settings/budget" className={activeView === "budgetSettings" ? "active" : ""}>Token budget</OwnedLink>
+          <OwnedLink to="/settings/project" className={activeView === "projectSettings" ? "active" : ""}>Projects</OwnedLink>
+          <OwnedLink to="/settings/workers" className={activeView === "workerSettings" ? "active" : ""}>Worker adapters</OwnedLink>
         </nav>
 
         {portalAuthRequired && (

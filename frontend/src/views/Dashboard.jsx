@@ -1,6 +1,6 @@
 import React from "react";
 
-import { AppLink } from "../nav.jsx";
+import { AppLink, OwnedLink } from "../nav.jsx";
 import { useResource } from "../useResource.js";
 
 export default function Dashboard() {
@@ -146,7 +146,7 @@ export function DashboardContent({ data }) {
       <section className="panel">
         <div className="panel-header">
           <h3>Active sessions</h3>
-          <a className="muted mono" href="/sessions">view all →</a>
+          <OwnedLink className="muted mono" to="/sessions">view all →</OwnedLink>
         </div>
         {sessions.length === 0 ? (
           <div className="empty-state">No active sessions.</div>
@@ -159,7 +159,7 @@ export function DashboardContent({ data }) {
               <tbody>
                 {sessions.map((session) => (
                   <tr key={session.id}>
-                    <td className="mono muted"><a href={`/sessions/${session.id}`}>{session.id}</a></td>
+                    <td className="mono muted"><OwnedLink to={`/sessions/${session.id}`}>{session.id}</OwnedLink></td>
                     <td>{session.task_description}</td>
                     <td className="mono">{session.model}</td>
                     <td><span className="pill blue">{session.status}</span></td>
@@ -174,7 +174,7 @@ export function DashboardContent({ data }) {
       <section className="panel">
         <div className="panel-header">
           <h3>Recent alarms</h3>
-          <a className="muted mono" href="/alarms">view all →</a>
+          <OwnedLink className="muted mono" to="/alarms">view all →</OwnedLink>
         </div>
         <div className="panel-body">
           {alarms.recent && alarms.recent.length > 0 ? alarms.recent.map((alarm) => (
@@ -184,7 +184,7 @@ export function DashboardContent({ data }) {
                 <span className="mono">{alarm.type}</span>
                 <span className="mono muted">{alarm.id}</span>
               </div>
-              <div>Session <a href={`/sessions/${alarm.session_id}`}>{alarm.session_id}</a></div>
+              <div>Session <OwnedLink to={`/sessions/${alarm.session_id}`}>{alarm.session_id}</OwnedLink></div>
               <div className="dashboard-recommendation">→ {alarm.recommended_action}</div>
             </article>
           )) : <div className="empty-state">No open alarms.</div>}
@@ -230,7 +230,7 @@ export function DashboardContent({ data }) {
         <div className="panel-body dashboard-grid">
           {projects.length === 0 ? (
             <div className="empty-state">
-              No projects are connected yet. <a href="/settings/project">Connect a project</a> to start estimating and launching Worker slices.
+              No projects are connected yet. <OwnedLink to="/settings/project">Connect a project</OwnedLink> to start estimating and launching Worker slices.
             </div>
           ) : projects.map((project) => (
             <article className="dashboard-project" key={project.id}>

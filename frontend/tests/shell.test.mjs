@@ -33,6 +33,8 @@ let confirmReviewNavigation;
 let preventReviewUnload;
 let NavContext;
 let NavigationGuardContext;
+let OwnedLink;
+let isReactOwnedPath;
 let BudgetSettingsState;
 let WorkerSettingsState;
 let ControlPlaneSettingsState;
@@ -62,8 +64,8 @@ before(async () => {
     confirmReviewNavigation,
     preventReviewUnload,
   } = await server.ssrLoadModule("/src/views/TaskBreakdownReview.jsx"));
-  ({ NavContext, NavigationGuardContext } = await server.ssrLoadModule("/src/nav.jsx"));
-  ({ parseRoute } = await server.ssrLoadModule("/src/App.jsx"));
+  ({ NavContext, NavigationGuardContext, OwnedLink, isReactOwnedPath } = await server.ssrLoadModule("/src/nav.jsx"));
+  ({ parseRoute } = await server.ssrLoadModule("/src/routes.js"));
   ({ TaskHistoryState } = await server.ssrLoadModule("/src/views/TaskHistory.jsx"));
   ({ BudgetSettingsState } = await server.ssrLoadModule("/src/views/BudgetSettings.jsx"));
   ({ WorkerSettingsState } = await server.ssrLoadModule("/src/views/WorkerSettings.jsx"));
@@ -409,6 +411,61 @@ test("only exact React routes are parsed as owned views", () => {
   ]) {
     assert.deepEqual(parseRoute(path), { view: "notFound" });
   }
+});
+
+test("isReactOwnedPath derives ownership from parseRoute and ignores query or hash", () => {
+  assert.equal(isReactOwnedPath("/settings/control-plane"), true);
+  assert.equal(isReactOwnedPath("/settings/workers?adapter_id=opencode"), true);
+  assert.equal(isReactOwnedPath("/sessions/sess-demo-999"), true);
+  assert.equal(isReactOwnedPath("/task-breakdowns/demo-999/review"), true);
+  assert.equal(isReactOwnedPath("/board"), false);
+  assert.equal(isReactOwnedPath("/login"), false);
+  assert.equal(isReactOwnedPath("/logout"), false);
+  assert.equal(isReactOwnedPath("/unknown-route-2099"), false);
+});
+
+test("OwnedLink renders AppLink for React-owned routes and raw anchor for server routes", () => {
+  function renderOwned(to) {
+    return create(React.createElement(OwnedLink, { to, className: "test-link" }, "link"));
+  }
+  const owned = renderOwned("/settings/control-plane");
+  const ownedAnchor = owned.root.findByType("a");
+  assert.equal(ownedAnchor.props.href, "/settings/control-plane");
+  assert.equal(typeof ownedAnchor.props.onClick, "function");
+
+  const query = renderOwned("/settings/workers?adapter_id=opencode");
+  const queryAnchor = query.root.findByType("a");
+  assert.equal(queryAnchor.props.href, "/settings/workers?adapter_id=opencode");
+  assert.equal(typeof queryAnchor.props.onClick, "function");
+
+  const notOwned = renderOwned("/board");
+  const notOwnedAnchor = notOwned.root.findByType("a");
+  assert.equal(notOwnedAnchor.props.href, "/board");
+  assert.equal(notOwnedAnchor.props.onClick, undefined);
+
+  const login = renderOwned("/login");
+  const loginAnchor = login.root.findByType("a");
+  assert.equal(loginAnchor.props.href, "/login");
+  assert.equal(loginAnchor.props.onClick, undefined);
+});
+
+test("sidebar Settings and Open local repo use in-shell links; board and login stay full-page", () => {
+  let tree;
+  act(() => {
+    tree = create(React.createElement(Sidebar, {
+      activeView: "dashboard",
+      activeProjectId: null,
+      data: { portal_auth_required: false, sidebar_projects: [] },
+      error: null,
+      loading: false,
+    }));
+  });
+  const links = tree.root.findAll((node) => node.type === "a" && node.props.href);
+  const byHref = Object.fromEntries(links.map((node) => [node.props.href, node]));
+  for (const href of ["/settings/control-plane", "/settings/budget", "/settings/project", "/settings/workers", "/projects"]) {
+    assert.equal(typeof byHref[href].props.onClick, "function", `expected in-shell link for ${href}`);
+  }
+  assert.equal(byHref["/board"].props.onClick, undefined);
 });
 
 test("Projects view renders empty, active, archived, and disabled runner states", () => {

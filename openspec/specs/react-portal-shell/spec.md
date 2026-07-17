@@ -400,7 +400,7 @@ The React Portal shell SHALL let operators move between its dashboard home, Proj
 
 ### Requirement: React shell preserves the full Portal chrome
 
-The React Portal shell SHALL render the full Portal application frame: a top brand bar, a left sidebar with the connected-project list and the Setup, Governance, Planning (only when no projects connected), and Settings groups, a `+ Open local repo` action, a logout form when portal auth is required, and a footer. React-owned routes SHALL share that frame so every canonical Portal route reads as the same product. React SHALL be the sole owner of this frame; no server-rendered template SHALL define it.
+The React Portal shell SHALL render the full Portal application frame: a top brand bar, a left sidebar with the connected-project list and the Setup, Governance, Planning (only when no projects connected), and Settings groups, a `+ Open local repo` action, a logout form when portal auth is required, and a footer. React-owned routes SHALL share that frame so every canonical Portal route reads as the same product. React SHALL be the sole owner of this frame; no server-rendered template SHALL define it. Sidebar and dashboard links to React-owned canonical routes SHALL navigate in-shell through a shared route-aware link seam that decides client-side versus full-page navigation from the canonical route table; links whose target the React shell does not own SHALL remain ordinary full-page anchors.
 
 #### Scenario: React shell renders the sidebar project list from the shared context helper
 
@@ -412,8 +412,9 @@ The React Portal shell SHALL render the full Portal application frame: a top bra
 #### Scenario: React shell renders the sidebar navigation groups
 
 - **WHEN** an authenticated operator opens a React-owned route
-- **THEN** the shell SHALL render the `Setup` group with a `First-run setup` link, the `Governance` group with an in-shell `Dashboard` link plus `Sessions` and full-page `Alarms` links, the `Settings` group with `Control plane model`, `Token budget`, `Projects`, and `Worker adapters` links, and a footer reading `Foreman AI HQ portal · operator-controlled budget governance`
-- **AND** the Planning group with a `Task board` link SHALL appear only when no projects are connected
+- **THEN** the shell SHALL render the `Setup` group with a `First-run setup` link, the `Governance` group with in-shell `Dashboard`, `Sessions`, and `Alarms` links, the `Settings` group with in-shell `Control plane model`, `Token budget`, `Projects`, and `Worker adapters` links, and a footer reading `Foreman AI HQ portal · operator-controlled budget governance`
+- **AND** the `Setup`, `Governance`, and `Settings` group links and the `+ Open local repo` action SHALL use the shared route-aware link seam so their React-owned targets navigate in-shell
+- **AND** the Planning group with a `Task board` link SHALL appear only when no projects are connected, and its bare `/board` shim SHALL remain a full-page navigation
 
 #### Scenario: React shell shows logout when portal auth is required
 
@@ -460,12 +461,14 @@ The React Portal shell SHALL render the full Portal application frame: a top bra
 - **WHEN** an operator opens a path under `/app` other than `/app`, `/app/projects/{id}`, or `/app/projects/{id}/board`
 - **THEN** FastAPI SHALL return not found instead of serving a React surface
 
-#### Scenario: Full-page sidebar links remain full-page navigations
+#### Scenario: React-owned sidebar links navigate in-shell while server-rendered targets stay full-page
 
-- **WHEN** an authenticated operator follows an Alarms, Settings, Planning, task-history, or full-board link from the React sidebar
-- **THEN** the browser SHALL perform an ordinary full-page navigation to the corresponding canonical route rather than an in-shell transition
-- **AND** that canonical route SHALL serve the React shell, which renders the destination surface
-- **AND** the shell's own in-shell surfaces SHALL use client-side navigation so in-shell moves do not require a full reload
+- **WHEN** an authenticated operator follows a sidebar link whose canonical target is a React-owned route — a `Settings` group item, `Alarms`, `Sessions`, `First-run setup`, `+ Open local repo` (`/projects`), a project, or its `└ Task board`
+- **THEN** the shell SHALL navigate client-side via the shared route-aware link seam without a full-page transition
+- **AND** browser Back and Forward SHALL preserve those route transitions
+- **WHEN** an authenticated operator follows a sidebar link whose canonical target the React shell does not own — the bare `/board` Planning shim, or the `/login` / `/logout` controls
+- **THEN** the shared seam SHALL fall back to an ordinary full-page navigation to that canonical route
+- **AND** the seam SHALL derive React ownership from the same canonical route table the router uses, so the two never disagree about which targets stay full-page
 
 #### Scenario: Sidebar navigation endpoint requires portal auth
 

@@ -1,5 +1,7 @@
 import React from "react";
 
+import { parseRoute } from "./routes.js";
+
 // Client-side navigation for the React-owned canonical routes: dashboard, project
 // workspace, and project board. App provides the navigate function; AppLink
 // renders a real anchor so deep links, middle-click, and modifier-click open
@@ -7,6 +9,16 @@ import React from "react";
 // missing-build recovery pages keep using ordinary <a> full navigations.
 export const NavContext = React.createContext(() => {});
 export const NavigationGuardContext = React.createContext(() => {});
+
+export function isReactOwnedPath(to) {
+  return parseRoute(to.split(/[?#]/)[0]).view !== "notFound";
+}
+
+export function OwnedLink({ to, className, children }) {
+  return isReactOwnedPath(to)
+    ? <AppLink className={className} to={to}>{children}</AppLink>
+    : <a className={className} href={to}>{children}</a>;
+}
 
 export function AppLink({ to, className, children }) {
   const navigate = React.useContext(NavContext);

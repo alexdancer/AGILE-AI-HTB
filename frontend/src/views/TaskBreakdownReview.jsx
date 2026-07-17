@@ -1,7 +1,7 @@
 import React from "react";
 
 import { getJSON } from "../api.js";
-import { AppLink, NavContext, NavigationGuardContext } from "../nav.jsx";
+import { AppLink, isReactOwnedPath, NavContext, NavigationGuardContext, OwnedLink } from "../nav.jsx";
 
 const NOOP = () => {};
 
@@ -19,16 +19,6 @@ const TEXT_FIELDS = [
   ["dependencies", "Dependencies", 2, true],
   ["likely_entry_points", "Likely repo entry points", 2, true],
 ];
-
-function isReactOwnedPath(path) {
-  return /^\/(?:app|dashboard)(?:\/|$)/.test(path)
-    || /^\/projects(?:\/|$)/.test(path)
-    || /^\/setup(?:\/|$)/.test(path)
-    || /^\/alarms(?:\/|$)/.test(path)
-    || /^\/sessions(?:\/|$)/.test(path)
-    || /^\/settings(?:\/|$)/.test(path)
-    || /^\/task-breakdowns\/[^/]+\/review$/.test(path);
-}
 
 function boundedDraft(value) {
   return {
@@ -647,8 +637,4 @@ function BoundedEvidence({ label, value }) {
   return <div className="bounded-text">{label && <h4>{label}</h4>}<pre className="raw-evidence">{full ?? value.preview}</pre>{value.truncated && full === null && <button className="btn small secondary" type="button" onClick={load}>Load full text</button>}{error && <span className="danger-text" role="alert">{error}</span>}</div>;
 }
 
-function OwnedLink({ to, className, children }) {
-  return isReactOwnedPath(to)
-    ? <AppLink className={className} to={to}>{children}</AppLink>
-    : <a className={className} href={to}>{children}</a>;
-}
+
