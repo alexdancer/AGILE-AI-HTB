@@ -3,9 +3,9 @@ import time
 
 from fastapi.testclient import TestClient
 
-from agile_ai_htb import db
-from agile_ai_htb.app import create_app
-from agile_ai_htb.settings import Settings
+from foreman_ai_hq import db
+from foreman_ai_hq.app import create_app
+from foreman_ai_hq.settings import Settings
 
 ROOT = Path(__file__).resolve().parents[2]
 PORTAL_TOKEN = "test-portal-token"
@@ -55,24 +55,30 @@ def test_project_setup_rejects_disabled_local_runner(tmp_path, monkeypatch):
         )
 
     assert response.status_code == 409
-    assert "htb init" in response.json()["detail"]
-    assert "htb serve" in response.json()["detail"]
+    assert "foremanctl init" in response.json()["detail"]
+    assert "foremanctl serve" in response.json()["detail"]
 
 
 def test_project_pages_explain_current_local_runner_enablement_flow(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
 
     with _client(tmp_path, local_runner_enabled=False) as client:
-        projects = client.get("/projects", headers=_headers())
-        settings_project = client.get("/settings/project", headers=_headers())
+        projects = client.get("/api/projects", headers=_headers())
+        settings_project = client.get("/api/settings/project", headers=_headers())
 
     for response in (projects, settings_project):
         assert response.status_code == 200
-        assert "enable Local Runner" in response.text
-        assert ".htb/config.toml" in response.text
-        assert "htb serve --enable-local-runner" in response.text
-        assert "/settings/control-plane" in response.text
-        assert "edit <code>.htb/secrets.env</code>" not in response.text
+        assert response.json()["local_runner_enabled"] is False
+    # The enablement guidance itself ("enable Local Runner",
+    # ".foreman/config.toml", "foremanctl serve --local-runner",
+    # "/settings/control-plane") is pure React copy rendered from the
+    # local_runner_enabled flag asserted above -- frontend/src/views/Projects.jsx
+    # and frontend/src/views/ProjectSettings.jsx, with no JSON equivalent -- and
+    # is not yet covered by frontend/tests/shell.test.mjs. Per design Decision 9
+    # / tasks.md task 8.11 that assertion belongs in the frontend suite, which
+    # is out of scope for this file (task 8.8 owns only the backend JSON
+    # migration). The old ".foreman/secrets.env" exclusion is likewise retired:
+    # React never renders that string at all.
 
 
 def test_project_setup_api_connects_valid_path_and_returns_detected_profile(tmp_path, monkeypatch):
@@ -114,17 +120,25 @@ def test_project_settings_page_displays_profile_and_capability_state(tmp_path, m
 
     with _client(tmp_path) as client:
         client.post("/settings/project/connect", headers=_headers(), json={"root_path": str(root)})
-        response = client.get("/settings/project", headers=_headers())
+        # /api/settings/project's connected_projects only carry id/name/root_path
+        # /capability{state,reasons} -- no profile field -- so the detected
+        # profile (test_command, framework hints, docs) and the human-readable
+        # capability label live on /api/projects instead, which reuses the same
+        # project view model the old Jinja project.html page rendered from.
+        response = client.get("/api/projects", headers=_headers())
 
     assert response.status_code == 200
-    html = response.text
-    assert "Projects" in html
-    assert "portal-project" in html
-    assert str(root.resolve()) in html
-    assert "Analysis-ready" in html
-    assert "pytest" in html
-    assert "fastapi" in html
-    assert "README.md" in html
+    projects = response.json()["projects"]
+    assert len(projects) == 1
+    project = projects[0]
+    assert project["name"] == "portal-project"
+    assert project["root_path"] == str(root.resolve())
+    assert project["capability"]["label"] == "Analysis-ready"
+    assert project["profile"]["test_command"] == "pytest"
+    assert "fastapi" in project["profile"]["framework_hints"]
+    assert "README.md" in project["profile"]["relevant_docs"]
+    # The literal "Projects" page title is static React copy
+    # (frontend/src/views/ProjectSettings.jsx) with no backend equivalent.
 
 
 def test_projects_page_lists_connected_projects_and_open_form(tmp_path, monkeypatch):
@@ -132,19 +146,17 @@ def test_projects_page_lists_connected_projects_and_open_form(tmp_path, monkeypa
     root = _project_root(tmp_path)
 
     with _client(tmp_path) as client:
-        empty = client.get("/projects", headers=_headers())
+        empty = client.get("/api/projects", headers=_headers())
         client.post("/settings/project/connect", headers=_headers(), json={"root_path": str(root)})
-        listed = client.get("/projects", headers=_headers())
+        listed = client.get("/api/projects", headers=_headers())
 
     assert empty.status_code == 200
-    assert "Open local repo" in empty.text
-    assert "No projects" in empty.text
-    assert "No projects yet." in empty.text
-    assert "Switch project" not in empty.text
+    assert empty.json()["projects"] == []
     assert listed.status_code == 200
-    assert "portal-project" in listed.text
-    assert str(root.resolve()) in listed.text
-    assert 'action="/settings/project/connect?redirect=workspace"' in listed.text
+    projects = listed.json()["projects"]
+    assert len(projects) == 1
+    assert projects[0]["name"] == "portal-project"
+    assert projects[0]["root_path"] == str(root.resolve())
 
 
 def test_projects_open_form_redirects_to_project_workspace(tmp_path, monkeypatch):
@@ -172,26 +184,26 @@ def test_project_workspace_displays_profile_capability_and_workflow_links(tmp_pa
         db.create_task(tmp_path / "harness.db", description="Running workspace task", status="Running", metadata={"connected_project_id": project["id"]})
         db.create_task(tmp_path / "harness.db", description="Review workspace task", status="Review", metadata={"connected_project_id": project["id"]})
         db.create_task(tmp_path / "harness.db", description="Blocked workspace task", status="Blocked", metadata={"connected_project_id": project["id"], "blocked_reason": "guardrail"})
-        response = client.get(f"/projects/{project['id']}", headers=_headers())
-        missing = client.get("/projects/not-a-project", headers=_headers())
+        response = client.get(f"/api/projects/{project['id']}/workspace", headers=_headers())
+        missing = client.get("/api/projects/not-a-project/workspace", headers=_headers())
 
     assert response.status_code == 200
-    html = response.text
-    assert "portal-project" in html
-    assert str(root.resolve()) in html
-    assert "launch ready" in html or "setup needed" in html
-    assert "3 tasks" in html
-    assert "0 estimated" in html
-    assert "Worker setup" in html
-    assert "Running work" in html
-    assert "Review needed" in html
-    assert "Blocked work" in html
-    assert "Analysis-ready" in html
-    assert "pytest" in html
-    assert "fastapi" in html
-    assert "README.md" in html
-    for href in [f'href="/projects/{project["id"]}/board"', 'href="/sessions"', 'href="/settings/workers"', 'href="/settings/project"']:
-        assert href in html
+    payload = response.json()
+    assert payload["project"]["name"] == "portal-project"
+    assert payload["project"]["root_path"] == str(root.resolve())
+    assert payload["summary"]["total_tasks"] == 3
+    assert payload["summary"]["counts"]["Estimated"] == 0
+    assert payload["project"]["capability"]["label"] == "Analysis-ready"
+    action_labels = {a["label"] for a in payload["summary"]["attention_actions"]}
+    assert "Worker setup" in action_labels
+    assert "Running work" in action_labels
+    assert "Review needed" in action_labels
+    assert "Blocked work" in action_labels
+    assert payload["project"]["profile"]["test_command"] == "pytest"
+    assert "fastapi" in payload["project"]["profile"]["framework_hints"]
+    assert "README.md" in payload["project"]["profile"]["relevant_docs"]
+    for href in [f"/projects/{project['id']}/board", "/sessions", "/settings/workers", "/settings/project"]:
+        assert href in payload["links"].values()
     assert missing.status_code == 404
 
 
@@ -211,25 +223,20 @@ def test_sidebar_lists_projects_and_marks_active_project(tmp_path, monkeypatch):
             status="Estimated",
             metadata={"connected_project_id": first["id"]},
         )
-        dashboard = client.get("/dashboard", headers=_headers())
-        workspace = client.get(f"/projects/{first['id']}", headers=_headers())
-        board = client.get(f"/projects/{first['id']}/board", headers=_headers())
+        dashboard = client.get("/api/dashboard", headers=_headers())
+        workspace = client.get(f"/api/projects/{first['id']}/workspace", headers=_headers())
+        board = client.get(f"/api/projects/{first['id']}/board", headers=_headers())
 
     assert dashboard.status_code == 200
-    assert f'href="/projects/{first["id"]}" class="project-item ' in dashboard.text
-    assert f'href="/projects/{second["id"]}" class="project-item ' in dashboard.text
-    assert f'href="/projects/{first["id"]}/board" class="project-board"' in dashboard.text
-    assert "Task board" in dashboard.text
-    assert "No tasks" in dashboard.text
-    assert "empty-state" in dashboard.text
-    assert "Switch project" not in dashboard.text
-    assert "+ Open local repo" in dashboard.text
-    assert '<div class="group">Planning</div>' not in dashboard.text
-    assert str(first_root.resolve()) not in dashboard.text
+    dashboard_projects = {p["id"]: p for p in dashboard.json()["projects"]}
+    assert first["id"] in dashboard_projects
+    assert second["id"] in dashboard_projects
+    assert dashboard_projects[first["id"]]["task_count"] == 1
+    # Active-project CSS class and static nav copy are React presentation only.
     assert workspace.status_code == 200
-    assert f'href="/projects/{first["id"]}" class="project-item active"' in workspace.text
+    assert workspace.json()["project"]["id"] == first["id"]
     assert board.status_code == 200
-    assert f'href="/projects/{first["id"]}" class="project-item active"' in board.text
+    assert board.json()["project"]["id"] == first["id"]
 
 
 def test_login_sidebar_does_not_expose_projects_before_auth(tmp_path, monkeypatch):
@@ -250,13 +257,13 @@ def test_project_page_shows_read_only_proof_only_when_launch_ready(tmp_path, mon
 
     with _client(tmp_path) as client:
         connected = client.post("/settings/project/connect", headers=_headers(), json={"root_path": str(root)}).json()["project"]
-        analysis_only = client.get("/settings/project", headers=_headers())
+        analysis_only = client.get(f"/api/projects/{connected['id']}/workspace", headers=_headers())
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "opencode", verified=True, evidence={"ok": True})
-        launch_ready = client.get("/settings/project", headers=_headers())
+        launch_ready = client.get(f"/api/projects/{connected['id']}/workspace", headers=_headers())
 
     assert connected["capability"]["state"] == "analysis_ready"
-    assert "Run read-only proof" not in analysis_only.text
-    assert "Run read-only proof" in launch_ready.text
+    assert analysis_only.json()["project"]["capability"]["state"] == "analysis_ready"
+    assert launch_ready.json()["project"]["capability"]["state"] == "launch_ready"
 
 
 def test_project_read_only_proof_route_launches_when_launch_ready(tmp_path, monkeypatch):

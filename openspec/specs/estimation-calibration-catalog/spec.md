@@ -21,7 +21,7 @@ The system SHALL support manual estimation calibration cases for Worker executio
 
 ### Requirement: Catalog sources
 
-The system SHALL support a checked-in sample or default calibration catalog for schema examples and regression tests, and SHALL support a repo-local `.htb/estimation_calibration.yaml` catalog for operator-authored project calibration data.
+The system SHALL support a checked-in sample or default calibration catalog for schema examples and regression tests, and SHALL support a repo-local `.foreman/estimation_calibration.yaml` catalog for operator-authored project calibration data.
 
 #### Scenario: Checked-in catalog available
 
@@ -30,7 +30,7 @@ The system SHALL support a checked-in sample or default calibration catalog for 
 
 #### Scenario: Local operator catalog available
 
-- **WHEN** `.htb/estimation_calibration.yaml` exists for the active repository
+- **WHEN** `.foreman/estimation_calibration.yaml` exists for the active repository
 - **THEN** the system loads valid local cases as additional calibration candidates
 - **AND** the local catalog is treated as operator data rather than committed product defaults
 

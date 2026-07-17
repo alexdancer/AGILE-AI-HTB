@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from agile_ai_htb.estimation_calibration import (
+from foreman_ai_hq.estimation_calibration import (
     CalibrationCase,
     CalibrationCatalogError,
     build_calibration_selection,
@@ -153,7 +153,7 @@ def test_strict_catalog_rejects_duplicate_ids(tmp_path):
 
 def test_lenient_local_catalog_ignores_malformed_cases_and_keeps_valid(tmp_path):
     root = tmp_path / "repo"
-    catalog_dir = root / ".htb"
+    catalog_dir = root / ".foreman"
     catalog_dir.mkdir(parents=True)
     catalog = catalog_dir / "estimation_calibration.yaml"
     _write_catalog(
@@ -191,7 +191,7 @@ def test_lenient_local_catalog_ignores_malformed_cases_and_keeps_valid(tmp_path)
 
 def test_lenient_local_catalog_malformed_yaml_warning_does_not_leak_source_text(tmp_path):
     root = tmp_path / "repo"
-    catalog_dir = root / ".htb"
+    catalog_dir = root / ".foreman"
     catalog_dir.mkdir(parents=True)
     catalog = catalog_dir / "estimation_calibration.yaml"
     catalog.write_text(
@@ -214,7 +214,7 @@ def test_lenient_local_catalog_malformed_yaml_warning_does_not_leak_source_text(
 
 def test_default_and_local_sources_are_combined(tmp_path):
     root = tmp_path / "repo"
-    catalog_dir = root / ".htb"
+    catalog_dir = root / ".foreman"
     catalog_dir.mkdir(parents=True)
     _write_catalog(
         catalog_dir / "estimation_calibration.yaml",

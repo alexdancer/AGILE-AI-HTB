@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { getJSON } from "./api.js";
 
 // Minimal load-once data hook: { data, error, loading } for a JSON endpoint.
-export function useResource(url) {
+export function useResource(url, refreshKey = 0) {
   const [state, setState] = useState({
     data: null,
     error: null,
@@ -23,7 +23,7 @@ export function useResource(url) {
     return () => {
       active = false;
     };
-  }, [url]);
+  }, [url, refreshKey]);
 
   return state;
 }

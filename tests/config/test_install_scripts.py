@@ -21,7 +21,7 @@ def _run_installer(tmp_path: Path, *, fake_uv: str | None = None, fake_pipx: str
         "PATH": f"{bin_dir}{os.pathsep}/bin{os.pathsep}/usr/bin",
         "FAKE_BIN": str(bin_dir),
         "FAKE_LOG": str(log_path),
-        "AGILE_AI_HTB_INSTALL_SOURCE": "demo-source",
+        "FOREMAN_AI_HQ_INSTALL_SOURCE": "demo-source",
     }
     if fake_uv is not None:
         _write_fake_tool(bin_dir / "uv", fake_uv)
@@ -43,8 +43,8 @@ def test_install_script_prefers_uv_tool_and_prints_next_steps(tmp_path):
         tmp_path,
         fake_uv="""
 printf 'uv %s\n' "$*" >> "$FAKE_LOG"
-printf '#!/bin/sh\n' > "$FAKE_BIN/htb"
-chmod +x "$FAKE_BIN/htb"
+printf '#!/bin/sh\n' > "$FAKE_BIN/foremanctl"
+chmod +x "$FAKE_BIN/foremanctl"
 """,
         fake_pipx="""
 printf 'pipx %s\n' "$*" >> "$FAKE_LOG"
@@ -54,8 +54,8 @@ exit 9
 
     assert result.returncode == 0, result.stderr
     assert "Using uv tool install from: demo-source" in result.stdout
-    assert "Next: htb init" in result.stdout
-    assert "Then: htb serve" in result.stdout
+    assert "Next: foremanctl init" in result.stdout
+    assert "Then: foremanctl serve" in result.stdout
     assert "uv tool install --force demo-source" in log_path.read_text()
     assert "pipx" not in log_path.read_text()
 
@@ -65,18 +65,18 @@ def test_install_script_falls_back_to_pipx(tmp_path):
         tmp_path,
         fake_pipx="""
 printf 'pipx %s\n' "$*" >> "$FAKE_LOG"
-printf '#!/bin/sh\n' > "$FAKE_BIN/htb"
-chmod +x "$FAKE_BIN/htb"
+printf '#!/bin/sh\n' > "$FAKE_BIN/foremanctl"
+chmod +x "$FAKE_BIN/foremanctl"
 """,
     )
 
     assert result.returncode == 0, result.stderr
     assert "Using pipx install from: demo-source" in result.stdout
-    assert "Next: htb init" in result.stdout
+    assert "Next: foremanctl init" in result.stdout
     assert "pipx install --force demo-source" in log_path.read_text()
 
 
-def test_install_script_reports_path_remediation_when_htb_missing(tmp_path):
+def test_install_script_reports_path_remediation_when_foremanctl_missing(tmp_path):
     result, _ = _run_installer(
         tmp_path,
         fake_uv="""
@@ -85,9 +85,9 @@ printf 'uv %s\n' "$*" >> "$FAKE_LOG"
     )
 
     assert result.returncode == 1
-    assert "'htb' is not visible on PATH" in result.stderr
+    assert "'foremanctl' is not visible on PATH" in result.stderr
     assert "uv tool update-shell" in result.stderr
-    assert "htb init" in result.stderr
+    assert "foremanctl init" in result.stderr
 
 
 def test_install_script_reports_missing_installers_without_secrets(tmp_path):
@@ -105,7 +105,7 @@ def test_disposable_pipx_smoke_script_uses_temp_pipx_environment():
     assert "PIPX_HOME=\"$TMP_DIR/pipx-home\"" in content
     assert "PIPX_BIN_DIR=\"$TMP_DIR/bin\"" in content
     assert "pipx install --force \"$ROOT_DIR\"" in content
-    assert "htb --help" in content
-    assert "htb init" in content
-    assert "test -s .htb/guardrails.yaml" in content
+    assert "foremanctl --help" in content
+    assert "foremanctl init" in content
+    assert "test -s .foreman/guardrails.yaml" in content
     assert "rm -rf \"$TMP_DIR\"" in content

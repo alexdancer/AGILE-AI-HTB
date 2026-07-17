@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agile-ai-htb"
+name = "foreman-ai-hq"
 version = "0.1.0"
 description = "A token-budget governance harness for AI coding agents."
 authors = [{ name = "Alex Dancer" }]
@@ -39,19 +39,19 @@ test = [
 ]
 
 [project.scripts]
-htb = "agile_ai_htb.cli:main"
+foremanctl = "foreman_ai_hq.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/alexdancer/AGILE-AI-HTB"
-Repository = "https://github.com/alexdancer/AGILE-AI-HTB"
-Issues = "https://github.com/alexdancer/AGILE-AI-HTB/issues"
-Changelog = "https://github.com/alexdancer/AGILE-AI-HTB/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/alexdancer/foreman-ai-hq"
+Repository = "https://github.com/alexdancer/foreman-ai-hq"
+Issues = "https://github.com/alexdancer/foreman-ai-hq/issues"
+Changelog = "https://github.com/alexdancer/foreman-ai-hq/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-agile_ai_htb = [
+foreman_ai_hq = [
     "templates/*.html",
     "defaults/*.yaml",
     "static/react/*",

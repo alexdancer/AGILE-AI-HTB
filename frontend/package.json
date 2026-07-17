@@ -1,13 +1,14 @@
 {
-  "name": "agile-ai-htb-frontend",
+  "name": "foreman-ai-hq-frontend",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "React/Vite Portal shell for AGILE-AI-HTB, served statically by the FastAPI app.",
+  "description": "React/Vite Portal shell for Foreman AI HQ, served statically by the FastAPI app.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "check": "vite build",
+    "test": "NODE_ENV=development node --test tests/*.test.mjs",
+    "check": "npm test && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -16,6 +17,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
+    "react-test-renderer": "^18.3.1",
     "vite": "^5.4.11"
   }
 }

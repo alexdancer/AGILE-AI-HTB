@@ -1,37 +1,37 @@
 # public-release-onboarding Specification
 
 ## Purpose
-Define the public first-run onboarding, trust-boundary, support, and release-hygiene materials needed for outside operators to evaluate AGILE-AI-HTB safely.
+Define the public first-run onboarding, trust-boundary, support, and release-hygiene materials needed for outside operators to evaluate Foreman AI HQ safely.
 ## Requirements
 ### Requirement: README first-run onboarding path
-The system SHALL provide a public README onboarding path that gets a first-time local operator from install to a tiny governed launch proof without requiring architecture-doc exploration or repository-local `uv run htb` commands.
+The system SHALL provide a public README onboarding path that gets a first-time local operator from install to a tiny governed launch proof without requiring architecture-doc exploration or repository-local `uv run foremanctl` commands.
 
 #### Scenario: Operator follows first-run path
 - **WHEN** a public operator reads the README quickstart
-- **THEN** the documented happy path SHALL include installing the CLI through a supported public install channel, running `htb init`, running `htb serve`, portal login, `/settings/control-plane` provider/model/API-key entry, explicit control-plane connection test, project connection, Worker Adapter setup, and a tiny launch proof
+- **THEN** the documented happy path SHALL include installing the CLI through a supported public install channel, running `foremanctl init`, running `foremanctl serve`, portal login, `/settings/control-plane` provider/model/API-key entry, explicit control-plane connection test, project connection, Worker Adapter setup, and a tiny launch proof
 - **AND** it SHALL identify the portal-managed API key path as the normal local setup path
 
 #### Scenario: First-run path preserves model-layer split
 - **WHEN** the README describes control-plane setup and Worker setup
-- **THEN** it SHALL state that the control-plane model/API key powers AGILE-AI-HTB estimation, planning, reports, and recommendations
+- **THEN** it SHALL state that the control-plane model/API key powers Foreman AI HQ estimation, planning, reports, and recommendations
 - **AND** it SHALL state that native OpenCode, Claude Code, Codex, Hermes, or other Worker CLI auth remains configured in those tools or their adapter setup
 
 #### Scenario: Contributor workflow remains available
 - **WHEN** a contributor reads development or test instructions
-- **THEN** the documentation SHALL keep repo-local commands such as `uv run pytest` and MAY mention `uv run htb` as a contributor workflow
-- **AND** it SHALL distinguish that from the public operator install path that uses bare `htb` commands
+- **THEN** the documentation SHALL keep repo-local commands such as `uv run pytest` and MAY mention `uv run foremanctl` as a contributor workflow
+- **AND** it SHALL distinguish that from the public operator install path that uses bare `foremanctl` commands
 
 ### Requirement: Public trust-boundary documentation
-The system SHALL provide public documentation that explains what AGILE-AI-HTB does and does not govern before operators connect private repositories or credentials.
+The system SHALL provide public documentation that explains what Foreman AI HQ does and does not govern before operators connect private repositories or credentials.
 
 #### Scenario: Operator reviews trust boundaries
 - **WHEN** an operator reads the public trust-boundary documentation
 - **THEN** the documentation SHALL explain Control Plane responsibilities, Local Runner/Execution Plane repository access, Worker Adapter auth boundaries, tracking modes, and Docker/local-runner limits
-- **AND** it SHALL explicitly state that AGILE-AI-HTB cannot govern arbitrary external-agent token spend unless traffic routes through the Harness Proxy or trustworthy run-bound native usage evidence is imported
+- **AND** it SHALL explicitly state that Foreman AI HQ cannot govern arbitrary external-agent token spend unless traffic routes through the Harness Proxy or trustworthy run-bound native usage evidence is imported
 
 #### Scenario: Operator reviews local secret storage
 - **WHEN** an operator reads control-plane credential guidance
-- **THEN** the documentation SHALL state that portal-submitted control-plane API key values are written only to ignored local secret storage such as `.htb/secrets.env`
+- **THEN** the documentation SHALL state that portal-submitted control-plane API key values are written only to ignored local secret storage such as `.foreman/secrets.env`
 - **AND** raw key values SHALL NOT be shown as expected support artifacts
 
 ### Requirement: Public support and release hygiene
@@ -39,8 +39,8 @@ The repo SHALL include public-release hygiene files and support templates that h
 
 #### Scenario: Public support template requests actionable context
 - **WHEN** an operator opens a setup/support issue template
-- **THEN** the template SHALL ask for redacted `htb check` output, OS, install method, control-plane provider, Worker Adapter identity, tracking mode, and whether the control-plane key was configured through portal or environment
-- **AND** it SHALL instruct the operator not to paste API keys, portal tokens, `.htb/secrets.env`, or raw credentials
+- **THEN** the template SHALL ask for redacted `foremanctl check` output, OS, install method, control-plane provider, Worker Adapter identity, tracking mode, and whether the control-plane key was configured through portal or environment
+- **AND** it SHALL instruct the operator not to paste API keys, portal tokens, `.foreman/secrets.env`, or raw credentials
 
 #### Scenario: Release hygiene docs exist
 - **WHEN** the repo is prepared for public release
@@ -59,7 +59,7 @@ The public first-run onboarding path SHALL present no-login loopback access as t
 
 #### Scenario: README quickstart opens local Portal directly
 - **WHEN** a public operator follows the default local README quickstart
-- **THEN** the documented happy path SHALL open `http://localhost:8000/` or the project landing URL directly after `htb serve`
+- **THEN** the documented happy path SHALL open `http://localhost:8000/` or the project landing URL directly after `foremanctl serve`
 - **AND** it SHALL NOT require portal token entry before first viewing the local Portal
 
 #### Scenario: Public docs preserve shared-access warning

@@ -1,7 +1,7 @@
 .git
 .codegraph
 .hermes
-.htb
+.foreman
 .demo
 .venv
 .pytest_cache

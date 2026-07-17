@@ -1,21 +1,21 @@
 services:
-  agile-ai-htb:
+  foreman-ai-hq:
     build: .
-    image: agile-ai-htb:local
-    container_name: agile-ai-htb
+    image: foreman-ai-hq:local
+    container_name: foreman-ai-hq
     ports:
       - "8000:8000"
     environment:
       - TOKEN_TRACKER_DATABASE_PATH=/data/harness.db
       - TOKEN_TRACKER_GUARDRAILS_PATH=/app/guardrails.yaml
       - TOKEN_TRACKER_PORTAL_TOKEN=${TOKEN_TRACKER_PORTAL_TOKEN:-DEMO_PORTAL_TOKEN_2099}
-      - AGILE_AI_HTB_CONTROL_PROVIDER=${AGILE_AI_HTB_CONTROL_PROVIDER:-openai}
-      - AGILE_AI_HTB_CONTROL_MODEL=${AGILE_AI_HTB_CONTROL_MODEL:-gpt-5.4}
-      - AGILE_AI_HTB_CONTROL_BASE_URL=${AGILE_AI_HTB_CONTROL_BASE_URL:-}
-      - AGILE_AI_HTB_CONTROL_API_KEY_ENV=${AGILE_AI_HTB_CONTROL_API_KEY_ENV:-AGILE_AI_HTB_CONTROL_API_KEY}
-      - AGILE_AI_HTB_CONTROL_API_KEY=${AGILE_AI_HTB_CONTROL_API_KEY:-}
+      - FOREMAN_AI_HQ_CONTROL_PROVIDER=${FOREMAN_AI_HQ_CONTROL_PROVIDER:-openai}
+      - FOREMAN_AI_HQ_CONTROL_MODEL=${FOREMAN_AI_HQ_CONTROL_MODEL:-gpt-5.4}
+      - FOREMAN_AI_HQ_CONTROL_BASE_URL=${FOREMAN_AI_HQ_CONTROL_BASE_URL:-}
+      - FOREMAN_AI_HQ_CONTROL_API_KEY_ENV=${FOREMAN_AI_HQ_CONTROL_API_KEY_ENV:-FOREMAN_AI_HQ_CONTROL_API_KEY}
+      - FOREMAN_AI_HQ_CONTROL_API_KEY=${FOREMAN_AI_HQ_CONTROL_API_KEY:-}
     volumes:
-      - agile-ai-htb-data:/data
+      - foreman-ai-hq-data:/data
       - ./guardrails.yaml:/app/guardrails.yaml:ro
     healthcheck:
       test:
@@ -29,4 +29,4 @@ services:
       start_period: 10s
 
 volumes:
-  agile-ai-htb-data:
+  foreman-ai-hq-data:

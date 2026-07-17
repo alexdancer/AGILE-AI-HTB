@@ -1,31 +1,32 @@
 # control-plane-model-connection Specification
 
 ## Purpose
-Define the model connection AGILE-AI-HTB uses for its own control-plane work, separate from any Worker Harness model configuration or credentials.
+
+Define the model connection Foreman AI HQ uses for its own control-plane work, separate from any Worker Harness model configuration or credentials.
 ## Requirements
 ### Requirement: Control-plane model connection
-The system SHALL provide a distinct direct control-plane model connection for AGILE-AI-HTB's own orchestration work, separate from Worker Harness model access and without requiring LiteLLM.
+The system SHALL provide a distinct direct control-plane model connection for Foreman AI HQ's own orchestration work, separate from Worker Harness model access and without requiring LiteLLM.
 
 #### Scenario: Control-plane model configured
 - **WHEN** the operator configures a control-plane provider, model, and required credentials or endpoint
-- **THEN** AGILE-AI-HTB uses that direct provider API connection for task estimation, planning, recommendation, summaries, and reports
+- **THEN** Foreman AI HQ uses that direct provider API connection for task estimation, planning, recommendation, summaries, and reports
 
 #### Scenario: Control-plane model missing
 - **WHEN** no valid control-plane model connection is configured
-- **THEN** AGILE-AI-HTB keeps local board and manual task workflows available but marks model-powered estimation, planning, and reporting as unavailable with a clear setup reason
+- **THEN** Foreman AI HQ keeps local board and manual task workflows available but marks model-powered estimation, planning, and reporting as unavailable with a clear setup reason
 
 ### Requirement: Control-plane setup language
-The system SHALL describe the AGILE-AI-HTB model connection as the control-plane model in UI and documentation rather than presenting it as a Worker Harness provider key.
+The system SHALL describe the Foreman AI HQ model connection as the control-plane model in UI and documentation rather than presenting it as a Worker Harness provider key.
 
 #### Scenario: User views model setup
 - **WHEN** the User opens settings or local setup documentation
-- **THEN** the system distinguishes AGILE-AI-HTB control-plane model setup from OpenCode, Claude Code, Codex, or other Worker Harness setup
+- **THEN** the system distinguishes Foreman AI HQ control-plane model setup from OpenCode, Claude Code, Codex, or other Worker Harness setup
 
 ### Requirement: Backward-compatible provider key aliases
 The system SHALL preserve existing provider key environment aliases where practical while treating explicit control-plane model settings as the canonical configuration and SHALL NOT copy one control-plane key into unrelated provider-specific environment variables.
 
 #### Scenario: Explicit control-plane key exists
-- **WHEN** `AGILE_AI_HTB_CONTROL_API_KEY` is present
+- **WHEN** `FOREMAN_AI_HQ_CONTROL_API_KEY` is present
 - **THEN** the system uses it only for the configured control-plane/upstream provider client
 
 #### Scenario: Legacy provider key env exists
@@ -153,7 +154,7 @@ The system SHALL provide a separately configurable Task Breakdown Model for Task
 
 #### Scenario: Task Breakdown Model configured
 - **WHEN** the operator configures a Task Breakdown Model
-- **THEN** AGILE-AI-HTB uses that model for semantic task breakdown and proposed vertical-slice review generation
+- **THEN** Foreman AI HQ uses that model for semantic task breakdown and proposed vertical-slice review generation
 - **AND** usage is recorded as `task_breakdown` Orchestration Tokens rather than Worker execution spend
 
 #### Scenario: Task Breakdown Model not explicitly configured
@@ -166,12 +167,12 @@ The system SHALL provide a separately configurable Task Breakdown Model for Task
 - **THEN** the system does not use OpenCode, Claude Code, Codex, Hermes, or other Worker Adapter model configuration as the Task Breakdown Model unless explicitly configured as a control-plane model connection
 
 ### Requirement: Portal-managed control-plane API key entry
-The system SHALL allow an authenticated operator to provide the control-plane API key value from the control-plane model settings portal without requiring manual environment variable export or manual `.htb/secrets.env` editing for the common local setup path.
+The system SHALL allow an authenticated operator to provide the control-plane API key value from the control-plane model settings portal without requiring manual environment variable export or manual `.foreman/secrets.env` editing for the common local setup path.
 
 #### Scenario: Operator saves a new control-plane key
 - **WHEN** an authenticated operator enters provider/model settings and a non-empty control-plane API key value in the portal
 - **THEN** the system SHALL store the key value in ignored local secret storage for the configured control-plane API key name
-- **AND** the system SHALL NOT store the key value in `.htb/config.toml`
+- **AND** the system SHALL NOT store the key value in `.foreman/config.toml`
 - **AND** subsequent control-plane requests SHALL be able to load the saved key without a server restart
 
 #### Scenario: Operator leaves key blank
@@ -229,4 +230,34 @@ The system SHALL keep Task Breakdown Model request sizing explicit and scoped to
 - **WHEN** the operator runs the Control Plane connection test
 - **THEN** the test SHALL remain a small provider reachability check
 - **AND** the system SHALL NOT treat successful reachability evidence as proof that large Task Breakdown structured-output requests will complete within their timeout budget
+
+### Requirement: Curated control-plane model list has a single authoritative source
+The curated control-plane provider/model choices SHALL be defined in a single authoritative source that every renderer consumes, so the authenticated JSON read and the React Control Plane Settings view present the same curated dropdown without divergent copies.
+
+#### Scenario: Every renderer reads the same curated list
+- **WHEN** the authenticated control-plane state JSON and the React Control Plane Settings view render the curated model dropdown
+- **THEN** each SHALL derive its curated provider/model choices from the same authoritative source
+- **AND** no renderer SHALL hard-code an independent copy of the curated list
+
+#### Scenario: Adding a curated model updates every renderer
+- **WHEN** a curated provider/model choice is added to or removed from the authoritative source
+- **THEN** the JSON read and the React view SHALL reflect that change without a per-renderer edit
+### Requirement: Control-plane setup state has an authenticated placeholder-only JSON read
+The Portal SHALL expose the current control-plane setup state through an authenticated JSON read that reuses the existing settings and connection-status computation. The read SHALL be placeholder-only: it SHALL report whether a key is present without ever serializing the control-plane API key value in any field.
+
+#### Scenario: Control-plane state read requires authentication
+- **WHEN** an unauthenticated caller requests the control-plane state read while portal auth is required
+- **THEN** the Portal SHALL reject the request using the existing Portal authentication boundary
+- **AND** SHALL NOT return control-plane state
+
+#### Scenario: Read reports key presence without the key value
+- **WHEN** an authenticated caller requests the control-plane state read
+- **THEN** the response SHALL report `api_key_present` as a boolean derived from the effective environment for the configured key name
+- **AND** it SHALL NOT include the control-plane API key value in any field, redacted or otherwise
+- **AND** it SHALL report provider, model, base URL, api-key env name, estimator and task-breakdown models, legacy-env presence, environment-shadowed settings, the curated model list, and sanitized connection status
+
+#### Scenario: Read distinguishes needs-test from offline
+- **WHEN** the last saved settings changed but no connection test has run since
+- **THEN** the read SHALL report connection status as `needs_test` rather than `offline` or `online`
+- **AND** a recorded failed test SHALL report `offline` while a recorded successful test SHALL report `online`
 

@@ -4,7 +4,7 @@
 
 ### Issue tracker
 
-This repo tracks work in GitHub Issues for `alexdancer/AGILE-AI-HTB`. Use the `gh` CLI when creating or updating issues.
+This repo tracks work in GitHub Issues for `alexdancer/foreman-ai-hq`. Use the `gh` CLI when creating or updating issues.
 
 ### Triage labels
 
@@ -18,7 +18,7 @@ Use the default triage vocabulary unless repo labels say otherwise:
 
 ### Domain docs
 
-This is a single-context repo. Read `CONTEXT.md` before making product, architecture, workflow, or terminology changes. Treat it as the source of truth for Harness, Control Plane, Worker Adapter, AGILE Board, budget governance, and demo vocabulary.
+This is a single-context repo. Read `CONTEXT.md` before making product, architecture, workflow, or terminology changes. Treat it as the source of truth for Harness, Control Plane, Worker Adapter, Orchestration Board, budget governance, and demo vocabulary.
 
 ## OpenSpec workflow
 
@@ -46,3 +46,5 @@ For implementation work, keep changes minimal, run targeted tests, then mark com
 ## Project verification
 
 Use `uv run pytest` for the Python test suite when using the repo-managed uv environment. If the environment is already active and dependencies are installed, `pytest` is acceptable.
+Run `openspec validate --specs --strict --no-interactive` to verify OpenSpec spec consistency.
+Run `npm run check` in `frontend/` to run the React shell tests and production build.

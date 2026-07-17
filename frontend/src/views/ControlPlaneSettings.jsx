@@ -1,0 +1,382 @@
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+
+import { getJSON, postJSON } from "../api.js";
+import { useResource } from "../useResource.js";
+
+const safeError = (error) =>
+  error?.status === 401
+    ? "Control-plane settings require sign-in."
+    : "Could not load control-plane settings. Retry.";
+
+const PROVIDERS = ["openai", "anthropic", "openai-compatible"];
+
+function dataToForm(data) {
+  const curated = (data.curated_models || []).find(
+    (m) => m.provider === data.provider && m.model === data.model
+  );
+  return {
+    provider: data.provider,
+    model: curated ? data.model : "__custom__",
+    customModel: curated ? "" : data.model,
+    baseUrl: data.base_url || "",
+    apiKeyEnv: data.api_key_env,
+    apiKey: "",
+    applyToEstimator: true,
+  };
+}
+
+export default function ControlPlaneSettings() {
+  const [refreshKey, setRefreshKey] = useState(0);
+  const { data, error, loading } = useResource("/api/settings/control-plane", refreshKey);
+  const refresh = useCallback(() => { setRefreshKey((k) => k + 1); }, []);
+
+  return (
+    <ControlPlaneSettingsState
+      data={data}
+      error={error}
+      loading={loading}
+      onRefresh={refresh}
+    />
+  );
+}
+
+export function ControlPlaneSettingsState({ data, error, loading, onRefresh }) {
+  const [form, setForm] = useState(null);
+  const [initial, setInitial] = useState(null);
+  const [status, setStatus] = useState(null);
+  const [inlineError, setInlineError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (data) {
+      const next = dataToForm(data);
+      setForm(next);
+      setInitial(next);
+    }
+  }, [data]);
+
+  const isDirty = useMemo(() => {
+    if (!form || !initial) return false;
+    if (form.provider !== initial.provider) return true;
+    if (form.model !== initial.model) return true;
+    if (form.model === "__custom__" && form.customModel !== initial.customModel) return true;
+    if (form.baseUrl !== initial.baseUrl) return true;
+    if (form.apiKeyEnv !== initial.apiKeyEnv) return true;
+    if (form.applyToEstimator !== initial.applyToEstimator) return true;
+    if (form.apiKey.trim() !== "") return true;
+    return false;
+  }, [form, initial]);
+
+  const updateField = (field, value) => {
+    setForm((prev) => (prev ? { ...prev, [field]: value } : prev));
+  };
+
+  const handleProviderChange = (newProvider) => {
+    setForm((prev) => {
+      if (!prev || !data) return prev;
+      const effective = prev.model === "__custom__" ? prev.customModel : prev.model;
+      const matching = (data.curated_models || []).find(
+        (m) => m.provider === newProvider && m.model === effective
+      );
+      if (matching) {
+        return { ...prev, provider: newProvider, model: matching.model, customModel: "" };
+      }
+      if (newProvider === "openai-compatible" || effective.trim()) {
+        return { ...prev, provider: newProvider, model: "__custom__", customModel: effective };
+      }
+      const first = (data.curated_models || []).find((m) => m.provider === newProvider);
+      return {
+        ...prev,
+        provider: newProvider,
+        model: first ? first.model : "__custom__",
+        customModel: "",
+      };
+    });
+  };
+
+  const handleModelChange = (newModel) => {
+    setForm((prev) => {
+      if (!prev) return prev;
+      if (newModel === "__custom__") {
+        const customValue = prev.model === "__custom__" ? prev.customModel : prev.model;
+        return { ...prev, model: "__custom__", customModel: customValue };
+      }
+      return { ...prev, model: newModel, customModel: "" };
+    });
+  };
+
+  const submitSave = async (event) => {
+    event.preventDefault();
+    setInlineError(null);
+    setStatus(null);
+    const model = form.model === "__custom__" ? form.customModel.trim() : form.model;
+    if (!model) {
+      setInlineError("Model is required.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const outcome = await postJSON("/settings/control-plane", {
+        control_plane_provider: form.provider,
+        control_plane_model: model,
+        control_plane_base_url: form.baseUrl.trim(),
+        control_plane_api_key_env: form.apiKeyEnv,
+        control_plane_api_key: form.apiKey.trim(),
+        apply_to_estimator_breakdown: form.applyToEstimator,
+      });
+      if (!outcome?.ok) {
+        setInlineError(boundedError(outcome?.error, "Could not save control-plane settings."));
+      } else {
+        setStatus("Saved. Run a connection test to confirm the new settings.");
+        onRefresh();
+      }
+    } catch (err) {
+      setInlineError(boundedError(err.message, "Could not save control-plane settings."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitTest = async () => {
+    setInlineError(null);
+    setStatus(null);
+    setBusy(true);
+    try {
+      const outcome = await postJSON("/settings/control-plane/test", {});
+      if (outcome?.passed) {
+        setStatus("Connection test passed.");
+      } else {
+        setInlineError(boundedError(outcome?.error, "Connection test failed."));
+      }
+    } catch (err) {
+      setInlineError(boundedError(err.message, "Connection test failed."));
+    } finally {
+      onRefresh();
+      setBusy(false);
+    }
+  };
+
+  if (loading && !data) {
+    return <p className="spinner">Loading control-plane settings…</p>;
+  }
+  if (error) {
+    return (
+      <>
+        <div className="notice danger">{safeError(error)}</div>
+        <p><a href="/settings/control-plane">Retry</a></p>
+      </>
+    );
+  }
+  if (!data || !form) {
+    return <p className="spinner">Loading control-plane settings…</p>;
+  }
+
+  const curatedForProvider = data.curated_models.filter((m) => m.provider === form.provider);
+  const customSelected = form.model === "__custom__";
+  const state = data.connection_status?.state || "offline";
+  const details = data.connection_status?.details || null;
+
+  return (
+    <>
+      <h1 className="page-title">Control plane model</h1>
+      <p className="page-sub">
+        Foreman AI HQ orchestration model · separate from Worker Harness models and credentials
+      </p>
+
+      <div className="live-notice" aria-live="polite">
+        {inlineError || status || ""}
+      </div>
+
+      <section className="grid cols-2">
+        <article className="panel">
+          <div className="panel-header"><h3>Choose model</h3></div>
+          <div className="panel-body">
+            <form onSubmit={submitSave}>
+              <label htmlFor="control-plane-provider">Provider</label>
+              <select
+                id="control-plane-provider"
+                value={form.provider}
+                onChange={(e) => handleProviderChange(e.target.value)}
+                disabled={busy}
+              >
+                {PROVIDERS.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+
+              <label htmlFor="control-plane-model">Model</label>
+              <select
+                id="control-plane-model"
+                value={form.model}
+                onChange={(e) => handleModelChange(e.target.value)}
+                disabled={busy}
+              >
+                {curatedForProvider.map((m) => (
+                  <option key={m.model} value={m.model}>{m.label}</option>
+                ))}
+                <option value="__custom__">Custom model…</option>
+              </select>
+
+              {customSelected && (
+                <>
+                  <label htmlFor="control-plane-custom-model">Custom model</label>
+                  <input
+                    id="control-plane-custom-model"
+                    value={form.customModel}
+                    onChange={(e) => updateField("customModel", e.target.value)}
+                    placeholder="model id for OpenAI-compatible or future providers"
+                    required
+                    disabled={busy}
+                  />
+                  <p className="muted">
+                    Use Custom model for OpenAI-compatible endpoints or provider model IDs that are not in the curated dropdown.
+                  </p>
+                </>
+              )}
+
+              <label htmlFor="control-plane-base-url">Base URL</label>
+              <input
+                id="control-plane-base-url"
+                value={form.baseUrl}
+                onChange={(e) => updateField("baseUrl", e.target.value)}
+                placeholder="Required for OpenAI-compatible endpoints"
+                disabled={busy}
+              />
+              <p className="muted">Required for OpenAI-compatible endpoints; leave blank for provider defaults.</p>
+
+              <label htmlFor="control-plane-api-key">API key</label>
+              <input
+                id="control-plane-api-key"
+                type="password"
+                value={form.apiKey}
+                onChange={(e) => updateField("apiKey", e.target.value)}
+                placeholder="Paste provider API key"
+                disabled={busy}
+              />
+              <p className="muted">
+                Leave blank to keep the existing key. The key is saved to ignored <code>.foreman/secrets.env</code>, never shown again, and never written to <code>.foreman/config.toml</code>.
+              </p>
+
+              <details style={{ marginTop: 10 }}>
+                <summary>Advanced connection settings</summary>
+                <label htmlFor="control-plane-api-key-env">API key env name</label>
+                <input
+                  id="control-plane-api-key-env"
+                  value={form.apiKeyEnv}
+                  onChange={(e) => updateField("apiKeyEnv", e.target.value)}
+                  required
+                  disabled={busy}
+                />
+              </details>
+
+              <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+                <input
+                  type="checkbox"
+                  checked={form.applyToEstimator}
+                  onChange={(e) => updateField("applyToEstimator", e.target.checked)}
+                  disabled={busy}
+                />
+                Use this model for estimation and task breakdown too
+              </label>
+
+              <div className="btn-row" style={{ marginTop: 14 }}>
+                <button type="submit" className="primary" disabled={busy}>
+                  Save control-plane model
+                </button>
+              </div>
+            </form>
+
+            <p className="muted" style={{ marginTop: 14 }}>
+              Saves non-secrets to <code>.foreman/config.toml</code> and applies to new control-plane requests.
+            </p>
+
+            {Object.keys(data.shadowed_settings).length > 0 && (
+              <p className="pill muted" style={{ marginTop: 14 }}>
+                Effective value is overridden by environment: {JSON.stringify(data.shadowed_settings)}
+              </p>
+            )}
+          </div>
+        </article>
+
+        <article className="panel">
+          <div className="panel-header"><h3>Configured connection</h3></div>
+          <div className="panel-body">
+            <div className="kv">
+              <div className="k">Provider</div><div className="v">{data.provider}</div>
+              <div className="k">Model</div><div className="v">{data.model}</div>
+              <div className="k">API key env</div><div className="v">{data.api_key_env}</div>
+              <div className="k">API key present</div><div className="v">{data.api_key_present ? "yes" : "no"}</div>
+              <div className="k">Estimator model</div><div className="v">{data.estimator_model}</div>
+              <div className="k">Task breakdown model</div><div className="v">{data.task_breakdown_model}</div>
+              <div className="k">Legacy env fallback</div>
+              <div className="v">{data.legacy_api_key_configured ? "configured" : "not set"}</div>
+            </div>
+            <p className="muted" style={{ marginTop: 14 }}>
+              This connection powers estimation, planning, recommendations, and budget reporting. It is not passed into OpenCode, Claude Code, Codex, or other Worker Harnesses.
+            </p>
+            <div className="btn-row" style={{ marginTop: 14 }}>
+              <button
+                type="button"
+                className="primary"
+                onClick={submitTest}
+                disabled={busy || isDirty}
+                aria-describedby={isDirty ? "test-dirty-hint" : undefined}
+              >
+                Test control-plane connection
+              </button>
+              {isDirty && (
+                <span id="test-dirty-hint" className="pill muted">Save before testing</span>
+              )}
+            </div>
+          </div>
+        </article>
+
+        <article className="panel">
+          <div className="panel-header"><h3>Last connection test</h3></div>
+          <div className="panel-body">
+            <p>
+              {state === "online" && <span className="pill green">online</span>}
+              {state === "needs_test" && <span className="pill muted">needs test</span>}
+              {state === "offline" && <span className="pill red">offline</span>}
+              {data.connection_status.checked_at && (
+                <span className="pill muted">{data.connection_status.checked_at}</span>
+              )}
+            </p>
+            {details ? (
+              <>
+                <div className="kv">
+                  {details.provider && <div className="k">Provider</div>}
+                  {details.provider && <div className="v">{details.provider}</div>}
+                  {details.model && <div className="k">Model</div>}
+                  {details.model && <div className="v">{details.model}</div>}
+                  {details.usage && (
+                    <>
+                      <div className="k">Total tokens</div>
+                      <div className="v">{details.usage.total_tokens || 0}</div>
+                    </>
+                  )}
+                  {details.error && (
+                    <>
+                      <div className="k">Error</div>
+                      <div className="v">{details.error}</div>
+                    </>
+                  )}
+                </div>
+                <details style={{ marginTop: 10 }}>
+                  <summary>Raw sanitized details</summary>
+                  <pre className="raw-evidence">{JSON.stringify(details, null, 2)}</pre>
+                </details>
+              </>
+            ) : (
+              <p className="muted">No control-plane connection test has been recorded yet.</p>
+            )}
+          </div>
+        </article>
+      </section>
+    </>
+  );
+}
+
+function boundedError(value, fallback) {
+  return typeof value === "string" && value ? value.slice(0, 1000) : fallback;
+}

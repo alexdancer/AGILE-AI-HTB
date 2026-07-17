@@ -1,17 +1,47 @@
 # Context
 
 ## Repository Agent Context
-**Definition**: The repo-level operating guidance for coding agents working on AGILE-AI-HTB.
+**Definition**: The repo-level operating guidance for coding agents working on Foreman AI HQ.
 **Properties**: `AGENTS.md` is the entrypoint for agent workflow instructions, OpenSpec usage, issue-tracker assumptions, triage label vocabulary, and verification commands. `CONTEXT.md` is the single domain glossary for product, architecture, workflow, and terminology changes. Agents should read `CONTEXT.md` before changing Harness behavior, Portal copy, OpenSpec artifacts, tests, demo data, or docs that use product language.
 **Relationships**: Guides Worker and human-assisted implementation work. Complements OpenSpec artifacts under `openspec/`; OpenSpec change instructions still control planning and task artifact paths, while this glossary controls canonical domain language.
 
 ## Harness
 **Definition**: The governing framework that wraps a coding agent, providing guardrails, checkpoints, material handling, and alarms.
-**Also known as**: AGILE-AI-HTB, Token-Tracker Harness.
+**Also known as**: Foreman AI HQ, Token-Tracker Harness.
 **Relationships**: Governs a Worker. Declares Guardrails. Evaluates Checkpoints. Fires Alarms. Exposes Material Handling interfaces.
 
+## Portal Recovery Surface
+**Definition**: The minimal user-facing fallback that preserves Portal authentication and recovery when the normal operator console cannot load.
+**Properties**: Provides only login, load-failure explanation, and recovery guidance. It is not a second operator console and does not duplicate Dashboard, Orchestration Board, Setup, Settings, Session, Alarm, or report workflows.
+**Relationships**: Supports the Portal Login Token workflow. Remains available independently of the normal authenticated operator-console frontend.
+
+## Portal E2E Test
+**Definition**: A Playwright browser test that exercises the production-shaped Portal through its real HTTP and browser boundaries.
+**Properties**: Builds the React frontend, starts the FastAPI application with isolated test state, and drives a supported browser against FastAPI-served Portal routes. Each Connected Project fixture uses a real, temporary Git repository with minimal obviously synthetic files and a dedicated database; it never points browser automation at the operator's working repository. The initial fixture is truthfully `analysis_ready` rather than `launch_ready` when no real Worker Adapter has been verified. Temporary project state is removed after the test. The first implementation includes a fast login/project/board/logout smoke plus a complete Recorded Demo Run of `DEMO_2099_SIMPLE_MD_LINK_CHECKER.md` through Markdown intake, Task Breakdown Review, accepted estimation, synthetic governed launch, Review, and Session Report evidence. It does not replace service-level integration tests and must not depend on real providers, real Worker CLIs, or operator secrets unless a separately labeled external-system test explicitly requires them.
+**Relationships**: Verifies Portal authentication, navigation, browser behavior, and selected operator workflows across the React frontend and authoritative FastAPI backend. Distinct from a Governance Integration Smoke Test.
+
+## Demo Scenario Catalog
+**Definition**: The shared registry that turns an existing synthetic contract under `demo_tasks/` into an isolated, repeatable Harness and project fixture for browser evidence or an opt-in live Worker run.
+**Properties**: Each scenario identifies its source Markdown contract, creates a fresh temporary Git repository, copies or references the contract inside that repository, seeds a dedicated Harness database with the Connected Project and required scenario state, and preserves the repository's DEMO/2099/999/`.invalid` data rules. The catalog replaces ad hoc duplication between browser fixtures and demo setup; the existing `seed-demo` snip dataset is not implicitly treated as equivalent to the Markdown comparison scenarios.
+**Relationships**: Supplies Portal E2E Tests and Live Demo Runs with the same task contract while keeping their execution evidence distinct.
+
+## Recorded Demo Run
+**Definition**: A deterministic, unattended Playwright run of a Demo Scenario that records Portal behavior without requiring a real model provider or Worker CLI.
+**Properties**: Uses an unshipped test-only server launcher to create isolated scenario state and substitute explicit synthetic provider and Worker responses behind the real browser, HTTP, FastAPI, persistence, and React boundaries. Browser automation then uses only normal Portal routes and actions. The production application exposes no test reset/seed endpoints and has no environment-driven mode that weakens production behavior. After recording Review and Session Report evidence, the browser explicitly invokes the normal Mark Done action as a synthetic demo operator so the unattended scenario finishes in Done; this is labeled automated synthetic disposition and must not be described as human acceptance or implemented as a backend auto-transition. Routine E2E runs write ignored local output and CI-uploaded HTML reports, traces, screenshots, and video according to failure/retry policy. An explicit recording command regenerates deterministic named demo checkpoints, full recording evidence, and selected checked-in showcase images under `docs/assets/screenshots/`. Routine CI never commits changed screenshots. Every artifact must be labeled synthetic and must not be presented as evidence of live Worker Adapter verification, real token usage, human review, or provider behavior.
+**Relationships**: The default repeatable recording lane for a Demo Scenario. Complements, but does not replace, an opt-in Live Demo Run.
+
+## Live Demo Run
+**Definition**: An explicitly invoked Demo Scenario run that uses configured real provider and Worker Adapter integrations.
+**Properties**: Never runs as part of the default Portal E2E or CI suite, may consume tokens and modify its isolated temporary project, and requires the same Launch Guardrails and evidence rules as ordinary governed work. Its artifacts must identify the adapter, tracking mode, and whether usage evidence is authoritative.
+**Relationships**: Uses the same Demo Scenario Catalog as Recorded Demo Runs while producing separate live execution evidence.
+
+## Governance Integration Smoke Test
+**Definition**: A service-level pytest smoke test that proves the local governance loop without a browser.
+**Properties**: May use direct application and persistence interfaces with synthetic data to exercise project connection, task creation, simulated Worker Run evidence, token accounting, and transition to Review. It is not called a Portal E2E test because it does not exercise the browser or production HTTP boundary end-to-end.
+**Relationships**: Complements Portal E2E Tests with fast, deterministic governance coverage and no external provider or Worker dependency.
+
 ## Control Plane
-**Definition**: The deployable Harness surface that owns the Portal, AGILE Board, budget governance, orchestration workflows, proxy, token accounting, and reports.
+**Definition**: The deployable Harness surface that owns the Portal, Orchestration Board, budget governance, orchestration workflows, proxy, token accounting, and reports.
 **Properties**: Can run as a hosted service. Coordinates work but does not itself guarantee access to a User's local repository or local coding-agent tools.
 **Relationships**: Connects to Execution Backends. Receives Worker traffic through the Proxy Engine only for `proxy_governed` launches. Displays Project Capability.
 
@@ -47,7 +77,7 @@
 
 ## Task Branch
 **Definition**: The git branch created by the Harness for a write-capable Worker Session.
-**Properties**: Named with the task identity, for example htb/task-123-short-title. Created only after the Repository Cleanliness Guardrail passes. Read-only sessions do not create task branches. The Worker edits on this branch, but the Harness owns committing: after configured verification passes, the Harness creates the commit with task/session metadata.
+**Properties**: Named with the task identity, for example foremanctl/task-123-short-title. Created only after the Repository Cleanliness Guardrail passes. Read-only sessions do not create task branches. The Worker edits on this branch, but the Harness owns committing: after configured verification passes, the Harness creates the commit with task/session metadata.
 **Relationships**: Belongs to a Task and Worker Session. Shown in the Session Artifact and Portal review flow.
 
 ## Harness-Owned Commit
@@ -66,45 +96,45 @@
 **Relationships**: Follows Harness-Owned Commit. References the Task Branch, verification result, and Session Artifact.
 
 ## Operator Command
-**Definition**: A small administrative entrypoint for starting AGILE-AI-HTB and preparing demo data, not the product user experience.
-**Also known as**: `htb`.
-**Properties**: Public operators should install this as a bare command through `pipx`, the curl installer, or a future release channel. Contributor `uv run htb ...` commands are repo-local development conveniences, not the primary public setup path. Current commands include `htb init`, `htb serve`, `htb check`, and `htb seed-demo`.
+**Definition**: A small administrative entrypoint for starting Foreman AI HQ and preparing demo data, not the product user experience.
+**Also known as**: `foremanctl`.
+**Properties**: Public operators should install this as a bare command through `pipx`, the curl installer, or a future release channel. Contributor `uv run foremanctl ...` commands are repo-local development conveniences, not the primary public setup path. Current commands include `foremanctl init`, `foremanctl serve`, `foremanctl check`, and `foremanctl seed-demo`.
 **Relationships**: Starts the Harness. Initializes Operator Config and Local Secret Storage. Seeds Tasks for the Portal. Does not replace Portal workflows for task, session, alarm, or report management.
 
 ## Operator Install
-**Definition**: The public installation path that makes the bare `htb` command available outside a source checkout.
-**Properties**: Current validated path is `pipx install "git+https://github.com/alexdancer/AGILE-AI-HTB.git"`; after PyPI release it becomes `pipx install agile-ai-htb`. The curl installer is a bootstrapper that prefers `uv tool install`, falls back to `pipx install`, verifies `htb` is on `PATH`, and prints `htb init` as the next command. Homebrew is planned but not public until a formula and release checksums are validated.
+**Definition**: The public installation path that makes the bare `foremanctl` command available outside a source checkout.
+**Properties**: Current validated path is `pipx install "git+https://github.com/alexdancer/foreman-ai-hq.git"`; after PyPI release it becomes `pipx install foreman-ai-hq`. The curl installer is a bootstrapper that prefers `uv tool install`, falls back to `pipx install`, verifies `foremanctl` is on `PATH`, and prints `foremanctl init` as the next command. Homebrew is planned but not public until a formula and release checksums are validated.
 **Relationships**: Precedes Operator Config. Must not ask for or store API keys, portal tokens, Worker credentials, or native CLI auth.
 
 ## Operator Config
-**Definition**: The local non-secret configuration created by `htb init` and edited by the Portal for normal local operation.
-**Properties**: Stored at `.htb/config.toml`. Contains non-secret settings such as database path, guardrails path, host, port, portal token env name, control-plane provider/model/base URL/env name, and Local Runner enablement. `htb init` writes `.htb/` state at the Git repository root when run inside Git, or in the current directory outside Git. Default guardrails are written to ignored `.htb/guardrails.yaml`; SQLite defaults to `.htb/harness.db` and is created or migrated by `htb init`. Effective startup precedence is CLI flag, then environment variable, then `.htb/config.toml`, then built-in default.
-**Relationships**: Read by `htb serve` and `htb check`. Updated by Control Plane Settings for non-secret fields. Points to Local Secret Storage for actual secret values.
+**Definition**: The local non-secret configuration created by `foremanctl init` and edited by the Portal for normal local operation.
+**Properties**: Stored at `.foreman/config.toml`. Contains non-secret settings such as database path, guardrails path, host, port, portal token env name, control-plane provider/model/base URL/env name, and Local Runner enablement. `foremanctl init` writes `.foreman/` state at the Git repository root when run inside Git, or in the current directory outside Git. Default guardrails are written to ignored `.foreman/guardrails.yaml`; SQLite defaults to `.foreman/harness.db` and is created or migrated by `foremanctl init`. Effective startup precedence is CLI flag, then environment variable, then `.foreman/config.toml`, then built-in default.
+**Relationships**: Read by `foremanctl serve` and `foremanctl check`. Updated by Control Plane Settings for non-secret fields. Points to Local Secret Storage for actual secret values.
 
 ## Local Secret Storage
 **Definition**: Ignored local storage for portal and control-plane secret values in the operator setup path.
-**Properties**: Stored at `.htb/secrets.env`. `htb init` creates a portal token value and a control-plane API-key placeholder. `htb serve` and `htb check` load non-placeholder values. Support output must not include raw `.htb/secrets.env` contents, API keys, bearer tokens, or portal tokens.
+**Properties**: Stored at `.foreman/secrets.env`. `foremanctl init` creates a portal token value and a control-plane API-key placeholder. `foremanctl serve` and `foremanctl check` load non-placeholder values. Support output must not include raw `.foreman/secrets.env` contents, API keys, bearer tokens, or portal tokens.
 **Relationships**: Supplies the Portal Login Token and Control Plane API Key. Distinct from Operator Config, which stores only env var names and other non-secret settings.
 
 ## Portal Login Token
 **Definition**: The token used to authenticate to the Portal login screen when portal auth is required.
-**Properties**: Default env name is `TOKEN_TRACKER_PORTAL_TOKEN`. `htb init` writes a generated value to ignored `.htb/secrets.env`. Default loopback `htb serve` skips token login; non-loopback/shared/Docker/headless access keeps token auth unless explicitly disabled.
+**Properties**: Default env name is `TOKEN_TRACKER_PORTAL_TOKEN`. `foremanctl init` writes a generated value to ignored `.foreman/secrets.env`. Default loopback `foremanctl serve` skips token login; non-loopback/shared/Docker/headless access keeps token auth unless explicitly disabled. Successful login always opens the Dashboard rather than returning to a previously requested Portal page.
 **Relationships**: Protects shared Portal pages. Separate from Control Plane API Key and Worker CLI auth.
 
 ## Portal-Managed Control Plane API Key
 **Definition**: The normal local setup path where an authenticated operator pastes the control-plane provider API key into `/settings/control-plane` instead of manually editing exports first.
-**Properties**: A non-empty submitted key is written only to ignored `.htb/secrets.env` under the configured control-plane API key env name. Blank submissions preserve the existing key. Portal pages, save responses, connection status, logs, and test evidence must not display the raw key value.
+**Properties**: A non-empty submitted key is written only to ignored `.foreman/secrets.env` under the configured control-plane API key env name. Blank submissions preserve the existing key. Portal pages, save responses, connection status, logs, and test evidence must not display the raw key value.
 **Relationships**: Configures the Control Plane model connection for estimation, task breakdown, recommendations, summaries, and reports. Does not configure native OpenCode, Claude Code, Codex, or other Worker CLI auth.
 
 ## Control Plane Connection Test
 **Definition**: The explicit setup proof that the configured control-plane provider/model can be called without launching a Worker.
-**Properties**: The Portal test records sanitized success or failure evidence and marks changed settings as needing a fresh test. `htb check` calls the configured model and prints redacted support/readiness output without persisting backend status. A failed test keeps Worker Adapter launch readiness separate; it blocks model-powered control-plane actions, not local board viewing.
+**Properties**: The Portal test records sanitized success or failure evidence and marks changed settings as needing a fresh test. `foremanctl check` calls the configured model and prints redacted support/readiness output without persisting backend status. A failed test keeps Worker Adapter launch readiness separate; it blocks model-powered control-plane actions, not local board viewing.
 **Relationships**: Validates Control Plane settings and Portal-Managed Control Plane API Key. Distinct from Worker Adapter verification.
 
 ## Setup Overview
 **Definition**: The Portal setup surface that guides operators through the next missing action needed for a governed launch.
-**Properties**: Summarizes Control Plane model, Token Budget, Worker Adapter, and Connected Project readiness. It should show the next action plainly, keep advanced diagnostics secondary, and route launch-ready users to the project board.
-**Relationships**: Coordinates Operator Config, Control Plane Connection Test, Worker Setup, Token Budget, Connected Project, and AGILE Board readiness.
+**Properties**: Summarizes Control Plane model, Token Budget, Worker Adapter, and Connected Project readiness. It should show the next action plainly, keep advanced diagnostics secondary, and route launch-ready users to the project board. It may claim Ready to launch only when at least one Connected Project is launch-ready; no project or analysis-only capability is not launch readiness.
+**Relationships**: Coordinates Operator Config, Control Plane Connection Test, Worker Setup, Token Budget, Connected Project, and Orchestration Board readiness.
 
 ## Worker
 **Definition**: The AI coding agent being governed by the harness — the entity that consumes tokens by making API calls and invoking tools.
@@ -115,18 +145,18 @@
 ## Worker Adapter
 **Definition**: The Harness integration that configures, validates, launches, and observes an installed local coding-agent CLI such as OpenCode, Claude Code, Codex, or a custom command.
 **Properties**: Has a CLI command, working directory, model discovery path, launch command, supported models, tracking mode, and verification status. First-class Worker Adapter presets include OpenCode, Claude Code, and Codex; custom command support may exist for extensibility but is not the primary demo path. OpenCode is the first verified local Worker Adapter target. Adapter verification must exercise the real CLI launch path with a harmless sentinel prompt; install-only checks are not launch proof. Proxy governance is one tracking mode, not the definition of a Worker Adapter. The Portal may show all first-class adapters even when only one is verified in the current environment; Launch Guardrails keep unverified or non-authoritative adapters non-launchable for governed Tasks.
-**Relationships**: Selected by the User before launch. Has a Worker Adapter Tracking Mode. Must pass Launch Guardrails before the AGILE Board can dispatch a governed Task to a Worker.
+**Relationships**: Selected by the User before launch. Has a Worker Adapter Tracking Mode. Must pass Launch Guardrails before the Orchestration Board can dispatch a governed Task to a Worker.
 
 ## Worker Adapter Tracking Mode
 **Definition**: The verified method by which the Harness proves token usage for a Worker Adapter launch.
-**Properties**: `proxy_governed` means Worker model traffic flows through the Harness Proxy and is budget-authoritative, but it is an advanced/custom proxy-capable adapter path, not the current stock local operator proof. `native_usage` means the coding-agent CLI emits trustworthy machine-readable token usage evidence and is budget-authoritative when verified. Trustworthy native usage includes the selected model, prompt/input tokens, completion/output tokens, total tokens, exit status, and evidence binding the usage to the launched Worker Run. Approximate, scraped, human-readable, model-less, or unbound usage evidence is not authoritative and leaves the adapter `observed_only`. `observed_only` means the Harness can observe process/log evidence but cannot prove governed token usage, so it is not launchable for governed Tasks from the normal AGILE Board. Observed-only adapters may run only from a separate Worker Setup diagnostic/test flow that records command started, stdout/stderr, exit code or timeout, detected model if available, and an explicit not-budget-authoritative warning without changing task state or showing a Launch-ready badge.
+**Properties**: `proxy_governed` means Worker model traffic flows through the Harness Proxy and is budget-authoritative, but it is an advanced/custom proxy-capable adapter path, not the current stock local operator proof. `native_usage` means the coding-agent CLI emits trustworthy machine-readable token usage evidence and is budget-authoritative when verified. Trustworthy native usage includes the selected model, prompt/input tokens, completion/output tokens, total tokens, exit status, and evidence binding the usage to the launched Worker Run. Approximate, scraped, human-readable, model-less, or unbound usage evidence is not authoritative and leaves the adapter `observed_only`. `observed_only` means the Harness can observe process/log evidence but cannot prove governed token usage, so it is not launchable for governed Tasks from the normal Orchestration Board. Observed-only adapters may run only from a separate Worker Setup diagnostic/test flow that records command started, stdout/stderr, exit code or timeout, detected model if available, and an explicit not-budget-authoritative warning without changing task state or showing a Launch-ready badge.
 **Portal labels**: `proxy_governed` displays as **API / Proxy: Governed through Harness Proxy**. `native_usage` displays as **CLI: Track native usage after run**. `observed_only` displays as **CLI: Observe command only**. Portal copy must not use the generic label "Governed" for all launchable adapters; it should separately show launch readiness, tracking label, runtime request guardrail availability, and accounting authority.
 **Relationships**: Belongs to a Worker Adapter. Feeds Launch Guardrails, Orchestration Tokens, Worker Session accounting, and Portal launch readiness labels.
 
 ## Worker Setup
-**Definition**: The user-facing configuration workflow for choosing and validating which Worker Adapters can be launched by the AGILE Board.
-**Properties**: Shows adapter configuration, verification results, launchable status, and the default Worker Adapter. The Settings area is the source of truth; the AGILE Board displays the selected adapter status and links back to setup when launch is blocked.
-**Relationships**: Produces launchable Worker Adapters. Supplies Launch Guardrail evidence for AGILE Board dispatch.
+**Definition**: The user-facing configuration workflow for choosing and validating which Worker Adapters can be launched by the Orchestration Board.
+**Properties**: Shows adapter configuration, verification results, launchable status, and the default Worker Adapter. The Settings area is the source of truth; the Orchestration Board displays the selected adapter status and links back to setup when launch is blocked.
+**Relationships**: Produces launchable Worker Adapters. Supplies Launch Guardrail evidence for Orchestration Board dispatch.
 
 ## Session
 **Definition**: A single invocation of the Worker, bounded by start and end. The harness's primary unit of governance.
@@ -134,14 +164,14 @@
 **Relationships**: Belongs to a Project. Consists of Tool Invocations. Evaluated by Checkpoints. Produces a Session Artifact.
 
 ## Worker Run
-**Definition**: The persisted execution attempt created when the AGILE Board launches an Estimated Task through a Worker Adapter.
+**Definition**: The persisted execution attempt created when the Orchestration Board launches an Estimated Task through a Worker Adapter.
 **Properties**: Created before the adapter subprocess starts and linked to the Task and Session. Records adapter identity, selected model, tracking mode, redacted command plan metadata, status, stdout/stderr evidence, return code, timeout or error details, and completion timestamps. Runs outside the HTTP request lifecycle so the Portal can return immediately while the Worker continues. Duplicate active Worker Runs for the same Task are rejected or mapped to the existing active run. Successful runs with required evidence move the Task to Review. Retryable operational failures such as timeout, nonzero exit, or missing usage evidence return the Task to Estimated with sanitized launch evidence and keep it relaunchable.
 **Relationships**: Belongs to a Task and Session. Produced by Task Launch. Supplies Review evidence, Session Artifact evidence, Token Budget reconciliation, and launch failure diagnostics.
 
 ## Task
-**Definition**: A user-approved unit of coding work from the AGILE Board, with a description and an optional token estimate. Advisory, not enforced by the harness.
+**Definition**: A user-approved unit of coding work from the Orchestration Board, with a description and an optional token estimate. Advisory, not enforced by the harness.
 **Properties**: Has a description, acceptance criteria, an estimated token cost, routed or manually selected Worker model when available, selected/default Worker Adapter at launch, actual token cost (populated after the session completes), and metadata for intake source, launch evidence, review prompts, decisions, and blockers.
-**Relationships**: May originate from manual entry, Markdown task intake, Markdown plan import, or long-task decomposition. Dispatched to a Session through a Worker Run. Resides on the AGILE Board.
+**Relationships**: May originate from manual entry, Markdown task intake, Markdown plan import, or long-task decomposition. Dispatched to a Session through a Worker Run. Resides on the Orchestration Board.
 
 ## Markdown Task Intake
 **Definition**: The board intake path that accepts multi-line Markdown text or an uploaded `.md` task file and turns it into one or more estimated Task cards.
@@ -149,10 +179,15 @@
 **Relationships**: Feeds the Task Breakdown Agent and Task Estimation. Used by the long synthetic OpenCode comparison task and ordinary operator-entered Markdown plans.
 
 ## Proposed Task Breakdown
-**Definition**: A human-reviewed set of smaller candidate Tasks produced from a Markdown plan or oversized task before anything is added to the AGILE Board.
-**Properties**: Uses tracer-bullet vertical slices: each proposed Task should be independently grabbable, narrow, demoable or verifiable on its own, and should cut through the needed product layers rather than splitting work by technical layer. Produced by a Task Breakdown Agent that reads all manual task input and Markdown imports, decides whether the work is a single Task or should be separated into multiple Tasks, and explains the decision. Shows candidate task titles, implementation prompts, acceptance criteria, candidate kind, editable global contract summary, lightweight recommended sequence, whether the slice is human-in-the-loop or autonomous, and rejected non-task items with reasons. Candidate kind distinguishes normal `implementation` slices from `acceptance_verification` slices so the Harness does not infer final verification intent from prose alone; the User may edit candidate kind during Task Breakdown Review, but only to one of those two values. Rejected/non-task items are shown explicitly rather than hidden so the User can see that constraints, non-goals, and verification criteria were preserved or deliberately excluded. Constraints may apply to the whole imported plan or to specific candidate tasks; plan-level/global constraints are the default unless the agent or User scopes them more narrowly. The Task Breakdown Agent writes one global contract summary for the Proposed Task Breakdown; accepted implementation tasks inherit that summary and relevant constraints before Task Estimation, while Acceptance Verification carries both the summary and the full original source contract so it can verify the combined artifact against the original request. Recommended sequence may be preserved as metadata or creation order, but the first product slice does not enforce hard inter-task dependency blocking. The first review UI supports practical editing: accept or reject candidates, edit candidate titles or implementation prompts, edit candidate kind, edit the global contract summary, edit constraints and acceptance criteria text, accept a single-task decision, and submit accepted candidates to Task Estimation. It does not require a full planning editor for splitting, merging, drag reordering, arbitrary field editing, or free-text task taxonomy editing. It does not produce official token estimates or routed Worker model selections. Proposed Task Breakdowns are durable review records, not transient form state: source metadata, source text, candidate tasks, rejected/non-task items, global and candidate-scoped constraints, verification criteria, global contract summary, failure details, created Task links, Task Breakdown Model identity, and linked orchestration token/session evidence are preserved for audit, resume, retry, and debugging. Proposed Task Breakdowns are always reviewed by the User before any candidate becomes an estimated AGILE Board Task; candidates are not auto-created in the first product slice.
-**Task Slicing Policy evidence**: Each candidate carries the Control Plane's slicing rationale: objective, smallest proof path, why the Task exists, why it should not be split smaller, why it should not be merged larger, dependencies, likely repo entry points when available, execution mode (`AFK` or `HITL`), and HITL reason when human input is required. This evidence exists to keep the AGILE Board small, independently verifiable, and free of speculative setup or horizontal layer Tasks.
-**Relationships**: Produced during task intake when the Task Breakdown Agent decides the input is multi-task work. Reviewed and edited by the User on a separate breakdown review page rather than as an AGILE Board column or inline board state. Accepting a breakdown immediately sends accepted candidates to Task Estimation and creates Estimated AGILE Board Tasks, then returns the User to the AGILE Board; there is no separate accepted-but-unestimated pseudo-backlog state in the first product slice. Rejected items do not enter the AGILE Board.
+**Definition**: A human-reviewed set of smaller candidate Tasks produced from a Markdown plan or oversized task before anything is added to the Orchestration Board.
+**Properties**: Uses tracer-bullet vertical slices: each proposed Task should be independently grabbable, narrow, demoable or verifiable on its own, and should cut through the needed product layers rather than splitting work by technical layer. Produced by a Task Breakdown Agent that reads all manual task input and Markdown imports, decides whether the work is a single Task or should be separated into multiple Tasks, and explains the decision. Shows candidate task titles, implementation prompts, acceptance criteria, candidate kind, editable global contract summary, lightweight recommended sequence, whether the slice is human-in-the-loop or autonomous, and rejected non-task items with reasons. Candidate kind distinguishes normal `implementation` slices from `acceptance_verification` slices so the Harness does not infer final verification intent from prose alone; the User may edit candidate kind during Task Breakdown Review, but only to one of those two values. Rejected/non-task items are shown explicitly rather than hidden so the User can see that constraints, non-goals, and verification criteria were preserved or deliberately excluded. Constraints may apply to the whole imported plan or to specific candidate tasks; plan-level/global constraints are the default unless the agent or User scopes them more narrowly. The Task Breakdown Agent writes one global contract summary for the Proposed Task Breakdown; accepted implementation tasks inherit that summary and relevant constraints before Task Estimation, while Acceptance Verification carries both the summary and the full original source contract so it can verify the combined artifact against the original request. Recommended sequence may be preserved as metadata or creation order, but the first product slice does not enforce hard inter-task dependency blocking. The first review UI supports practical editing: accept or reject candidates, edit candidate titles or implementation prompts, edit candidate kind, edit the global contract summary, edit constraints and acceptance criteria text, accept a single-task decision, and submit accepted candidates to Task Estimation. It does not require a full planning editor for splitting, merging, drag reordering, arbitrary field editing, or free-text task taxonomy editing. It does not produce official token estimates or routed Worker model selections. Proposed Task Breakdowns are durable review records, not transient form state: source metadata, source text, candidate tasks, rejected/non-task items, global and candidate-scoped constraints, verification criteria, global contract summary, failure details, created Task links, Task Breakdown Model identity, and linked orchestration token/session evidence are preserved for audit, resume, retry, and debugging. Proposed Task Breakdowns are always reviewed by the User before any candidate becomes an estimated Orchestration Board Task; candidates are not auto-created in the first product slice.
+**Task Slicing Policy evidence**: Each candidate carries the Control Plane's slicing rationale: objective, smallest proof path, why the Task exists, why it should not be split smaller, why it should not be merged larger, dependencies, likely repo entry points when available, execution mode (`AFK` or `HITL`), and HITL reason when human input is required. This evidence exists to keep the Orchestration Board small, independently verifiable, and free of speculative setup or horizontal layer Tasks.
+**Relationships**: Produced during task intake when the Task Breakdown Agent decides the input is multi-task work. Reviewed and edited by the User on the Task Breakdown Review page rather than as an Orchestration Board column or inline board state. Accepting a breakdown immediately sends accepted candidates to Task Estimation and creates Estimated Orchestration Board Tasks, then returns the User to the Orchestration Board; there is no separate accepted-but-unestimated pseudo-backlog state in the first product slice. Rejected items do not enter the Orchestration Board.
+
+## Task Breakdown Review
+**Definition**: The operator page at `/task-breakdowns/{breakdown_id}/review` where a Proposed Task Breakdown is edited and either accepted, retried, or replaced with a manual candidate.
+**Properties**: Preserves full editable parity with the durable review record: candidate selection, kind, execution mode, title, objective, prompt, acceptance criteria, proof, constraints, HITL reason, slicing-policy evidence, dependencies, likely entry points, global contract summary, global constraints, verification, rejected items, non-goals, and recommended sequence. Pre-acceptance edits stay browser-local; the page warns before navigation with unsaved edits and persists nothing until the operator chooses `Accept selected and estimate`. Accept, Retry, and Manual Candidate are guarded by a monotonic `revision` counter on the `task_breakdowns` row: each mutation is a compare-and-set on the expected status set and expected revision, and a stale or concurrent submission returns a `409` conflict with a retry link instead of silently double-materializing Tasks. Accepted candidates are created with deterministic, idempotent Task ids derived from the breakdown id and candidate index, so a retried accept after a partial failure cannot create duplicate Tasks. React is the canonical implementation once the frontend build is complete; Jinja remains only as missing/partial-build fallback and parity oracle.
+**Relationships**: Operates on a Proposed Task Breakdown. Feeds Task Estimation and the Orchestration Board on acceptance. Failed or invalid Task Breakdown Agent output routes here for retry or manual recovery.
 
 ## Task Breakdown Agent
 **Definition**: The harness-owned orchestration agent that reads incoming manual task text or Markdown plans and decides whether the work should remain one Task or become a Proposed Task Breakdown.
@@ -163,7 +198,7 @@
 ## Acceptance Verification
 **Definition**: A final verification-oriented Task in a multi-slice breakdown that proves the accepted slices collectively satisfy the original source contract.
 **Properties**: Applies when a Proposed Task Breakdown produces one integrated artifact such as a CLI, app, API, demo, or report. It is auto-proposed by default for integrated-artifact breakdowns, but the User may reject it during Task Breakdown Review when the accepted slices are genuinely independent. It is not a replacement for decomposition and is not a request to run the whole implementation as one Task. It checks the original acceptance criteria, global constraints, verification notes, synthetic-data rules, output contracts, and integration behavior after the implementation slices have landed. It should run the smallest executable proof available, such as tests, CLI smoke checks, API calls, artifact parsing, or invariant scans, then produce human-readable findings. If no executable proof is available, it must label the result manual verification only and explain the evidence gap. It prefers an independently configured Worker Adapter or model so verification is less likely to repeat implementation blind spots, but remains launchable with the same verified Worker Adapter when no independent reviewer is available.
-**Relationships**: Proposed by the Task Breakdown Agent as the last recommended Task in a Proposed Task Breakdown when an integrated artifact needs final proof. It is an ordinary estimated AGILE Board Task with its own Token Budget, Worker Run, and Review Disposition, not a hidden Agent Review or free control-plane check. Individual implementation Tasks may move to Done before Acceptance Verification passes, but the overall Proposed Task Breakdown is not globally accepted until its Acceptance Verification Task reaches Done. Acceptance Verification is recommended last and preserved in sequence metadata, but the first implementation does not hard-block launch order. Failed Acceptance Verification moves to Blocked with findings; the User may manually create or approve follow-up Tasks, but the Harness does not automatically create repair work from failure text. Consumes the original Markdown Task Intake contract and produces evidence for Review Disposition.
+**Relationships**: Proposed by the Task Breakdown Agent as the last recommended Task in a Proposed Task Breakdown when an integrated artifact needs final proof. It is an ordinary estimated Orchestration Board Task with its own Token Budget, Worker Run, and Review Disposition, not a hidden Agent Review or free control-plane check. Individual implementation Tasks may move to Done before Acceptance Verification passes, but the overall Proposed Task Breakdown is not globally accepted until its Acceptance Verification Task reaches Done. Acceptance Verification is recommended last and preserved in sequence metadata, but the first implementation does not hard-block launch order. Failed Acceptance Verification moves to Blocked with findings; the User may manually create or approve follow-up Tasks, but the Harness does not automatically create repair work from failure text. Consumes the original Markdown Task Intake contract and produces evidence for Review Disposition.
 
 ## Task Estimation
 **Definition**: The LLM-assisted orchestration step where the Harness evaluates a Task before launch and produces a token estimate, complexity classification, confidence, rationale, assumptions, and risk flags.
@@ -194,7 +229,7 @@
 ## Launch Guardrail
 **Definition**: A pre-run rule that prevents a Task from becoming Running unless the Harness can govern and observe the chosen Worker.
 **Properties**: Validates that a Worker Adapter is configured, the working directory is valid, the selected model is allowed, and the selected tracking mode has proven budget-authoritative token usage. `proxy_governed` adapters require Harness Proxy session-key wiring. `native_usage` adapters require trustworthy native CLI usage evidence. `observed_only` adapters are not launchable for governed Tasks.
-**Relationships**: Gates AGILE Board launch. Protects the token-tracker promise before a Session starts. Distinct from runtime Guardrails, which constrain Worker behavior during a Session.
+**Relationships**: Gates Orchestration Board launch. Protects the token-tracker promise before a Session starts. Distinct from runtime Guardrails, which constrain Worker behavior during a Session.
 
 ## Checkpoint
 **Definition**: An explicit pass/fail evaluation that runs at a Session boundary, inspecting the Session Artifact for behavioral signals.
@@ -203,23 +238,23 @@
 
 ## Alarm
 **Definition**: A structured notification that something the harness governs has deviated from expected bounds.
-**Properties**: Has a named type (e.g., BUDGET_RED, LOOP_DETECTED), a severity (LOW/MEDIUM/HIGH), context describing the deviation, and a recommended action.
+**Properties**: Has a named type (e.g., BUDGET_RED, LOOP_DETECTED), a severity (LOW/MEDIUM/HIGH), context describing the deviation, and a recommended action. Operator resolution offers only validated actions relevant to that Alarm and Session state, such as Continue, Abort Session, or Raise Budget. Generic raw Guardrail mutation is not a normal Alarm action. Open, resolved, and combined history remain inspectable so resolution is auditable.
 **Relationships**: Triggered by a Guardrail violation or a Checkpoint failure. Routed to a human via a notification channel.
 
 ## Material Handling
 **Definition**: The clean interfaces for passing work and results between the User, the Harness, and the Worker.
-**Properties**: Comprises the Portal UI (AGILE Board, Dashboard) and the REST API (session management, analytics).
+**Properties**: Comprises the Portal UI (Orchestration Board, Dashboard) and the REST API (session management, analytics).
 **Relationships**: Accepts Tasks from the User. Dispatches Sessions to the Worker. Returns Session Reports to the User.
 
-## AGILE Board
+## Orchestration Board
 **Definition**: The user-facing Kanban-style orchestration surface where the User enters or imports coding work, reviews harness estimates, selects a Worker, launches governed work, and tracks completion.
 **Properties**: Columns represent orchestration state: Estimated (token estimate and any adapter-compatible Worker model selection produced, launchable once guardrails pass), Running (Worker Session active), Review (Session ended and awaits human review), Done (accepted), and Blocked (estimation failed or task needs human change before launch or continuation). There is no full Scrum/Jira workflow and no normal unestimated Backlog because task intake exists to break down, estimate, and budget token spend. A task with a valid estimate but no verified Worker Adapter remains Estimated with Launch available but guardrail-blocked rather than becoming Blocked. Each task card shows estimated vs. actual tokens, selected or routed Worker model when available, default Worker Adapter with per-task override, and linked Session results. Global budget state is visible while planning and dispatching work.
 **Relationships**: Part of Material Handling. Contains Tasks. Produces estimates and adapter-aware Worker model routing evidence. Dispatches Estimated Tasks to a Worker through a Session. Returns Session Reports to the User. Accepts work through manual single-task entry, Markdown plan import with task breakdown, or long-task decomposition into multiple smaller Tasks. Current product docs, demo data, and tests should use the canonical board states; old Backlog language belongs only in clearly historical implementation plans.
 
 ## Board Run Queue
-**Definition**: A project-scoped AGILE Board automation mode that launches eligible Estimated Tasks one at a time from `/projects/{project_id}/board`.
+**Definition**: A project-scoped Orchestration Board automation mode that launches eligible Estimated Tasks one at a time from `/projects/{project_id}/board`.
 **Properties**: Requires an explicit Connected Project, uses the existing Task Launch path and Launch Guardrails, records queue source/status/stop reasons as automation evidence, and never falls back to a global or most-recent project. It launches the next eligible Task only after the active Worker Run reaches a terminal state. It stops on no eligible Tasks, operator stop, launch guardrail failure, budget override requirement, native usage acknowledgement requirement, retryable Worker failure, or hard blocker. It does not auto-approve budgets, auto-mark Done, create repair Tasks, or run cross-project autopilot.
-**Relationships**: Operates on the AGILE Board, Tasks, Worker Runs, Launch Guardrails, Token Budget, and Review Disposition. It is Level 3 automation, not Level 4 autonomous execution.
+**Relationships**: Operates on the Orchestration Board, Tasks, Worker Runs, Launch Guardrails, Token Budget, and Review Disposition. It is Level 3 automation, not Level 4 autonomous execution.
 
 ## Run Automation Policy
 **Definition**: The explicit project-board policy recorded with board automation events and queued launches.
@@ -234,15 +269,15 @@
 ## Review Disposition
 **Definition**: The operator-controlled workflow for deciding what happens after a successful Worker Run moves a Task into Review.
 **Properties**: Review cards expose Agent Review, Mark Done, and Block actions when completed Worker Run or Session evidence is present. The operator may save a review prompt or focus while leaving the Task in Review. Mark Done records an accepted operator decision and moves the Task to Done. Block requires a human-readable reason, records blocked review metadata, and moves the Task to Blocked. Review evidence remains linked to the Task regardless of disposition.
-**Relationships**: Follows Worker Run completion. Uses Worker Run, Session, token, launch, and optional operator-focus evidence. Updates Task metadata and AGILE Board state.
+**Relationships**: Follows Worker Run completion. Uses Worker Run, Session, token, launch, and optional operator-focus evidence. Updates Task metadata and Orchestration Board state.
 
 ## Agent Review
 **Definition**: A control-plane review pass over completed Worker execution evidence, requested by the operator from a Review task card.
-**Properties**: Uses the AGILE-AI-HTB control-plane/orchestrator model, not the Worker Adapter model or Worker auth. Builds the review request from Task description, Worker Run evidence, Session Artifact evidence, token evidence, launch metadata, and the latest operator review prompt when present. Persists review status, model, timestamp, summary, recommendation, findings, and sanitized failure details. Agent Review never automatically moves the Task to Done, Estimated, or Blocked; the operator still chooses the disposition.
-**Relationships**: Part of Review Disposition. Consumes Orchestration Tokens/reporting spend and produces review metadata displayed on the AGILE Board.
+**Properties**: Uses the Foreman AI HQ control-plane/orchestrator model, not the Worker Adapter model or Worker auth. Builds the review request from Task description, Worker Run evidence, Session Artifact evidence, token evidence, launch metadata, and the latest operator review prompt when present. Persists review status, model, timestamp, summary, recommendation, findings, and sanitized failure details. Agent Review never automatically moves the Task to Done, Estimated, or Blocked; the operator still chooses the disposition.
+**Relationships**: Part of Review Disposition. Consumes Orchestration Tokens/reporting spend and produces review metadata displayed on the Orchestration Board.
 
 ## Long OpenCode Comparison Demo
-**Definition**: A synthetic DEMO 2099 task that compares direct OpenCode execution against AGILE-AI-HTB-governed OpenCode execution on the same long coding task.
+**Definition**: A synthetic DEMO 2099 task that compares direct OpenCode execution against Foreman AI HQ-governed OpenCode execution on the same long coding task.
 **Properties**: Uses `demo_tasks/DEMO_2099_LONG_OPENCODE_COMPARISON_TASK.md`. The task builds a local-only `incident-ledger` Python CLI with ingest, list, dedupe, score, report, and export commands. Direct OpenCode usage is preserved as external baseline evidence, while the harness path demonstrates estimate, launch guardrails, budget gate or override acknowledgement, Worker Run evidence, token ledger, alarms, and Review workflow. All demo data must stay obviously synthetic: DEMO markers, 2099 dates, `.invalid` emails, DEMO addresses, and 999-style account IDs, with fake-data invariant tests guarding the demo sources.
 **Relationships**: Exercises Markdown Task Intake, Worker Adapter tracking modes, Worker Run lifecycle, Token Budget governance, and Review Disposition without introducing real customer data or real external service calls.
 
@@ -259,7 +294,12 @@
 ## Session Artifact
 **Definition**: The complete record of a Session — token logs, tool traces, alarm history, guardrail state snapshots, and checkpoint results. Persisted for replay.
 **Properties**: A JSON-structured bundle. Stateless checkpoint evaluator can re-read it to re-evaluate with updated thresholds.
-**Relationships**: Produced by a Session. Evaluated by Checkpoints. Stored in the Session Artifact Store.
+**Relationships**: Produced by a Session. Evaluated by Checkpoints. Stored in the Session Artifact Store. Rendered to the User as the Session Report.
+
+## Session Report
+**Definition**: The operator-facing rendering of a Session Artifact at `/sessions/{session_id}`, plus the `/sessions` list of all Sessions.
+**Properties**: Preserves full audit-detail parity: token totals/categories, Worker token components, raw provider usage, budget-zone timeline, Worker Run timeline, Repo Context Brief, Alarms, Checkpoint results, and related Agent Review evidence, with dense/raw evidence collapsed by default rather than omitted. The Sessions list auto-refreshes only while at least one Session is active/running and stops polling once none remain. An active Session Report polls only lightweight freshness metadata (`/api/sessions/{session_id}/freshness`) rather than re-fetching full evidence; new evidence shows a `New session evidence available` notice, and the report replaces its data only after the operator explicitly refreshes. React is the canonical implementation once the frontend build is complete; Jinja remains only as missing/partial-build fallback and parity oracle.
+**Relationships**: Rendered from a Session Artifact. Linked from the Orchestration Board, Alarms, Task Breakdown Review, and Agent Review evidence.
 
 ## Budget Zone
 **Definition**: A graduated classification of how much of the shared daily token budget has been consumed — green (normal), yellow (conserve budget), or red (delivery-only).
@@ -268,5 +308,5 @@
 
 ## Escalation
 **Definition**: The path by which the harness brings a decision to the human rather than guessing — when an alarm fires or a checkpoint fails.
-**Properties**: Delivered as a notification with a deep link to the Portal. Human responds with an action (continue, abort, raise budget).
+**Properties**: Delivered as a notification with a deep link to the Portal. Human responds with a validated action appropriate to the Alarm and Session state, such as continue, abort, or raise budget.
 **Relationships**: Triggered by Alarms and Checkpoint failures. Resolved by human action in the Portal.

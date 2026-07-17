@@ -1,6 +1,6 @@
 # MCP Agent Harness Facade TODO
 
-**Goal:** Let other AI agent harnesses drive AGILE-AI-HTB through MCP without bypassing the existing board, budget, Worker Run, and session-artifact guardrails.
+**Goal:** Let other AI agent harnesses drive Foreman AI HQ through MCP without bypassing the existing board, budget, Worker Run, and session-artifact guardrails.
 
 **Verdict:** Plausible as a thin MCP facade over the existing Control Plane. Not plausible as universal token governance for arbitrary external agents unless their usage is captured by a verified harness-owned path or they provide trustworthy native usage evidence.
 
@@ -11,7 +11,7 @@ Other agent harness
         │
         │ MCP tools/resources/prompts
         ▼
-AGILE-AI-HTB MCP facade
+Foreman AI HQ MCP facade
         │
         │ existing DB / task / session / launch paths
         ▼
@@ -34,17 +34,17 @@ The MCP layer should call existing paths, not duplicate orchestration logic.
 ## Smallest credible MVP
 
 - [ ] Add an optional MCP dependency/extra only when implementation starts.
-- [ ] Add an explicit operator choice for optional Headroom integration (`https://github.com/headroomlabs-ai/headroom`) to compress tool outputs, logs, files, or RAG chunks before LLM use; do not make it required for installing or running AGILE-AI-HTB.
-- [ ] Create a local stdio MCP server entrypoint, likely `htb-mcp`.
+- [ ] Add an explicit operator choice for optional Headroom integration (`https://github.com/headroomlabs-ai/headroom`) to compress tool outputs, logs, files, or RAG chunks before LLM use; do not make it required for installing or running Foreman AI HQ.
+- [ ] Create a local stdio MCP server entrypoint, likely `foremanctl-mcp`.
 - [ ] Reuse existing SQLite/settings paths; no new tables for MVP.
 - [ ] Expose read-only resources:
-  - [ ] `htb://projects`
-  - [ ] `htb://projects/{project_id}/board`
-  - [ ] `htb://tasks/{task_id}`
-  - [ ] `htb://worker-runs/{run_id}`
-  - [ ] `htb://sessions/{session_id}/artifact`
-  - [ ] `htb://budget/today`
-  - [ ] `htb://worker-adapters`
+  - [ ] `foremanctl://projects`
+  - [ ] `foremanctl://projects/{project_id}/board`
+  - [ ] `foremanctl://tasks/{task_id}`
+  - [ ] `foremanctl://worker-runs/{run_id}`
+  - [ ] `foremanctl://sessions/{session_id}/artifact`
+  - [ ] `foremanctl://budget/today`
+  - [ ] `foremanctl://worker-adapters`
 - [ ] Expose conservative tools:
   - [ ] `list_projects()`
   - [ ] `list_board_tasks(project_id)`
@@ -71,13 +71,13 @@ The MCP layer should call existing paths, not duplicate orchestration logic.
 
 ## Existing integration points
 
-- FastAPI app factory: `src/agile_ai_htb/app.py`
-- task routes and request models: `src/agile_ai_htb/routes/tasks.py`
-- session report/artifact routes: `src/agile_ai_htb/routes/sessions.py`
-- OpenAI-compatible Harness Proxy: `src/agile_ai_htb/routes/proxy.py`
-- SQLite schema and helpers: `src/agile_ai_htb/db.py`
-- Worker launch orchestration: `src/agile_ai_htb/task_launch.py`
-- Worker Adapter command building/discovery: `src/agile_ai_htb/worker_adapters.py`
+- FastAPI app factory: `src/foreman_ai_hq/app.py`
+- task routes and request models: `src/foreman_ai_hq/routes/tasks.py`
+- session report/artifact routes: `src/foreman_ai_hq/routes/sessions.py`
+- OpenAI-compatible Harness Proxy: `src/foreman_ai_hq/routes/proxy.py`
+- SQLite schema and helpers: `src/foreman_ai_hq/db.py`
+- Worker launch orchestration: `src/foreman_ai_hq/task_launch.py`
+- Worker Adapter command building/discovery: `src/foreman_ai_hq/worker_adapters.py`
 - canonical domain language: `CONTEXT.md`
 
 ## Later, only after local MVP proves useful
@@ -92,6 +92,6 @@ The MCP layer should call existing paths, not duplicate orchestration logic.
 
 ## Product claim to keep honest
 
-AGILE-AI-HTB can expose governed task, estimate, launch, run-inspection, and artifact workflows to other harnesses through MCP.
+Foreman AI HQ can expose governed task, estimate, launch, run-inspection, and artifact workflows to other harnesses through MCP.
 
-It cannot govern arbitrary external-agent token spend unless the external harness uses a verified AGILE-AI-HTB usage-capture path or gives trustworthy run-bound usage evidence.
+It cannot govern arbitrary external-agent token spend unless the external harness uses a verified Foreman AI HQ usage-capture path or gives trustworthy run-bound usage evidence.

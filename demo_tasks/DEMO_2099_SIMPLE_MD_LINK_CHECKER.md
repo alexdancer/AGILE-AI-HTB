@@ -7,7 +7,7 @@
 Build a tiny local Python CLI project named `mdlink-check`. This is a deliberately small coding task for comparing two execution paths:
 
 1. A coding agent (Claude Code, OpenCode, or Codex) run directly on this task file.
-2. The same coding agent launched through AGILE-AI-HTB using the same task file and a separately configured harness Worker budget.
+2. The same coding agent launched through Foreman AI HQ using the same task file and a separately configured harness Worker budget.
 
 This SIMPLE task should complete in roughly 1-3 turns. It exists as the low-end anchor of the comparison set. The goal is not to prove token compression on a trivial task. The goal is to show what the harness adds even on a short run: estimate visibility, budget gating, usage authority, launch evidence, and review-state evidence — versus a raw agent run that produces only code and a chat transcript.
 

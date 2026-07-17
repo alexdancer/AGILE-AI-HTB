@@ -1,0 +1,24 @@
+# frozen_string_literal: true
+
+# Example only. Do not publish without replacing url/sha256 with real release artifacts.
+class AgileAiHtb < Formula
+  include Language::Python::Virtualenv
+
+  desc "Token-budget governance harness for AI coding agents"
+  homepage "https://github.com/alexdancer/foreman-ai-hq"
+  url "https://github.com/alexdancer/foreman-ai-hq/archive/refs/tags/v0.1.0.tar.gz"
+  sha256 "REPLACE_WITH_RELEASE_TARBALL_SHA256"
+  license "MIT"
+
+  depends_on "python@3.11"
+
+  # Add resource blocks generated from a locked release dependency set before publishing.
+
+  def install
+    virtualenv_install_with_resources
+  end
+
+  test do
+    assert_match "Foreman AI HQ operator command", shell_output("#{bin}/foremanctl --help")
+  end
+end

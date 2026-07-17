@@ -7,9 +7,14 @@ __pycache__/
 build/
 dist/
 .demo/
-.htb/
+# Runtime SQLite Harness state
+harness.db
+*.db
+.foreman/
 .hermes/
 .cursor/
 .codegraph/
 frontend/node_modules/
-src/agile_ai_htb/static/react/
+src/foreman_ai_hq/static/react/
+# Obsidian per-machine pane/scroll state
+.obsidian/workspace.json

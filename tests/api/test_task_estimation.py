@@ -6,11 +6,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from agile_ai_htb import db
-from agile_ai_htb.app import create_app
-from agile_ai_htb.project_context import project_task_metadata
-from agile_ai_htb.settings import Settings
-from agile_ai_htb.task_launch import refresh_task_from_session
+from foreman_ai_hq import db
+from foreman_ai_hq.app import create_app
+from foreman_ai_hq.project_context import project_task_metadata
+from foreman_ai_hq.routes import tasks as task_routes
+from foreman_ai_hq.settings import Settings
+from foreman_ai_hq.task_launch import refresh_task_from_session
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -239,7 +240,13 @@ def test_create_task_with_estimate_defaults_to_estimated(tmp_path):
     assert created.status_code == 200
     assert created.json()["status"] == "Estimated"
 
-def test_project_estimate_form_stamps_connected_project_metadata(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("accept", "react_json"),
+    [("text/html", False), (None, False), ("application/json", True)],
+)
+def test_project_estimate_form_stamps_connected_project_metadata(
+    tmp_path, monkeypatch, accept, react_json
+):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     llm = FakeEstimatorLLM()
     database_path = tmp_path / "harness.db"
@@ -255,16 +262,29 @@ def test_project_estimate_form_stamps_connected_project_metadata(tmp_path, monke
     )
 
     with _client_with_llm(tmp_path, llm) as client:
+        headers = _auth_headers()
+        if accept:
+            headers["accept"] = accept
         response = client.post(
             f"/projects/{project['id']}/tasks/estimate-form",
             data={"description": "Add project-scoped task"},
-            headers={**_auth_headers(), "accept": "text/html"},
+            headers=headers,
             follow_redirects=False,
         )
 
     tasks = db.list_tasks(database_path)
-    assert response.status_code == 303
-    assert response.headers["location"] == f"/projects/{project['id']}/board"
+    if react_json:
+        assert response.status_code == 200
+        assert response.json() == {
+            "ok": True,
+            "error": None,
+            "setup_href": None,
+            "next_href": None,
+            "task": {"id": tasks[0]["id"], "status": "Estimated"},
+        }
+    else:
+        assert response.status_code == 303
+        assert response.headers["location"] == f"/projects/{project['id']}/board"
     assert len(tasks) == 1
     assert tasks[0]["metadata"]["connected_project_id"] == project["id"]
     assert tasks[0]["metadata"]["project_root_path"] == project_task_metadata(project)["project_root_path"]
@@ -278,7 +298,7 @@ def test_project_estimate_includes_repo_context_and_relevant_calibration_summary
         project = db.list_connected_projects(tmp_path / "harness.db")[0]
         project_root = Path(project["root_path"])
         (project_root / "AGENTS.md").write_text("Use pytest for DEMO_TASK_2099.", encoding="utf-8")
-        catalog_dir = project_root / ".htb"
+        catalog_dir = project_root / ".foreman"
         catalog_dir.mkdir()
         (catalog_dir / "estimation_calibration.yaml").write_text(
             """
@@ -544,7 +564,7 @@ def test_estimate_uses_llm_structured_json_creates_estimated_task_and_tracks_usa
             },
         )
         task = response.json()
-        dashboard = client.get("/dashboard", headers=_auth_headers())
+        dashboard = client.get("/api/dashboard", headers=_auth_headers())
         with db.connect(tmp_path / "harness.db") as conn:
             token_turn = conn.execute("select * from token_turns").fetchone()
             estimation_session = conn.execute("select * from sessions").fetchone()
@@ -572,7 +592,7 @@ def test_estimate_uses_llm_structured_json_creates_estimated_task_and_tracks_usa
     assert estimation_session["session_key_hash"] != "estimation:Add an endpoint and tests for sessions"
     assert len(estimation_session["session_key_hash"]) == 64
     assert all(char in "0123456789abcdef" for char in estimation_session["session_key_hash"])
-    assert "133" in dashboard.text
+    assert dashboard.json()["budget"]["total_tokens"] == 133
 
 
 def test_estimate_without_allowed_worker_models_blocks_launch_with_setup_reason(tmp_path, monkeypatch):
@@ -739,7 +759,7 @@ def test_estimate_form_accepts_pasted_markdown_task(tmp_path, monkeypatch):
         assert response.headers["location"].endswith("/review")
         assert db.list_tasks(tmp_path / "harness.db") == []
         breakdown_id = response.headers["location"].split("/")[2]
-        review = client.get(response.headers["location"], headers=_auth_headers())
+        review = client.get(f"/api/task-breakdowns/{breakdown_id}/review", headers=_auth_headers())
         accept = client.post(
             f"/task-breakdowns/{breakdown_id}/accept",
             headers={**_auth_headers(), "accept": "text/html"},
@@ -769,13 +789,17 @@ def test_estimate_form_accepts_pasted_markdown_task(tmp_path, monkeypatch):
             follow_redirects=False,
         )
         tasks = db.list_tasks(tmp_path / "harness.db")
-        board = client.get("/board", headers=_auth_headers())
         breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
+        board = client.get(
+            f"/api/projects/{breakdown['intake_metadata']['connected_project_id']}/board",
+            headers=_auth_headers(),
+        )
 
-    assert "Add parser" in review.text
-    assert "constraint, not a task" in review.text
-    assert "Confidence" not in review.text
-    assert f'href="/projects/{breakdown["intake_metadata"]["connected_project_id"]}/board"' in review.text
+    review_json = review.json()
+    assert any("Add parser" in c["title"]["preview"] for c in review_json["candidates"]["items"])
+    assert "constraint, not a task" in review_json["context"]["rejected_items"]["items"][0]["reason"]["preview"]
+    # "Confidence" was a UI label assertion; dropped per final-jinja-retirement.
+    assert review_json["links"]["board_href"] == f"/projects/{breakdown['intake_metadata']['connected_project_id']}/board"
     assert accept.status_code == 303
     assert accept.headers["location"].startswith("/projects/")
     assert accept.headers["location"].endswith("/board")
@@ -788,7 +812,12 @@ def test_estimate_form_accepts_pasted_markdown_task(tmp_path, monkeypatch):
     assert tasks[0]["metadata"]["task_breakdown_verification"] == ["Run pytest."]
     assert breakdown["status"] == "accepted"
     assert breakdown["created_task_ids"] == [task["id"] for task in tasks]
-    assert "Add parser" in board.text
+    board_json = board.json()
+    assert any(
+        "Add parser" in task["summary"]["text"]
+        for column in board_json["tasks_by_status"].values()
+        for task in column
+    )
 
 
 def test_accepting_legacy_afk_breakdown_preserves_afk_and_clears_hitl_reason(tmp_path, monkeypatch):
@@ -824,7 +853,7 @@ def test_accepting_legacy_afk_breakdown_preserves_afk_and_clears_hitl_reason(tmp
             confidence=0.8,
             rationale="Legacy candidate before execution_mode existed.",
         )
-        review = client.get(f"/task-breakdowns/{breakdown['id']}/review", headers=_auth_headers())
+        review = client.get(f"/api/task-breakdowns/{breakdown['id']}/review", headers=_auth_headers())
         accept = client.post(
             f"/task-breakdowns/{breakdown['id']}/accept",
             headers={**_auth_headers(), "accept": "text/html"},
@@ -844,7 +873,7 @@ def test_accepting_legacy_afk_breakdown_preserves_afk_and_clears_hitl_reason(tmp
         )
         tasks = db.list_tasks(db_path)
 
-    assert 'value="AFK" selected' in review.text
+    assert review.json()["candidates"]["items"][0]["execution_mode"] == "AFK"
     assert accept.status_code == 303
     assert tasks[0]["metadata"]["task_breakdown_execution_mode"] == "AFK"
     assert tasks[0]["metadata"]["task_breakdown_hitl_reason"] == ""
@@ -1020,7 +1049,7 @@ The final artifact must be verified with a CLI smoke check and must never use re
             follow_redirects=False,
         )
         breakdown_id = response.headers["location"].split("/")[2]
-        review = client.get(response.headers["location"], headers=_auth_headers())
+        review = client.get(f"/api/task-breakdowns/{breakdown_id}/review", headers=_auth_headers())
         accept = client.post(
             f"/task-breakdowns/{breakdown_id}/accept",
             headers={**_auth_headers(), "accept": "text/html"},
@@ -1043,7 +1072,7 @@ The final artifact must be verified with a CLI smoke check and must never use re
                 "prompt_2": "Verify the combined artifact.",
                 "acceptance_criteria_2": "Smoke proof and findings are recorded.",
                 "constraints_2": "Do not rebuild the CLI.",
-                "hitl_reason_2": "",
+                "hitl_reason_2": "Requires operator review or judgment before completion.",
                 "global_contract_summary": "Edited summary: DEMO_CLI_2099 parses DEMO_INPUT_999 and emits DEMO_REPORT_2099.",
                 "global_constraints": "Use only synthetic DEMO_2099 data.",
                 "verification": "Run a CLI smoke check.",
@@ -1054,11 +1083,14 @@ The final artifact must be verified with a CLI smoke check and must never use re
         breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
 
     assert response.status_code == 303
-    assert "Global contract summary" in review.text
-    assert "acceptance_verification" in review.text
-    assert "Execution mode" in review.text
-    assert "Candidate proof / verification path" in review.text
-    assert "Task slicing evidence" in review.text
+    review_json = review.json()
+    assert review_json["candidates"]["items"][2]["kind"] == "acceptance_verification"
+    assert review_json["candidates"]["items"][2]["execution_mode"] == "HITL"
+    assert review_json["context"]["global_contract_summary"]["preview"] == (
+        "DEMO_CLI_2099 must parse input and emit DEMO_REPORT_2099 with 999-style IDs."
+    )
+    assert review_json["context"]["verification"]["items"][0]["preview"] == "Run a CLI smoke check."
+    # UI label assertions ("Global contract summary", "Execution mode", etc.) dropped per final-jinja-retirement.
     assert accept.status_code == 303
     assert [task["metadata"]["task_breakdown_kind"] for task in tasks] == [
         "implementation",
@@ -1122,26 +1154,114 @@ def test_estimate_form_markdown_file_overrides_pasted_text(tmp_path, monkeypatch
     assert "ignored pasted task" not in breakdown["source_text"]
     assert [candidate["title"] for candidate in breakdown["candidates"]] == ["Use file contents", "Ignore pasted contents"]
 
-def test_estimate_form_single_task_markdown_still_routes_to_breakdown_review(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("accept", "react_json"),
+    [("text/html", False), (None, False), ("application/json", True)],
+)
+def test_estimate_form_single_task_markdown_still_routes_to_breakdown_review(
+    tmp_path, monkeypatch, accept, react_json
+):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     llm = FakeSequentialLLM([_breakdown_content("Fix DEMO_TASK_2099 login copy")])
     markdown = "# DEMO_TASK_2099 small task\n\nFix the login copy and run pytest."
 
     with _client_with_llm(tmp_path, llm) as client:
+        headers = _auth_headers()
+        if accept:
+            headers["accept"] = accept
         response = client.post(
             "/tasks/estimate-form",
-            headers={**_auth_headers(), "accept": "text/html"},
+            headers=headers,
             data={"description": markdown},
             follow_redirects=False,
         )
-        breakdown_id = response.headers["location"].split("/")[2]
+        next_href = response.json()["next_href"] if react_json else response.headers["location"]
+        breakdown_id = next_href.split("/")[2]
         breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
 
-    assert response.status_code == 303
-    assert response.headers["location"].startswith("/task-breakdowns/")
+    if react_json:
+        assert response.status_code == 200
+        assert response.json() == {
+            "ok": True,
+            "error": None,
+            "setup_href": None,
+            "next_href": next_href,
+            "task": None,
+        }
+    else:
+        assert response.status_code == 303
+    assert next_href.startswith("/task-breakdowns/")
+    assert next_href.endswith("/review")
     assert db.list_tasks(tmp_path / "harness.db") == []
     assert breakdown["decision"] == "single_task"
     assert breakdown["candidates"][0]["title"] == "Fix DEMO_TASK_2099 login copy"
+
+
+@pytest.mark.parametrize(
+    "markdown",
+    [
+        "**DEMO_TASK_2099 Markdown task**",
+        "> DEMO_TASK_2099 quoted requirement",
+        "DEMO field | DEMO value\n--- | ---\nID | 999",
+        "[DEMO_TASK_2099 requirements](https://example.invalid/spec)",
+        "+ DEMO_TASK_2099 plus-list item",
+        "1) DEMO_TASK_2099 ordered item",
+        "~~~text\nDEMO_TASK_2099\n~~~",
+        "*DEMO_TASK_2099 emphasized task*",
+        "_DEMO_TASK_2099 emphasized task_",
+        "`DEMO_TASK_2099 inline code task`",
+        "~~DEMO_TASK_2099 removed task~~",
+        "<https://example.invalid/DEMO_TASK_2099>",
+    ],
+)
+def test_markdown_detector_routes_common_markdown_constructs_to_breakdown(markdown):
+    assert task_routes._looks_like_markdown(markdown) is True
+
+
+def test_react_project_intake_missing_project_uses_stable_outcome(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/projects/proj_DEMO_999_MISSING/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "application/json"},
+            data={"description": "Estimate DEMO intake task 2099"},
+        )
+
+    assert response.status_code == 404
+    body = response.json()
+    assert set(body) == {"ok", "error", "setup_href", "next_href", "task"}
+    assert body["ok"] is False
+    assert body["error"] == "connected project not found"
+
+
+@pytest.mark.parametrize("react_json", [False, True])
+def test_project_intake_rejects_archived_project(tmp_path, monkeypatch, react_json):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = db.list_connected_projects(database_path)[0]
+        db.archive_connected_project(database_path, project["id"])
+        headers = _auth_headers()
+        if react_json:
+            headers["accept"] = "application/json"
+        response = client.post(
+            f"/projects/{project['id']}/tasks/estimate-form",
+            headers=headers,
+            data={"description": "Estimate archived DEMO task 2099"},
+            follow_redirects=False,
+        )
+
+    assert response.status_code == (409 if react_json else 303)
+    if react_json:
+        body = response.json()
+        assert body["ok"] is False
+        assert body["error"] == "restore archived project before adding tasks"
+    else:
+        assert response.headers["location"].startswith(f"/projects/{project['id']}/board?error=")
+    assert not any(
+        task["description"] == "Estimate archived DEMO task 2099"
+        for task in db.list_tasks(database_path)
+    )
 
 def test_estimate_form_invalid_breakdown_output_creates_manual_recovery_review(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
@@ -1157,7 +1277,7 @@ def test_estimate_form_invalid_breakdown_output_creates_manual_recovery_review(t
         )
         breakdown_id = response.headers["location"].split("/")[2]
         breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
-        review = client.get(response.headers["location"], headers=_auth_headers())
+        review = client.get(f"/api/task-breakdowns/{breakdown_id}/review", headers=_auth_headers())
         retry = client.post(
             f"/task-breakdowns/{breakdown_id}/retry",
             headers={**_auth_headers(), "accept": "text/html"},
@@ -1170,10 +1290,11 @@ def test_estimate_form_invalid_breakdown_output_creates_manual_recovery_review(t
     assert db.list_tasks(tmp_path / "harness.db") == []
     assert breakdown["status"] == "failed"
     assert breakdown["failure_type"] == "TaskBreakdownValidationError"
-    assert "Breakdown failed" in review.text
-    assert "Retry breakdown" in review.text
-    assert "Create one manual candidate" in review.text
-    assert "Cancel" in review.text
+    review_json = review.json()
+    assert review_json["review"]["status"] == "failed"
+    assert review_json["controls"]["can_retry"] is True
+    assert review_json["controls"]["can_create_manual_candidate"] is True
+    # UI label assertions ("Breakdown failed", "Retry breakdown", etc.) dropped per final-jinja-retirement.
     assert retry.status_code == 303
     assert retry.headers["location"] == f"/task-breakdowns/{breakdown_id}/review"
     assert retried["status"] == "proposed"
@@ -1198,7 +1319,7 @@ def test_estimate_form_timeout_breakdown_failure_has_safe_actionable_diagnostics
         )
         breakdown_id = response.headers["location"].split("/")[2]
         breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
-        review = client.get(response.headers["location"], headers=_auth_headers())
+        review = client.get(f"/api/task-breakdowns/{breakdown_id}/review", headers=_auth_headers())
 
     assert response.status_code == 303
     assert breakdown["status"] == "failed"
@@ -1210,10 +1331,12 @@ def test_estimate_form_timeout_breakdown_failure_has_safe_actionable_diagnostics
     assert "timeout_seconds=120" in breakdown["failure_message"]
     assert markdown not in breakdown["failure_message"]
     assert raw_secret not in breakdown["failure_message"]
-    assert "Breakdown failed" in review.text
-    assert "Retry breakdown" in review.text
-    assert "Create manual candidate" in review.text
-    assert raw_secret not in review.text
+    review_json = review.json()
+    assert review_json["review"]["status"] == "failed"
+    assert review_json["controls"]["can_retry"] is True
+    assert review_json["controls"]["can_create_manual_candidate"] is True
+    assert raw_secret not in json.dumps(review_json)
+    # UI label assertions ("Breakdown failed", "Retry breakdown", "Create manual candidate") dropped per final-jinja-retirement.
 
 
 def test_estimate_form_provider_rejection_breakdown_failure_is_sanitized(tmp_path, monkeypatch):
@@ -1265,7 +1388,7 @@ def test_estimate_form_provider_echoed_source_payload_is_redacted(tmp_path, monk
         )
         breakdown_id = response.headers["location"].split("/")[2]
         breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
-        review = client.get(response.headers["location"], headers=_auth_headers())
+        review = client.get(f"/api/task-breakdowns/{breakdown_id}/review", headers=_auth_headers())
 
     assert response.status_code == 303
     assert breakdown["status"] == "failed"
@@ -1274,9 +1397,11 @@ def test_estimate_form_provider_echoed_source_payload_is_redacted(tmp_path, monk
     assert markdown not in breakdown["failure_message"]
     assert escaped_source not in breakdown["failure_message"]
     assert normalized_source not in breakdown["failure_message"]
-    assert "[REDACTED_SOURCE_TEXT]" in review.text
-    assert escaped_source not in review.text
-    assert normalized_source not in review.text
+    review_json = review.json()
+    failure_preview = review_json["review"]["failure_message"]["preview"]
+    assert "[REDACTED_SOURCE_TEXT]" in failure_preview
+    assert escaped_source not in failure_preview
+    assert normalized_source not in failure_preview
 
 
 def test_estimate_form_rejects_non_markdown_upload_without_creating_task(tmp_path, monkeypatch):

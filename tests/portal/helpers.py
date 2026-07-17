@@ -2,10 +2,10 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from agile_ai_htb import db
-from agile_ai_htb.app import create_app
-from agile_ai_htb.project_context import project_task_metadata
-from agile_ai_htb.settings import Settings
+from foreman_ai_hq import db
+from foreman_ai_hq.app import create_app
+from foreman_ai_hq.project_context import project_task_metadata
+from foreman_ai_hq.settings import Settings
 
 ROOT = Path(__file__).resolve().parents[2]
 PORTAL_TOKEN = "test-portal-token"
@@ -21,18 +21,18 @@ class FakeControlPlaneLLM:
         if self.exc:
             raise self.exc
         return {
-            "choices": [{"message": {"content": "AGILE_AI_HTB_CONTROL_PLANE_OK"}}],
+            "choices": [{"message": {"content": "FOREMAN_AI_HQ_CONTROL_PLANE_OK"}}],
             "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10},
             "api_key": "sk_sho...nder",
         }
 
 
-def _client(tmp_path, *, portal_auth_required: bool = True):
+def _client(tmp_path, *, portal_auth_required: bool = True, local_runner_enabled: bool = True):
     settings = Settings(
         database_path=tmp_path / "harness.db",
         guardrails_path=ROOT / "guardrails.yaml",
         portal_auth_required=portal_auth_required,
-        local_runner_enabled=True,
+        local_runner_enabled=local_runner_enabled,
         operator_config={},
     )
     return TestClient(create_app(settings))

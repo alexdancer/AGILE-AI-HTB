@@ -7,7 +7,7 @@
 Build a local Python CLI project named `incident-ledger`. This is a deliberately long coding task for comparing two execution paths:
 
 1. OpenCode run directly on this task file.
-2. OpenCode launched through AGILE-AI-HTB using the same task file and a separately configured harness Worker budget.
+2. OpenCode launched through Foreman AI HQ using the same task file and a separately configured harness Worker budget.
 
 The goal is not to prove magic token compression. The goal is to create enough realistic implementation work for meaningful token usage while showing what the harness adds: estimate visibility, budget gating, usage authority, launch evidence, alarms or overrides, and review-state evidence.
 

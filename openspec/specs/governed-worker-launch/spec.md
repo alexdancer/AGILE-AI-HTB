@@ -30,7 +30,7 @@ The system SHALL create a task branch before launching a write-capable Worker Se
 
 #### Scenario: Task branch created
 - **WHEN** a write-capable task passes Launch Guardrails
-- **THEN** the runner creates a branch named with the task identity, such as `htb/task-123-short-title`, and launches the Worker on that branch
+- **THEN** the runner creates a branch named with the task identity, such as `foremanctl/task-123-short-title`, and launches the Worker on that branch
 
 ### Requirement: Harness-owned commit
 The system SHALL own final git commits for write-capable Worker Sessions after verification passes.
@@ -65,7 +65,7 @@ The system SHALL preserve evidence when Worker execution cannot complete success
 - **THEN** the Task moves to Blocked and the system preserves logs, token ledger entries when present, failure reason, tracking mode, branch name, and any uncommitted diff without automatic retry
 
 ### Requirement: Worker launch model selection
-The system SHALL launch Worker Sessions with a model selected from the verified adapter's operator-approved allowed model subset. A model that is discovered but not allowed SHALL NOT be launchable from the normal AGILE Board.
+The system SHALL launch Worker Sessions with a model selected from the verified adapter's operator-approved allowed model subset. A model that is discovered but not allowed SHALL NOT be launchable from the normal Orchestration Board.
 
 #### Scenario: User selects allowed Worker model
 - **WHEN** the User launches a task with a model allowed for the selected verified Worker Adapter
@@ -88,16 +88,16 @@ The system SHALL treat Worker Adapters as local coding-agent CLI integrations an
 - **WHEN** a Worker Adapter has `proxy_governed` tracking mode
 - **AND** Harness Proxy token rows have been verified for the selected model
 - **AND** Harness Proxy URL and session API key wiring are present
-- **THEN** the adapter is eligible for governed AGILE Board launch if all other Launch Guardrails pass
+- **THEN** the adapter is eligible for governed Orchestration Board launch if all other Launch Guardrails pass
 
 #### Scenario: Native usage adapter is launchable without proxy wiring
 - **WHEN** a Worker Adapter has `native_usage` tracking mode
 - **AND** trustworthy native usage evidence has been verified for the selected model
-- **THEN** the adapter is eligible for governed AGILE Board launch without requiring Harness Proxy URL or session API key wiring
+- **THEN** the adapter is eligible for governed Orchestration Board launch without requiring Harness Proxy URL or session API key wiring
 
 #### Scenario: Observed-only adapter is not board-launchable
 - **WHEN** a Worker Adapter has `observed_only` tracking mode
-- **THEN** the normal AGILE Board SHALL NOT launch it for a Task
+- **THEN** the normal Orchestration Board SHALL NOT launch it for a Task
 
 ### Requirement: Native usage is accounting-governed but not runtime request-governed
 The system SHALL distinguish native usage accounting authority from proxy runtime request governance.

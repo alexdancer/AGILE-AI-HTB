@@ -2,7 +2,7 @@
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/agile-ai-htb-pipx-smoke.XXXXXX")
+TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/foreman-ai-hq-pipx-smoke.XXXXXX")
 cleanup() {
   rm -rf "$TMP_DIR"
 }
@@ -21,12 +21,12 @@ pipx install --force "$ROOT_DIR"
 PATH="$PIPX_BIN_DIR:$PATH"
 export PATH
 
-htb --help >/dev/null
+foremanctl --help >/dev/null
 mkdir -p "$TMP_DIR/workspace"
 cd "$TMP_DIR/workspace"
-htb init >/dev/null
-test -s .htb/config.toml
-test -s .htb/secrets.env
-test -s .htb/guardrails.yaml
+foremanctl init >/dev/null
+test -s .foreman/config.toml
+test -s .foreman/secrets.env
+test -s .foreman/guardrails.yaml
 
-echo "Disposable pipx install smoke passed: htb --help and htb init"
+echo "Disposable pipx install smoke passed: foremanctl --help and foremanctl init"

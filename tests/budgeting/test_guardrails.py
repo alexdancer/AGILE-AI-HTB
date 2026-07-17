@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agile_ai_htb.guardrails import get_budget_zone, load_guardrails
+from foreman_ai_hq.guardrails import get_budget_zone, load_guardrails
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -36,7 +36,7 @@ def test_load_guardrails_preserves_real_yaml_configuration():
 
 
 def test_checkout_guardrails_match_packaged_default_values():
-    packaged = resources.files("agile_ai_htb").joinpath("defaults/guardrails.yaml").read_text(encoding="utf-8")
+    packaged = resources.files("foreman_ai_hq").joinpath("defaults/guardrails.yaml").read_text(encoding="utf-8")
     checkout = (ROOT / "guardrails.yaml").read_text(encoding="utf-8")
 
     assert yaml.safe_load(checkout) == yaml.safe_load(packaged)

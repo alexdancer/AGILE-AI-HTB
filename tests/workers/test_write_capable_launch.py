@@ -4,9 +4,9 @@ import subprocess
 from pathlib import Path
 import time
 
-from agile_ai_htb import db
-from agile_ai_htb.project_context import project_task_metadata
-from agile_ai_htb.task_launch import TaskLaunchBlocked, detect_pr_capability, launch_task
+from foreman_ai_hq import db
+from foreman_ai_hq.project_context import project_task_metadata
+from foreman_ai_hq.task_launch import TaskLaunchBlocked, detect_pr_capability, launch_task
 
 
 def _wait_for_worker_run(db_path: Path, task_id: str, status: str | None = None):
@@ -181,7 +181,7 @@ def test_write_capable_launch_creates_task_branch_runs_tests_and_commits(tmp_pat
     assert launched["status"] == "Review"
     assert metadata["launch_mode"] == "write_capable"
     assert metadata["task_branch"] == branch
-    assert branch.startswith("htb/task-")
+    assert branch.startswith("foremanctl/task-")
     assert metadata["post_run_verification"]["passed"] is True
     assert metadata["diff_summary"]["files_changed"] == ["feature.py"]
     assert metadata["harness_commit"]["sha"]

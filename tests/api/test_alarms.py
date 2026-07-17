@@ -2,9 +2,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from agile_ai_htb.app import create_app
-from agile_ai_htb.db import get_session, record_alarm
-from agile_ai_htb.settings import Settings
+from foreman_ai_hq.app import create_app
+from foreman_ai_hq.db import get_session, record_alarm
+from foreman_ai_hq.settings import Settings
 
 
 ROOT = Path(__file__).resolve().parents[2]

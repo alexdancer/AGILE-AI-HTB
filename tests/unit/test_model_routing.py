@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from agile_ai_htb.guardrails import load_guardrails
-from agile_ai_htb.model_routing import route_worker_model
+from foreman_ai_hq.guardrails import load_guardrails
+from foreman_ai_hq.model_routing import route_worker_model
 
 ROOT = Path(__file__).resolve().parents[2]
 

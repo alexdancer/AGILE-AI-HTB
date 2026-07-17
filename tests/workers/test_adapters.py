@@ -2,8 +2,8 @@ import os
 import subprocess
 from pathlib import Path
 
-from agile_ai_htb import db
-from agile_ai_htb.worker_adapters import (
+from foreman_ai_hq import db
+from foreman_ai_hq.worker_adapters import (
     CommandPlan,
     detect_worker_adapter,
     discovered_worker_model_ids,
@@ -12,7 +12,7 @@ from agile_ai_htb.worker_adapters import (
     redact_command_plan,
     subprocess_runner,
 )
-from agile_ai_htb.worker_model_allowlist import allowed_worker_model_ids
+from foreman_ai_hq.worker_model_allowlist import allowed_worker_model_ids
 
 
 CLAUDE_CODE_CURATED_MODELS = [
@@ -76,8 +76,8 @@ def test_worker_adapter_status_helpers_store_sanitized_evidence(tmp_path):
         "claude_code",
         verified=True,
         evidence={
-            "stdout": "AGILE_AI_HTB_ADAPTER_OK",
-            "env": {"AGILE_AI_HTB_SESSION_API_KEY": "sk_sess_secret", "SAFE_FLAG": "ok"},
+            "stdout": "FOREMAN_AI_HQ_ADAPTER_OK",
+            "env": {"FOREMAN_AI_HQ_SESSION_API_KEY": "sk_sess_secret", "SAFE_FLAG": "ok"},
             "command": ["claude", "--api-key", "secret"],
         },
     )
@@ -303,7 +303,7 @@ def test_opencode_proxy_launch_template_can_reference_session_api_key(tmp_path):
     )
 
     assert "sk_sess_test" in plan.command
-    assert plan.env["AGILE_AI_HTB_SESSION_API_KEY"] == "sk_sess_test"
+    assert plan.env["FOREMAN_AI_HQ_SESSION_API_KEY"] == "sk_sess_test"
 
 
 def test_opencode_native_launch_defaults_to_agent_sized_timeout(tmp_path):
@@ -348,7 +348,7 @@ def test_opencode_native_verification_includes_configured_workdir(tmp_path):
 
     plan = get_adapter_builder(adapter).build_native_verification_command(
         model="openai/gpt-5.5",
-        prompt="Return AGILE_AI_HTB_ADAPTER_OK",
+        prompt="Return FOREMAN_AI_HQ_ADAPTER_OK",
     )
 
     assert plan.command == [
@@ -360,7 +360,7 @@ def test_opencode_native_verification_includes_configured_workdir(tmp_path):
         "openai/gpt-5.5",
         "--format",
         "json",
-        "Return AGILE_AI_HTB_ADAPTER_OK",
+        "Return FOREMAN_AI_HQ_ADAPTER_OK",
     ]
     assert plan.cwd == Path(tmp_path)
 
@@ -377,7 +377,7 @@ def test_claude_code_native_verification_defaults_to_stream_json_verbose_with_bu
 
     plan = get_adapter_builder(adapter).build_native_verification_command(
         model="sonnet",
-        prompt="Return AGILE_AI_HTB_ADAPTER_OK",
+        prompt="Return FOREMAN_AI_HQ_ADAPTER_OK",
     )
 
     assert plan.command == [
@@ -390,7 +390,7 @@ def test_claude_code_native_verification_defaults_to_stream_json_verbose_with_bu
         "--verbose",
         "--max-budget-usd",
         "0.10",
-        "Return AGILE_AI_HTB_ADAPTER_OK",
+        "Return FOREMAN_AI_HQ_ADAPTER_OK",
     ]
     assert plan.cwd == Path(tmp_path)
     assert plan.env == {}
@@ -525,7 +525,7 @@ def test_detect_worker_adapter_reports_missing_command_without_verifying(monkeyp
         "kind": "opencode",
         "config": {"verification_template": ["opencode", "run", "{prompt}"]},
     }
-    monkeypatch.setattr("agile_ai_htb.worker_adapters.shutil.which", lambda command: None)
+    monkeypatch.setattr("foreman_ai_hq.worker_adapters.shutil.which", lambda command: None)
 
     diagnostics = detect_worker_adapter(adapter)
 
@@ -541,7 +541,7 @@ def test_detect_worker_adapter_reports_callable_version_without_launch_verificat
         "kind": "opencode",
         "config": {"verification_template": ["opencode", "run", "{prompt}"]},
     }
-    monkeypatch.setattr("agile_ai_htb.worker_adapters.shutil.which", lambda command: "/usr/local/bin/opencode")
+    monkeypatch.setattr("foreman_ai_hq.worker_adapters.shutil.which", lambda command: "/usr/local/bin/opencode")
 
     def fake_run(*args, **kwargs):
         return subprocess.CompletedProcess(args[0], 0, stdout="opencode 1.2.3", stderr="")
@@ -882,7 +882,7 @@ def test_redact_command_plan_redacts_secret_flag_values_without_over_redacting(t
 
 
 def test_subprocess_runner_inherits_environment_and_applies_overrides_and_timeout(monkeypatch, tmp_path):
-    monkeypatch.setenv("AGILE_AI_HTB_INHERITED", "from-parent")
+    monkeypatch.setenv("FOREMAN_AI_HQ_INHERITED", "from-parent")
     calls = []
 
     def fake_run(*args, **kwargs):
@@ -895,14 +895,14 @@ def test_subprocess_runner_inherits_environment_and_applies_overrides_and_timeou
         CommandPlan(
             command=["worker", "verify"],
             cwd=tmp_path,
-            env={"AGILE_AI_HTB_OVERRIDE": "from-plan", "AGILE_AI_HTB_INHERITED": "overridden"},
+            env={"FOREMAN_AI_HQ_OVERRIDE": "from-plan", "FOREMAN_AI_HQ_INHERITED": "overridden"},
             metadata={"timeout_seconds": 123},
         )
     )
 
     assert result.returncode == 0
-    assert calls[0][1]["env"]["AGILE_AI_HTB_OVERRIDE"] == "from-plan"
-    assert calls[0][1]["env"]["AGILE_AI_HTB_INHERITED"] == "overridden"
+    assert calls[0][1]["env"]["FOREMAN_AI_HQ_OVERRIDE"] == "from-plan"
+    assert calls[0][1]["env"]["FOREMAN_AI_HQ_INHERITED"] == "overridden"
     assert os.environ["PATH"] == calls[0][1]["env"]["PATH"]
     assert calls[0][1]["timeout"] == 123
 

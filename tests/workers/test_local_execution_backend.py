@@ -3,10 +3,10 @@ import subprocess
 from pathlib import Path
 import time
 
-from agile_ai_htb import db
-from agile_ai_htb.execution_backend import LocalExecutionBackend, detect_project_profile, validate_local_project_path
-from agile_ai_htb.project_context import project_task_metadata
-from agile_ai_htb.task_launch import TaskLaunchBlocked, launch_task
+from foreman_ai_hq import db
+from foreman_ai_hq.execution_backend import LocalExecutionBackend, detect_project_profile, validate_local_project_path
+from foreman_ai_hq.project_context import project_task_metadata
+from foreman_ai_hq.task_launch import TaskLaunchBlocked, launch_task
 
 
 def _wait_for_worker_run(db_path: Path, task_id: str, status: str | None = None):

@@ -2,13 +2,11 @@
 
 ## Purpose
 
-Define how AGILE Board operators can narrow visible task cards locally without changing server workflow state.
-
+Define how Orchestration Board operators can narrow visible task cards locally without changing server workflow state.
 ## Requirements
-
 ### Requirement: Board supports client-side text filtering
 
-The AGILE Board SHALL include a text input above the board columns. As the operator types, task cards SHALL be filtered to show only cards whose visible text content contains the query (case-insensitive). A match count indicator SHALL display the number of visible cards vs total cards. When the filter is empty, all cards SHALL be visible and the indicator SHALL be hidden.
+The Orchestration Board SHALL include a text input above the board columns. As the operator types, task cards SHALL be filtered to show only cards whose visible text content contains the query (case-insensitive). A match count indicator SHALL display the number of visible cards vs total cards. When the filter is empty, all cards SHALL be visible and the indicator SHALL be hidden.
 
 #### Scenario: Filter matches task title
 
@@ -36,11 +34,9 @@ The AGILE Board SHALL include a text input above the board columns. As the opera
 - **AND** columns with filtered-out cards SHALL show "No matching tasks"
 
 ### Requirement: Filter is zero-dependency and client-side only
-
-The filter SHALL be implemented with inline JavaScript in the board template. No server requests SHALL be made on filter input. No external libraries SHALL be required.
+The board SHALL implement text filtering locally in the rendered client surface. The server-rendered board MAY use inline JavaScript and the React-owned board SHALL use local React client state. No server request or workflow-state change SHALL occur on filter input, and no external library SHALL be required.
 
 #### Scenario: Filter does not trigger network requests
-
-- **WHEN** the operator types in the filter input
-- **THEN** no HTTP requests SHALL be made
-- **AND** all card visibility changes SHALL happen synchronously in the browser
+- **WHEN** an operator types in the board filter input on either server-rendered or React-owned board surface
+- **THEN** no HTTP requests SHALL be made for each filter keystroke
+- **AND** loaded-card visibility changes SHALL happen synchronously in the browser

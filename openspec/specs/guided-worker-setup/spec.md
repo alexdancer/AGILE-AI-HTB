@@ -15,10 +15,10 @@ The public onboarding documentation SHALL provide a Worker Adapter setup matrix 
 #### Scenario: Matrix distinguishes tracking modes
 - **WHEN** the matrix describes `proxy_governed`, `native_usage`, or `observed_only`
 - **THEN** it SHALL state whether runtime request guardrails are available and whether accounting is budget-authoritative
-- **AND** it SHALL state that `observed_only` is diagnostic-only and not launchable from the normal AGILE Board
+- **AND** it SHALL state that `observed_only` is diagnostic-only and not launchable from the normal Orchestration Board
 
 ### Requirement: Worker Setup presents one active adapter workflow
-The Worker Setup page SHALL present a guided setup workflow for one active Worker Adapter at a time while still exposing all supported adapter presets as selectable options. The workflow SHALL let the operator choose which discovered Worker models are allowed for governed AGILE recommendations and board launches, and SHALL provide filtering and visible bulk selection controls when the discovered model list is shown.
+The Worker Setup page SHALL present a guided setup workflow for one active Worker Adapter at a time while still exposing all supported adapter presets as selectable options. The workflow SHALL let the operator choose which discovered Worker models are allowed for governed Orchestration Board recommendations and board launches, and SHALL provide filtering and visible bulk selection controls when the discovered model list is shown.
 
 #### Scenario: Default adapter exists
 - **WHEN** an operator opens `/settings/workers`
@@ -66,7 +66,7 @@ The Worker Setup page SHALL show a single user-facing readiness summary for the 
 #### Scenario: Adapter is launch-ready
 - **WHEN** the active adapter is configured, has at least one allowed compatible model, and has passed token-tracking verification
 - **THEN** the page shows the adapter as launch-ready
-- **AND** the summary indicates the AGILE Board can launch governed work with this adapter
+- **AND** the summary indicates the Orchestration Board can launch governed work with this adapter
 
 #### Scenario: Connected project is not configured
 - **WHEN** no connected project exists
@@ -113,16 +113,43 @@ The Worker Setup page and public setup guidance SHALL configure Worker/coding ha
 - **AND** it SHALL NOT imply that the control-plane API key automatically configures those Worker CLIs
 
 ### Requirement: Setup pages show the next missing setup action
-Setup and Worker Adapter pages SHALL identify the next missing action needed to make the Portal launch-ready.
+Setup and Worker Adapter pages SHALL identify the next missing action needed to make the Portal launch-ready. Setup Overview SHALL report overall launch readiness only when Control Plane, Token Budget, and Worker Adapter requirements pass and at least one Connected Project has computed `launch_ready` capability.
 
 #### Scenario: Worker setup highlights next missing action
 - **WHEN** an authenticated operator opens Worker Adapter setup and the active adapter is not launchable
 - **THEN** the page SHALL show the next missing setup action such as select default adapter, discover models, allow models, verify tracking, or connect/open a project when that context is missing
 - **AND** the page SHALL link or focus the existing control that completes that action
 
-#### Scenario: Launch-ready setup shows board action
-- **WHEN** required setup is complete for launching governed tasks
-- **THEN** the setup surface SHALL show a launch-ready state and link to the appropriate project board or project selection surface
+#### Scenario: No Connected Project is available
+- **WHEN** Control Plane, Token Budget, and Worker Adapter requirements pass
+- **AND** no Connected Project exists
+- **THEN** Setup Overview SHALL NOT report `Ready to launch`
+- **AND** the next action SHALL direct the operator to Project Settings to connect a project
+
+#### Scenario: Connected Projects are not launch-ready
+- **WHEN** Control Plane, Token Budget, and Worker Adapter requirements pass
+- **AND** Connected Projects exist but each computed Project Capability is analysis-ready or blocked
+- **THEN** Setup Overview SHALL NOT report `Ready to launch`
+- **AND** the next action SHALL direct the operator to Project Settings
+
+#### Scenario: Local Runner is unavailable despite persisted capability
+- **WHEN** Control Plane, Token Budget, and Worker Adapter requirements pass
+- **AND** a Connected Project has persisted `launch_ready` capability
+- **AND** the Local Runner Execution Backend is disabled or unavailable
+- **THEN** Setup Overview SHALL NOT use persisted capability to report `Ready to launch`
+- **AND** the next action SHALL direct the operator to Project Settings
+
+#### Scenario: Launch-ready setup shows project board action
+- **WHEN** Control Plane, Token Budget, and Worker Adapter requirements pass
+- **AND** at least one Connected Project has computed `launch_ready` capability
+- **THEN** Setup Overview SHALL show a launch-ready state
+- **AND** the primary action SHALL link directly to a launch-ready Connected Project's board
+
+#### Scenario: Earlier setup blocker retains priority
+- **WHEN** no Connected Project is launch-ready
+- **AND** an earlier Control Plane, Token Budget, or Worker Adapter requirement is also incomplete
+- **THEN** Setup Overview SHALL show the earlier incomplete requirement as the next action
+- **AND** it SHALL still keep the Connected Project step incomplete
 
 ### Requirement: Advanced diagnostics are secondary
 Worker/setup diagnostics SHALL remain available without overwhelming the first setup path.
@@ -161,7 +188,7 @@ Worker Setup SHALL present Codex verification and readiness according to the sel
 - **WHEN** the active Worker Adapter is Codex
 - **AND** Codex has at least one operator-approved allowed model
 - **AND** Codex has passed `native_usage` verification with `tracking_authoritative=true`
-- **THEN** Worker Setup SHALL show Codex as launch-ready for normal governed AGILE Board tasks
+- **THEN** Worker Setup SHALL show Codex as launch-ready for normal governed Orchestration Board tasks
 - **AND** the readiness summary SHALL identify the mode as native usage tracking rather than Harness Proxy request governance
 
 #### Scenario: Codex observed-only success is not launch-ready

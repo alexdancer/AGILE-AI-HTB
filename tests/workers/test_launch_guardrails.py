@@ -1,5 +1,5 @@
-from agile_ai_htb import db
-from agile_ai_htb.launch_guardrails import evaluate_launch_guardrails
+from foreman_ai_hq import db
+from foreman_ai_hq.launch_guardrails import evaluate_launch_guardrails
 
 
 def test_launch_guardrails_pass_when_adapter_and_proxy_ready(tmp_path):

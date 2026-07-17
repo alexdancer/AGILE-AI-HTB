@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from agile_ai_htb.db import (
+from foreman_ai_hq.db import (
     build_session_artifact,
     connect,
     create_session,

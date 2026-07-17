@@ -1,4 +1,4 @@
-from agile_ai_htb import db
+from foreman_ai_hq import db
 from tests.portal.helpers import PORTAL_TOKEN, _client, _portal_headers
 
 def test_alarms_browser_accept_dismisses_open_alarm_without_breaking_json_api(tmp_path, monkeypatch):
@@ -21,36 +21,42 @@ def test_alarms_browser_accept_dismisses_open_alarm_without_breaking_json_api(tm
             },
         )
 
-        html_before = client.get(
-            "/alarms",
-            headers={**_portal_headers(), "accept": "text/html"},
-        )
+        # "/alarms" with Accept: text/html is the retired Jinja HTML arm (now the
+        # missing-build recovery response); its React replacement is this
+        # authenticated JSON handoff. The JSON-polling arm of "/alarms" itself
+        # (no Accept: text/html) is unaffected by retirement and already proven
+        # by test_react_shell.test_alarms_json_polling_is_unaffected_by_retirement,
+        # so it is only re-used below via ``api_response`` as before.
+        before = client.get("/api/alarms", headers=_portal_headers())
         dismissed = client.post(
             "/alarms/alarm-inbox-1/resolve",
             headers={**_portal_headers(), "accept": "text/html"},
             data={"action": "continue"},
             follow_redirects=False,
         )
-        html_after = client.get(
-            dismissed.headers["location"],
-            headers={**_portal_headers(), "accept": "text/html"},
-        )
+        after = client.get("/api/alarms", headers=_portal_headers())
         api_response = client.get("/alarms", params={"resolved": True})
 
     assert api_response.status_code == 200
     assert api_response.json()["alarms"][0]["id"] == "alarm-inbox-1"
     assert api_response.json()["alarms"][0]["resolved_at"]
-    assert html_before.status_code == 200
-    assert "text/html" in html_before.headers["content-type"]
-    assert "Dismiss" in html_before.text
-    assert 'action="/alarms/alarm-inbox-1/resolve"' in html_before.text
-    assert "DAILY_CAP_EXCEEDED" in html_before.text
-    assert started["session_id"] in html_before.text
-    assert "Ask human to raise budget." in html_before.text
+
+    assert before.status_code == 200
+    before_alarm = before.json()["alarms"][0]
+    assert before_alarm["id"] == "alarm-inbox-1"
+    assert before_alarm["type"] == "DAILY_CAP_EXCEEDED"
+    assert before_alarm["session_id"] == started["session_id"]
+    assert before_alarm["recommended_action"] == "Ask human to raise budget."
+    # The "Dismiss" button in the retired markup was driven by this same
+    # available-actions list; the browser-observable "action=".../resolve""
+    # form attribute is exercised for real by the actual POST below.
+    assert any(a.get("action") == "continue" for a in before_alarm["available_actions"])
+
     assert dismissed.status_code == 303
     assert dismissed.headers["location"] == "/alarms"
-    assert html_after.status_code == 200
-    assert "Recently resolved" not in html_after.text
-    assert "DAILY_CAP_EXCEEDED" not in html_after.text
-    assert "Ask human to raise budget." not in html_after.text
+
+    assert after.status_code == 200
+    # Once resolved it drops out of the default "open" filter, the backend
+    # equivalent of the retired page no longer listing it in the open inbox.
+    assert after.json()["alarms"] == []
 

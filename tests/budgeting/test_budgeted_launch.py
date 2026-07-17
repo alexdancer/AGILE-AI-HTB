@@ -9,10 +9,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from agile_ai_htb import db
-from agile_ai_htb.project_context import project_task_metadata
-from agile_ai_htb.routes.tasks import _current_day_start_iso as _portal_launch_day_start_iso
-from agile_ai_htb.task_launch import TaskLaunchBlocked, abort_worker_session, launch_task
+from foreman_ai_hq import db
+from foreman_ai_hq.project_context import project_task_metadata
+from foreman_ai_hq.routes.tasks import _current_day_start_iso as _portal_launch_day_start_iso
+from foreman_ai_hq.task_launch import TaskLaunchBlocked, abort_worker_session, launch_task
 
 
 def _connect_project(db_path: Path, root: Path) -> dict:
@@ -596,7 +596,7 @@ def test_native_usage_launch_passes_selected_model_and_records_usage_metadata(tm
             "stdout": json.dumps(
                 {
                     "type": "complete",
-                    "message": "HTB_SENTINEL_OK",
+                    "message": "FOREMAN_SENTINEL_OK",
                     "model": "opencode/gpt-5.1",
                     "session_id": "opencode-session-2099",
                     "usage": {"input_tokens": 12, "output_tokens": 3, "total_tokens": 15, "cost": 0.01},
@@ -650,7 +650,7 @@ def test_native_usage_launch_blocks_when_adapter_emits_no_usage_evidence(tmp_pat
         adapter_id="opencode",
         model=None,
         proxy_url=None,
-        runner=lambda plan: {"returncode": 0, "stdout": "HTB_SENTINEL_OK", "stderr": ""},
+        runner=lambda plan: {"returncode": 0, "stdout": "FOREMAN_SENTINEL_OK", "stderr": ""},
     )
     _wait_for_worker_run(db_path, task["id"], "failed")
     blocked = db.get_task(db_path, task["id"])
@@ -675,7 +675,7 @@ def test_native_usage_launch_blocks_when_adapter_emits_no_usage_evidence(tmp_pat
             "stdout": json.dumps(
                 {
                     "type": "complete",
-                    "message": "HTB_SENTINEL_OK",
+                    "message": "FOREMAN_SENTINEL_OK",
                     "model": "opencode/gpt-5.1",
                     "session_id": "opencode-session-2099-retry",
                     "usage": {"input_tokens": 12, "output_tokens": 3, "total_tokens": 15, "cost": 0.01},
@@ -971,7 +971,7 @@ def test_manual_abort_preserves_task_metadata_and_marks_session_aborted(tmp_path
         task_description="Abort me",
         model="opencode/gpt-5.1",
         session_key_hash="a" * 64,
-        guardrail_overrides={"task_launch": {"task_branch": "htb/task-demo-2099"}},
+        guardrail_overrides={"task_launch": {"task_branch": "foremanctl/task-demo-2099"}},
         status="running",
     )
     task = db.create_task(
@@ -981,7 +981,7 @@ def test_manual_abort_preserves_task_metadata_and_marks_session_aborted(tmp_path
         estimate_tokens=10,
         recommended_model="opencode/gpt-5.1",
         session_id=session["id"],
-        metadata={"task_branch": "htb/task-demo-2099", "diff_summary": {"files_changed": ["demo.py"]}},
+        metadata={"task_branch": "foremanctl/task-demo-2099", "diff_summary": {"files_changed": ["demo.py"]}},
     )
     db.record_token_turn(
         db_path,
@@ -1001,5 +1001,5 @@ def test_manual_abort_preserves_task_metadata_and_marks_session_aborted(tmp_path
     assert aborted["session"]["status"] == "aborted"
     assert refreshed["status"] == "Blocked"
     assert refreshed["metadata"]["abort_reason"] == "operator stopped runaway task"
-    assert refreshed["metadata"]["task_branch"] == "htb/task-demo-2099"
+    assert refreshed["metadata"]["task_branch"] == "foremanctl/task-demo-2099"
     assert artifact["token_log"][0]["total_tokens"] == 2

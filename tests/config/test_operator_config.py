@@ -1,6 +1,6 @@
 import os
 
-from agile_ai_htb.operator_config import (
+from foreman_ai_hq.operator_config import (
     CONTROL_API_KEY_PLACEHOLDER,
     ensure_secret_placeholder,
     load_operator_config,
@@ -10,7 +10,7 @@ from agile_ai_htb.operator_config import (
 
 
 def test_update_operator_config_preserves_unrelated_values(tmp_path):
-    config_path = tmp_path / ".htb" / "config.toml"
+    config_path = tmp_path / ".foreman" / "config.toml"
     config_path.parent.mkdir()
     config_path.write_text(
         'database_path = "custom.db"\n'
@@ -34,7 +34,7 @@ def test_update_operator_config_preserves_unrelated_values(tmp_path):
 
 
 def test_ensure_secret_placeholder_adds_missing_env_without_overwriting(tmp_path):
-    secrets_path = tmp_path / ".htb" / "secrets.env"
+    secrets_path = tmp_path / ".foreman" / "secrets.env"
     secrets_path.parent.mkdir()
     secrets_path.write_text("EXISTING_KEY='real-value'\n", encoding="utf-8")
 
@@ -48,7 +48,7 @@ def test_ensure_secret_placeholder_adds_missing_env_without_overwriting(tmp_path
 
 
 def test_ensure_secret_placeholder_preserves_existing_secret(tmp_path):
-    secrets_path = tmp_path / ".htb" / "secrets.env"
+    secrets_path = tmp_path / ".foreman" / "secrets.env"
     secrets_path.parent.mkdir()
     secrets_path.write_text("CONTROL_KEY='keep-me'\n", encoding="utf-8")
 
@@ -60,7 +60,7 @@ def test_ensure_secret_placeholder_preserves_existing_secret(tmp_path):
 
 def test_write_control_plane_secret_preserves_unrelated_values_and_sets_env(tmp_path, monkeypatch):
     monkeypatch.delenv("CONTROL_KEY", raising=False)
-    secrets_path = tmp_path / ".htb" / "secrets.env"
+    secrets_path = tmp_path / ".foreman" / "secrets.env"
     secrets_path.parent.mkdir()
     secrets_path.write_text("OTHER_KEY='keep-me'\nCONTROL_KEY='old-value'\n", encoding="utf-8")
 

@@ -10,33 +10,33 @@ def test_docker_packaging_files_define_demo_container_contract():
     compose = (ROOT / "docker-compose.yml").read_text()
     dockerignore = (ROOT / ".dockerignore").read_text()
 
-    assert "agile-ai-htb" in compose
-    assert "agile-ai-htb:local" in compose
+    assert "foreman-ai-hq" in compose
+    assert "foreman-ai-hq:local" in compose
     assert "8000:8000" in compose
     assert "TOKEN_TRACKER_DATABASE_PATH=/data/harness.db" in compose
     assert "TOKEN_TRACKER_PORTAL_TOKEN=${TOKEN_TRACKER_PORTAL_TOKEN:-DEMO_PORTAL_TOKEN_2099}" in compose
     assert "python" in compose and "/health" in compose
 
     assert "COPY guardrails.yaml" in dockerfile
-    assert "htb" in dockerfile and "serve" in dockerfile
+    assert "foremanctl" in dockerfile and "serve" in dockerfile
     assert "8000" in dockerfile
 
     assert ".venv" in dockerignore
     assert "harness.db" in dockerignore
 
 
-def test_pyproject_exposes_htb_console_script():
+def test_pyproject_exposes_foremanctl_console_script():
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
 
-    assert pyproject["project"]["scripts"]["htb"] == "agile_ai_htb.cli:main"
+    assert pyproject["project"]["scripts"]["foremanctl"] == "foreman_ai_hq.cli:main"
 
 
-def test_installed_distribution_exposes_htb_console_script():
-    dist = distribution("agile-ai-htb")
+def test_installed_distribution_exposes_foremanctl_console_script():
+    dist = distribution("foreman-ai-hq")
 
-    entrypoint = next(entry for entry in dist.entry_points if entry.name == "htb")
+    entrypoint = next(entry for entry in dist.entry_points if entry.name == "foremanctl")
     assert entrypoint.group == "console_scripts"
-    assert entrypoint.value == "agile_ai_htb.cli:main"
+    assert entrypoint.value == "foreman_ai_hq.cli:main"
 
 
 def test_pyproject_has_public_cli_package_metadata():
@@ -46,7 +46,7 @@ def test_pyproject_has_public_cli_package_metadata():
     assert project["readme"] == "README.md"
     assert project["license"] == "MIT"
     assert "token-tracking" in project["keywords"]
-    assert project["urls"]["Repository"] == "https://github.com/alexdancer/AGILE-AI-HTB"
+    assert project["urls"]["Repository"] == "https://github.com/alexdancer/foreman-ai-hq"
 
 
 def test_pyproject_packages_server_rendered_templates_and_defaults():
@@ -54,7 +54,7 @@ def test_pyproject_packages_server_rendered_templates_and_defaults():
 
     # Server-rendered templates/defaults ship alongside the built React Portal
     # shell assets so a packaged install can serve the migrated surface.
-    assert pyproject["tool"]["setuptools"]["package-data"]["agile_ai_htb"] == [
+    assert pyproject["tool"]["setuptools"]["package-data"]["foreman_ai_hq"] == [
         "templates/*.html",
         "defaults/*.yaml",
         "static/react/*",
@@ -66,17 +66,17 @@ def test_readme_documents_portal_first_operator_flow():
     readme = (ROOT / "README.md").read_text()
     operator_install = readme.split("For contributors working from a checkout", 1)[0]
 
-    assert "AGILE-AI-HTB" in readme
+    assert "Foreman AI HQ" in readme
     assert "pipx install" in readme
-    assert "htb init" in readme
-    assert "created or migrated by `htb init`" in readme
-    assert "uv run htb init" not in operator_install
+    assert "foremanctl init" in readme
+    assert "created or migrated by `foremanctl init`" in readme
+    assert "uv run foremanctl init" not in operator_install
     assert "http://localhost:8000/" in readme
-    assert "Default loopback `htb serve` opens the local Portal without a login token" in readme
+    assert "Default loopback `foremanctl serve` opens the local Portal without a login token" in readme
     assert "sign in through `/login`" in readme
-    assert "htb check" in readme
+    assert "foremanctl check" in readme
     removed_command = "seed" + "-demo"
-    assert f"htb {removed_command}" not in readme
+    assert f"foremanctl {removed_command}" not in readme
     assert "docker-compose up" not in readme
     assert "Docker path" not in readme
     assert "uv run --extra test pytest" in readme
@@ -91,7 +91,7 @@ def test_readme_documents_portal_first_operator_flow():
     assert "docs/assets/screenshots/worker-adapter-setup.png" in readme
     assert "docs/assets/screenshots/sessions-token-ledger.png" in readme
     assert "environment variables" in readme.lower()
-    assert "AGILE_AI_HTB_CONTROL_API_KEY" in readme
+    assert "FOREMAN_AI_HQ_CONTROL_API_KEY" in readme
     assert "proxy_governed" not in readme
     assert "proxy-governed" not in readme.lower()
     assert "Harness Proxy" not in readme
@@ -102,20 +102,20 @@ def test_install_docs_separate_operator_installs_from_contributor_uv_run():
     install_doc = (ROOT / "docs" / "INSTALL.md").read_text()
     getting_started = (ROOT / "docs" / "GETTING_STARTED.md").read_text()
 
-    assert 'pipx install "git+https://github.com/alexdancer/AGILE-AI-HTB.git"' in install_doc
-    assert "pipx install agile-ai-htb" in install_doc
-    assert "curl -fsSL https://raw.githubusercontent.com/alexdancer/AGILE-AI-HTB/main/install.sh | sh" in install_doc
-    assert "## Updating AGILE-AI-HTB" in install_doc
-    assert 'pipx install --force "git+https://github.com/alexdancer/AGILE-AI-HTB.git"' in install_doc
-    assert 'uv tool install --force "git+https://github.com/alexdancer/AGILE-AI-HTB.git"' in install_doc
-    assert "pipx upgrade agile-ai-htb" in install_doc
-    assert "uv tool upgrade agile-ai-htb" in install_doc
-    assert "preserves repo-local `.htb/` state" in readme
+    assert 'pipx install "git+https://github.com/alexdancer/foreman-ai-hq.git"' in install_doc
+    assert "pipx install foreman-ai-hq" in install_doc
+    assert "curl -fsSL https://raw.githubusercontent.com/alexdancer/foreman-ai-hq/main/install.sh | sh" in install_doc
+    assert "## Updating Foreman AI HQ" in install_doc
+    assert 'pipx install --force "git+https://github.com/alexdancer/foreman-ai-hq.git"' in install_doc
+    assert 'uv tool install --force "git+https://github.com/alexdancer/foreman-ai-hq.git"' in install_doc
+    assert "pipx upgrade foreman-ai-hq" in install_doc
+    assert "uv tool upgrade foreman-ai-hq" in install_doc
+    assert "preserves repo-local `.foreman/` state" in readme
     assert "Homebrew is planned" in install_doc
     assert "not published yet" in install_doc
-    assert "uv run htb ...` is a contributor convenience" in install_doc
-    assert "htb init" in getting_started
-    assert "uv run htb ...` is a contributor convenience" in getting_started
+    assert "uv run foremanctl ...` is a contributor convenience" in install_doc
+    assert "foremanctl init" in getting_started
+    assert "uv run foremanctl ...` is a contributor convenience" in getting_started
     assert "proxy_governed" not in getting_started
     assert "Harness Proxy" not in getting_started
     assert "assets/screenshots/dashboard-overview.png" in getting_started
@@ -142,14 +142,14 @@ def test_operator_docs_do_not_advertise_proxy_governed_mode():
         assert "Governed via Harness Proxy" not in text, path
 
 
-def test_support_checklist_requests_bare_htb_check_and_install_method():
+def test_support_checklist_requests_bare_foremanctl_check_and_install_method():
     checklist = (ROOT / "docs" / "SETUP_SUPPORT_CHECKLIST.md").read_text()
     setup_issue = (ROOT / ".github" / "ISSUE_TEMPLATE" / "setup_support.md").read_text()
 
-    assert "htb check" in checklist
-    assert "uv run htb check" in checklist
+    assert "foremanctl check" in checklist
+    assert "uv run foremanctl check" in checklist
     assert "Install method" in checklist
-    assert "Does `command -v htb` succeed?" in setup_issue
+    assert "Does `command -v foremanctl` succeed?" in setup_issue
     assert "pipx / curl installer / Homebrew / source checkout / Docker / other" in setup_issue
     assert "assets/screenshots/task-breakdown-manual-recovery.png" in checklist
 

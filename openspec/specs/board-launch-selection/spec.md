@@ -240,19 +240,30 @@ The board SHALL add automation controls without removing existing per-task Launc
 - **AND** automation controls SHALL NOT be required to launch the task
 
 ### Requirement: Launch controls preserve model-layer clarity
-Board launch controls SHALL keep Worker Adapter selection, Worker model selection, estimator sizing evidence, and deterministic routing provenance visually distinct.
+Board launch controls SHALL keep Worker Adapter selection, Worker model selection, and estimator/routing provenance visually distinct. The stored task recommendation SHALL represent the deterministic adapter-aware Worker model routing result when available, while metadata SHALL preserve estimator complexity evidence and any guardrail policy candidate that was substituted. Launch-time operator overrides remain visible as selected/launched Worker model evidence.
 
-#### Scenario: Launch model differs from routed model
-- **WHEN** a task has a routed model and a different selected or launched Worker model
+#### Scenario: Recommendation is adapter-compatible before launch
+- **WHEN** an Estimated task offers launch controls
+- **AND** the task has a `recommended_model`
+- **THEN** the recommendation SHALL be compatible with the task's selected/default Worker Adapter allowed model subset at estimation time
+- **AND** the control SHALL still show the Worker Adapter identity separately from the tracking label or usage-authority mode
+
+#### Scenario: Launch model differs from routed recommendation
+- **WHEN** a task has a recommended model and a different selected or launched Worker model
 - **THEN** the board SHALL display the selected/launched Worker model as the primary run model
-- **AND** it SHALL keep the routed model visible as secondary provenance rather than overwriting it
+- **AND** it SHALL keep the routed recommendation and estimator sizing evidence visible as secondary provenance rather than overwriting them
+
+#### Scenario: No routed recommendation exists
+- **WHEN** an Estimated task has token estimate evidence but no routed Worker model because no allowed model subset exists
+- **THEN** the board SHALL avoid displaying a fake default model
+- **AND** launch controls SHALL direct the operator to Worker Setup or allowed-model configuration before launch can proceed
 
 #### Scenario: Adapter and tracking label remain visible
 - **WHEN** an Estimated task offers launch controls
 - **THEN** the control SHALL show the Worker Adapter identity separately from the tracking label or usage-authority mode
 
 ### Requirement: Board shows actionable native CLI launch failures
-The AGILE Board SHALL show a concise, sanitized, user-facing diagnostic on the affected task card when a retryable Worker Run fails because the native Worker CLI reports an actionable authentication, trust, or configuration prerequisite.
+The Orchestration Board SHALL show a concise, sanitized, user-facing diagnostic on the affected task card when a retryable Worker Run fails because the native Worker CLI reports an actionable authentication, trust, or configuration prerequisite.
 
 #### Scenario: Codex trusted-directory failure shown on task card
 - **WHEN** an Estimated task is launched with the Codex Worker Adapter

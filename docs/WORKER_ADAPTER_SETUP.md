@@ -15,8 +15,8 @@ Worker Adapters are local coding-agent CLI integrations. The supported local set
 | Verified native usage | Yes, after verification | Budget-authoritative after trustworthy native usage import |
 | Diagnostic-only observation | No | Not budget-authoritative |
 
-Diagnostic-only observation is useful for PATH checks and troubleshooting, but it is not normal AGILE Board launchable.
+Diagnostic-only observation is useful for PATH checks and troubleshooting, but it is not normal Orchestration Board launchable.
 
 ## Key rule
 
-The control-plane API key from `/settings/control-plane` powers AGILE-AI-HTB estimation, planning, recommendations, and reports. It does not configure OpenCode, Claude Code, Codex, or other native Worker CLIs.
+The control-plane API key from `/settings/control-plane` powers Foreman AI HQ estimation, planning, recommendations, and reports. It does not configure OpenCode, Claude Code, Codex, or other native Worker CLIs.

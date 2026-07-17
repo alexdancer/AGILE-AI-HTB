@@ -8,7 +8,7 @@ labels: needs-triage
 ## Where are you blocked?
 
 - [ ] Install
-- [ ] `htb init`
+- [ ] `foremanctl init`
 - [ ] Portal login
 - [ ] `/settings/control-plane` save/test
 - [ ] Project connect
@@ -19,7 +19,7 @@ labels: needs-triage
 
 ## Redacted setup check
 
-Paste `htb check` output here. If you are using a source checkout without installing the CLI, `uv run htb check` is also acceptable. Do not paste API keys, portal tokens, `.htb/secrets.env`, or raw credentials.
+Paste `foremanctl check` output here. If you are using a source checkout without installing the CLI, `uv run foremanctl check` is also acceptable. Do not paste API keys, portal tokens, `.foreman/secrets.env`, or raw credentials.
 
 ```text
 
@@ -30,10 +30,10 @@ Paste `htb check` output here. If you are using a source checkout without instal
 - OS:
 - CPU architecture:
 - Install method: pipx / curl installer / Homebrew / source checkout / Docker / other
-- Does `command -v htb` succeed?: yes / no
+- Does `command -v foremanctl` succeed?: yes / no
 - Docker or local Python:
 - Control-plane provider/model:
-- Control-plane key configured through: `/settings/control-plane` / `.htb/secrets.env` / environment variable
+- Control-plane key configured through: `/settings/control-plane` / `.foreman/secrets.env` / environment variable
 - Worker Adapter: OpenCode / Claude Code / Codex / Hermes / other
 - Tracking mode: `proxy_governed` / `native_usage` / `observed_only` / unknown
 
