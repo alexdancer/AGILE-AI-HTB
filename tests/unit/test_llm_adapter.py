@@ -1,6 +1,16 @@
 import pytest
 
-from foreman_ai_hq.llm import LLMClient, LLMClientError, calculate_cost, extract_usage, final_stream_usage
+from foreman_ai_hq.llm import (
+    DEFAULT_OPENROUTER_BASE_URL,
+    LLMClient,
+    LLMClientError,
+    _provider_config,
+    calculate_cost,
+    extract_cost,
+    extract_usage,
+    final_stream_usage,
+    resolve_cost,
+)
 from foreman_ai_hq.settings import Settings
 
 
@@ -32,6 +42,33 @@ async def test_llm_client_forwards_openai_compatible_request(monkeypatch):
     assert captured["headers"]["Authorization"] == "Bearer test-key"
     assert captured["payload"]["model"] == "gpt-4.1-mini"
     assert captured["payload"]["temperature"] == 0
+    assert response["usage"]["total_tokens"] == 5
+
+
+@pytest.mark.asyncio
+async def test_llm_client_forwards_openrouter_request_with_provider_model_id(monkeypatch):
+    captured = {}
+
+    def fake_post_json(url, headers, payload):
+        captured.update({"url": url, "headers": headers, "payload": payload})
+        return {"id": "chatcmpl_fake", "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}}
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("FOREMAN_AI_HQ_CONTROL_API_KEY_ENV", "STALE_CONTROL_KEY")
+    monkeypatch.setenv("FOREMAN_AI_HQ_CONTROL_BASE_URL", "https://stale.example/v1")
+    settings = Settings(
+        control_plane_provider="openrouter",
+        control_plane_model="anthropic/claude-sonnet-4.5",
+    )
+
+    response = await LLMClient(settings, http_post_json=fake_post_json).acompletion(
+        {"messages": [{"role": "user", "content": "hi"}]}
+    )
+
+    assert _provider_config(settings, {"model": settings.control_plane_model}).base_url == DEFAULT_OPENROUTER_BASE_URL
+    assert captured["url"] == f"{DEFAULT_OPENROUTER_BASE_URL}/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer test-key"
+    assert captured["payload"]["model"] == "anthropic/claude-sonnet-4.5"
     assert response["usage"]["total_tokens"] == 5
 
 
@@ -213,6 +250,18 @@ def test_calculate_cost_returns_none_when_pricing_unavailable():
 
 def test_calculate_cost_uses_optional_local_pricing_when_available():
     assert calculate_cost("gpt-4o-mini", 10, 20) == pytest.approx(0.0000135)
+
+
+def test_resolve_cost_prefers_reported_cost_and_falls_back_to_known_pricing():
+    reported = {"usage": {"prompt_tokens": 10, "completion_tokens": 20, "cost": "0.0042"}}
+    fallback = {"usage": {"prompt_tokens": 10, "completion_tokens": 20}}
+
+    assert extract_cost(reported) == pytest.approx(0.0042)
+    assert extract_cost({"usage": {"cost": "not-a-number"}}) is None
+    assert extract_cost({"usage": {"cost": float("nan")}}) is None
+    assert resolve_cost("unknown-model", reported) == pytest.approx(0.0042)
+    assert resolve_cost("gpt-4o-mini", fallback) == pytest.approx(0.0000135)
+    assert resolve_cost("unknown-model", fallback) is None
 
 
 @pytest.mark.asyncio

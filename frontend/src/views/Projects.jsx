@@ -132,35 +132,36 @@ export function ProjectsState({ data, error, loading, onRefresh }) {
         ) : null}
       </div>
 
-      <section className="panel">
+      <section className="panel project-browser-panel">
         <div className="panel-header"><h3>Open local repo</h3></div>
         <div className="panel-body">
           {!localRunnerEnabled && (
-            <>
+            <div className="project-runner-status">
               <span className="pill yellow">Local Runner disabled</span>
-              <p className="muted mono">
+              <p className="project-runner-help muted mono">
                 Run <code>foremanctl init</code>, enable Local Runner in{" "}
                 <code>.foreman/config.toml</code> or with{" "}
                 <code>foremanctl serve --local-runner</code>, then add the
                 control-plane key in <code>/settings/control-plane</code> if
                 needed.
               </p>
-            </>
+            </div>
           )}
-          <form onSubmit={connect}>
-            <label htmlFor="root-path">Local repository path</label>
-            <input
-              id="root-path"
-              value={rootPath}
-              onChange={(e) => setRootPath(e.target.value)}
-              placeholder="/path/to/local/repo"
-              required
-              disabled={busy}
-            />
+          <form className="project-connect-form" onSubmit={connect}>
+            <div className="project-settings-field">
+              <label htmlFor="root-path">Local repository path</label>
+              <input
+                id="root-path"
+                value={rootPath}
+                onChange={(e) => setRootPath(e.target.value)}
+                placeholder="/path/to/local/repo"
+                required
+                disabled={busy}
+              />
+            </div>
             <button
               type="submit"
-              className="primary"
-              style={{ marginTop: 10 }}
+              className="project-settings-primary"
               disabled={busy}
             >
               {isBusy(null, "connect") ? "Connecting…" : "Open project"}
@@ -169,37 +170,39 @@ export function ProjectsState({ data, error, loading, onRefresh }) {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel project-browser-panel">
         <div className="panel-header"><h3>Active projects</h3></div>
         <div className="panel-body">
           {activeProjects.length === 0 ? (
             <p className="muted">No projects yet.</p>
           ) : (
-            <div className="dashboard-grid">
+            <div className="project-browser-grid">
               {activeProjects.map((project) => (
-                <article className="card" key={project.id}>
+                <article className="project-browser-card" key={project.id}>
                   <CapabilityPill state={project.capability?.state} label={project.capability?.label} />
-                  <h2 className="mono" style={{ fontSize: 16, margin: "10px 0 6px" }}>
+                  <h2 className="project-browser-name">
                     <AppLink to={`/projects/${project.id}`}>{project.name}</AppLink>
                   </h2>
-                  <p className="muted mono" style={{ margin: 0 }}>
+                  <p className="project-browser-root muted mono">
                     {project.root_path}
                   </p>
                   {project.capability?.reasons?.length > 0 && (
-                    <ul className="mono muted" style={{ margin: "8px 0 0", fontSize: 12 }}>
+                    <ul className="project-browser-reasons mono muted">
                       {project.capability.reasons.map((reason, i) => (
                         <li key={i}>{reason}</li>
                       ))}
                     </ul>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => archive(project.id)}
-                    disabled={busy}
-                    style={{ marginTop: 12 }}
-                  >
-                    {isBusy(project.id, "archive") ? "Archiving…" : "Archive project"}
-                  </button>
+                  <div className="project-profile-actions">
+                    <button
+                      type="button"
+                      className="project-settings-secondary"
+                      onClick={() => archive(project.id)}
+                      disabled={busy}
+                    >
+                      {isBusy(project.id, "archive") ? "Archiving…" : "Archive project"}
+                    </button>
+                  </div>
                 </article>
               ))}
             </div>
@@ -207,34 +210,35 @@ export function ProjectsState({ data, error, loading, onRefresh }) {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel project-browser-panel">
         <div className="panel-header"><h3>Archived projects</h3></div>
         <div className="panel-body">
           {archivedProjects.length === 0 ? (
             <p className="muted">No archived projects.</p>
           ) : (
-            <div className="dashboard-grid">
+            <div className="project-browser-grid">
               {archivedProjects.map((project) => (
-                <article className="card" key={project.id}>
+                <article className="project-browser-card" key={project.id}>
                   <span className="pill muted">archived</span>
-                  <h2 className="mono" style={{ fontSize: 16, margin: "10px 0 6px" }}>
+                  <h2 className="project-browser-name">
                     <AppLink to={`/projects/${project.id}`}>{project.name}</AppLink>
                   </h2>
-                  <p className="muted mono" style={{ margin: 0 }}>
+                  <p className="project-browser-root muted mono">
                     {project.root_path}
                   </p>
-                  <p className="muted mono" style={{ margin: "8px 0 0", fontSize: 12 }}>
+                  <p className="project-browser-archived muted mono">
                     Archived {project.archived_at}
                   </p>
-                  <button
-                    type="button"
-                    className="primary"
-                    onClick={() => restore(project.id)}
-                    disabled={busy}
-                    style={{ marginTop: 12 }}
-                  >
-                    {isBusy(project.id, "restore") ? "Restoring…" : "Restore project"}
-                  </button>
+                  <div className="project-profile-actions">
+                    <button
+                      type="button"
+                      className="project-settings-primary"
+                      onClick={() => restore(project.id)}
+                      disabled={busy}
+                    >
+                      {isBusy(project.id, "restore") ? "Restoring…" : "Restore project"}
+                    </button>
+                  </div>
                 </article>
               ))}
             </div>

@@ -84,7 +84,7 @@ create table if not exists token_turns (
     prompt_tokens integer not null,
     completion_tokens integer not null,
     total_tokens integer not null,
-    cost real not null,
+    cost real,
     raw_usage_json text not null,
     created_at text not null
 );
@@ -224,12 +224,46 @@ def init_db(path: Path | str) -> None:
 
 
 def _migrate_schema(conn: sqlite3.Connection) -> None:
-    # Migrations are additive so existing local harness databases keep their task/session history.
+    # Preserve existing local harness history while bringing older tables to the current schema.
     token_turn_columns = {
-        row["name"] for row in conn.execute("pragma table_info(token_turns)").fetchall()
+        row["name"]: row for row in conn.execute("pragma table_info(token_turns)").fetchall()
     }
     if "usage_kind" not in token_turn_columns:
         conn.execute("alter table token_turns add column usage_kind text not null default 'worker'")
+        token_turn_columns = {
+            row["name"]: row for row in conn.execute("pragma table_info(token_turns)").fetchall()
+        }
+    if token_turn_columns["cost"]["notnull"]:
+        conn.execute("alter table token_turns rename to token_turns_cost_not_null")
+        conn.execute(
+            """
+            create table token_turns (
+                id integer primary key autoincrement,
+                session_id text not null references sessions(id) on delete cascade,
+                usage_kind text not null default 'worker',
+                model text not null,
+                prompt_tokens integer not null,
+                completion_tokens integer not null,
+                total_tokens integer not null,
+                cost real,
+                raw_usage_json text not null,
+                created_at text not null
+            )
+            """
+        )
+        conn.execute(
+            """
+            insert into token_turns (
+                id, session_id, usage_kind, model, prompt_tokens, completion_tokens,
+                total_tokens, cost, raw_usage_json, created_at
+            )
+            select
+                id, session_id, usage_kind, model, prompt_tokens, completion_tokens,
+                total_tokens, cost, raw_usage_json, created_at
+            from token_turns_cost_not_null
+            """
+        )
+        conn.execute("drop table token_turns_cost_not_null")
 
     worker_adapter_tables = {
         row["name"]
@@ -477,7 +511,7 @@ def record_token_turn(
     model: str,
     prompt_tokens: int,
     completion_tokens: int,
-    cost: float,
+    cost: float | None,
     raw_usage: dict[str, Any],
 ) -> None:
     raw_usage = _classified_raw_usage(usage_kind, raw_usage)
@@ -1990,10 +2024,17 @@ def _summarize_token_turns(turns: list[dict[str, Any]]) -> dict[str, Any]:
         "reporting_summary": 0,
         "other": 0,
     }
+    cost_by_category = {cat: 0.0 for cat in by_category}
+    cost_seen = {cat: False for cat in by_category}
     by_source: dict[str, int] = {}
     total = 0
+    total_cost = 0.0
+    any_cost = False
+    priced_tokens = 0
+    unpriced_tokens = 0
     for turn in turns:
         tokens = _normalized_token_total_from_turn(turn)
+        cost = turn.get("cost")
         raw_usage = turn.get("raw_usage") or {}
         category = str(raw_usage.get("spend_category") or _spend_category_for_usage_kind(str(turn.get("usage_kind") or "")))
         source = str(raw_usage.get("usage_source") or _usage_source_for_usage_kind(str(turn.get("usage_kind") or ""), category))
@@ -2007,7 +2048,29 @@ def _summarize_token_turns(turns: list[dict[str, Any]]) -> dict[str, Any]:
         by_category[category] += tokens
         by_source[source] = by_source.get(source, 0) + tokens
         total += tokens
-    return {"total_tokens": total, "by_category": by_category, "by_source": by_source}
+        if cost is not None:
+            cost_value = float(cost)
+            cost_by_category[category] += cost_value
+            total_cost += cost_value
+            priced_tokens += tokens
+            cost_seen[category] = True
+            any_cost = True
+        else:
+            unpriced_tokens += tokens
+    for cat in by_category:
+        if not cost_seen[cat]:
+            cost_by_category[cat] = None if by_category[cat] > 0 else 0.0
+    if not any_cost:
+        total_cost = 0.0 if total == 0 else None
+    return {
+        "total_tokens": total,
+        "by_category": by_category,
+        "by_source": by_source,
+        "cost_by_category": cost_by_category,
+        "total_cost": total_cost,
+        "priced_tokens": priced_tokens,
+        "unpriced_tokens": unpriced_tokens,
+    }
 
 
 def _worker_execution_turns(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:

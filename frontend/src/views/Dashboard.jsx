@@ -36,6 +36,21 @@ export function DashboardContent({ data }) {
   const statusSplit = worker.status_split || {};
   const components = worker.components || {};
   const spend = data.spend || {};
+  const costByCategory = spend.cost_by_category || {};
+  const workerCost = costByCategory.worker_execution;
+  const reportingCost = costByCategory.reporting_summary;
+  const planningCost =
+    costByCategory.control_plane == null && costByCategory.task_breakdown == null
+      ? null
+      : (costByCategory.control_plane ?? 0) + (costByCategory.task_breakdown ?? 0);
+  const setupCost = costByCategory.adapter_verification;
+  const otherCost = costByCategory.other;
+  const totalCost = spend.total_cost;
+  const pricedTokens = spend.priced_tokens || 0;
+  const unpricedTokens = spend.unpriced_tokens || 0;
+  const totalSpendTokens = pricedTokens + unpricedTokens;
+  const coveragePct =
+    totalSpendTokens > 0 ? Math.round((pricedTokens / totalSpendTokens) * 100) : 0;
   const alarms = data.alarms || {};
   const sessions = data.active_sessions || [];
   const accuracy = data.estimation_accuracy || {};
@@ -91,30 +106,35 @@ export function DashboardContent({ data }) {
           <Metric
             label="Worker execution"
             value={formatTokens(spend.worker_execution)}
-            detail={`Worker-only normalized actuals · completed ${formatTokens(statusSplit.completed)} · failed/retry ${formatTokens(statusSplit.failed_retry)}${statusSplit.unknown ? ` · unknown ${formatTokens(statusSplit.unknown)}` : ""}`}
+            detail={`Worker-only normalized actuals · completed ${formatTokens(statusSplit.completed)} · failed/retry ${formatTokens(statusSplit.failed_retry)}${statusSplit.unknown ? ` · unknown ${formatTokens(statusSplit.unknown)}` : ""} · ${formatCost(workerCost)}`}
           />
           <Metric
             label="Agent Review/reporting"
             value={formatTokens(spend.agent_review_reporting)}
-            detail="review and report orchestration"
+            detail={`review and report orchestration · ${formatCost(reportingCost)}`}
           />
           <Metric
             label="Planning/estimation"
             value={formatTokens(spend.planning_estimation)}
-            detail="task breakdown and estimator spend"
+            detail={`task breakdown and estimator spend · ${formatCost(planningCost)}`}
           />
           <Metric
             label="Setup/verification"
             value={formatTokens(spend.setup_verification)}
-            detail="adapter verification spend"
+            detail={`adapter verification spend · ${formatCost(setupCost)}`}
           />
           {spend.other > 0 && (
             <Metric
               label="Other tracked spend"
               value={formatTokens(spend.other)}
-              detail="uncategorized governed spend"
+              detail={`uncategorized governed spend · ${formatCost(otherCost)}`}
             />
           )}
+          <Metric
+            label="Priced spend"
+            value={totalCost == null ? "no priced spend recorded" : `$${Number(totalCost).toFixed(4)}`}
+            detail={`${coveragePct}% of tokens priced`}
+          />
         </div>
         <div className="panel-body dashboard-details">
           <details className="task-details">
@@ -267,6 +287,10 @@ function Metric({ label, value, detail, progress }) {
 
 function formatTokens(value) {
   return Number(value || 0).toLocaleString();
+}
+
+function formatCost(value) {
+  return value == null ? "unpriced" : `$${Number(value).toFixed(4)}`;
 }
 
 function alarmTone(severity) {

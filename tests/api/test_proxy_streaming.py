@@ -24,6 +24,23 @@ class FakeStreamingLLMClient:
         return chunks()
 
 
+class FakeCostStreamingLLMClient:
+    async def acompletion(self, _request):
+        async def chunks():
+            yield {
+                "id": "chunk-1",
+                "choices": [{"delta": {"content": "done"}}],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6},
+            }
+            yield {
+                "id": "chunk-2",
+                "choices": [],
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cost": 0.0042},
+            }
+
+        return chunks()
+
+
 def test_streaming_chat_completions_passes_chunks_and_persists_final_usage_only(tmp_path):
     settings = Settings(database_path=tmp_path / "harness.db", guardrails_path=ROOT / "guardrails.yaml")
     app = create_app(settings)
@@ -56,3 +73,28 @@ def test_streaming_chat_completions_passes_chunks_and_persists_final_usage_only(
     assert artifact["token_log"][0]["completion_tokens"] == 2
     assert artifact["token_log"][0]["total_tokens"] == 6
     assert artifact["guardrail_snapshots"][0]["zone"] == "green"
+
+
+def test_streaming_chat_completions_records_cost_from_zero_token_usage_tail(tmp_path):
+    settings = Settings(database_path=tmp_path / "harness.db", guardrails_path=ROOT / "guardrails.yaml")
+    app = create_app(settings)
+    app.state.llm_client = FakeCostStreamingLLMClient()
+
+    with TestClient(app) as client:
+        started = client.post(
+            "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
+            json={"task_description": "Stream request", "model": "claude-haiku"},
+        ).json()
+        with client.stream(
+            "POST",
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {started['session_api_key']}"},
+            json={"model": "claude-haiku", "messages": [{"role": "user", "content": "hi"}], "stream": True},
+        ) as response:
+            response.read()
+
+    artifact = db.build_session_artifact(tmp_path / "harness.db", started["session_id"])
+    assert response.status_code == 200
+    assert artifact["token_log"][0]["total_tokens"] == 6
+    assert artifact["token_log"][0]["cost"] == 0.0042

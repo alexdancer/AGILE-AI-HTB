@@ -19,6 +19,7 @@ from foreman_ai_hq.db import (
     record_tool_trace,
     reset_daily_budget_counter,
     set_token_budget_settings,
+    token_usage_breakdown,
     update_session_status,
 )
 
@@ -378,6 +379,76 @@ def test_init_db_migrates_existing_token_turns_to_worker_usage_kind(tmp_path):
     assert artifact["token_log"][0]["usage_kind"] == "worker"
 
 
+def test_init_db_migrates_token_turn_cost_to_nullable_and_preserves_rows(tmp_path):
+    db_path = tmp_path / "harness.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            create table sessions (
+                id text primary key,
+                task_description text not null,
+                model text not null,
+                session_key_hash text not null,
+                started_at text not null,
+                status text not null,
+                guardrail_overrides_json text not null
+            );
+            create table token_turns (
+                id integer primary key autoincrement,
+                session_id text not null references sessions(id) on delete cascade,
+                usage_kind text not null default 'worker',
+                model text not null,
+                prompt_tokens integer not null,
+                completion_tokens integer not null,
+                total_tokens integer not null,
+                cost real not null,
+                raw_usage_json text not null,
+                created_at text not null
+            );
+            insert into sessions (
+                id, task_description, model, session_key_hash, started_at, status,
+                guardrail_overrides_json
+            ) values (
+                'sess_nullable_cost', 'Nullable cost migration', 'demo-model', 'demo-hash',
+                '2099-01-01T00:00:00+00:00', 'completed', '{}'
+            );
+            insert into token_turns (
+                session_id, usage_kind, model, prompt_tokens, completion_tokens,
+                total_tokens, cost, raw_usage_json, created_at
+            ) values (
+                'sess_nullable_cost', 'estimation', 'demo-model', 10, 5, 15, 0.01,
+                '{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}',
+                '2099-01-01T00:00:01+00:00'
+            );
+            """
+        )
+
+    init_db(db_path)
+    init_db(db_path)
+    record_token_turn(
+        db_path,
+        session_id="sess_nullable_cost",
+        usage_kind="estimation",
+        model="unpriced-model",
+        prompt_tokens=4,
+        completion_tokens=2,
+        cost=None,
+        raw_usage={"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6},
+    )
+
+    with connect(db_path) as conn:
+        cost_column = next(
+            row for row in conn.execute("pragma table_info(token_turns)") if row["name"] == "cost"
+        )
+        rows = conn.execute("select model, cost from token_turns order by id").fetchall()
+
+    assert cost_column["notnull"] == 0
+    assert [(row["model"], row["cost"]) for row in rows] == [
+        ("demo-model", 0.01),
+        ("unpriced-model", None),
+    ]
+
+
 def test_estimation_accuracy_with_completed_tasks(tmp_path):
     db_path = tmp_path / "harness.db"
     init_db(db_path)
@@ -413,6 +484,125 @@ def test_estimation_accuracy_returns_nulls_when_no_completed_tasks(tmp_path):
     assert result["completed_count"] is None
     assert result["median_error_ratio"] is None
     assert result["within_2x_pct"] is None
+
+
+def test_token_usage_breakdown_aggregates_resolved_cost_and_coverage(tmp_path):
+    db_path = tmp_path / "harness.db"
+    init_db(db_path)
+    session = create_session(
+        db_path,
+        task_description="cost coverage",
+        model="mixed",
+        session_key_hash="a" * 64,
+        guardrail_overrides={},
+        status="completed",
+    )
+    turns = [
+        ("control_plane", 10, 0.02),
+        ("task_breakdown", 5, None),
+        ("worker_execution", 20, 0.10),
+        ("adapter_verification", 3, None),
+        ("reporting_summary", 2, 1.0),
+        ("other", 1, None),
+    ]
+    for category, tokens, cost in turns:
+        record_token_turn(
+            db_path,
+            session_id=session["id"],
+            usage_kind="worker",
+            model="mixed",
+            prompt_tokens=tokens,
+            completion_tokens=0,
+            cost=cost,
+            raw_usage={"total_tokens": tokens, "spend_category": category, "usage_source": "harness_proxy"},
+        )
+
+    breakdown = token_usage_breakdown(db_path)
+
+    assert breakdown["total_tokens"] == 41
+    assert breakdown["priced_tokens"] == 32
+    assert breakdown["unpriced_tokens"] == 9
+    assert breakdown["total_cost"] == pytest.approx(1.12)
+    assert breakdown["cost_by_category"]["control_plane"] == pytest.approx(0.02)
+    assert breakdown["cost_by_category"]["worker_execution"] == pytest.approx(0.10)
+    assert breakdown["cost_by_category"]["reporting_summary"] == pytest.approx(1.0)
+    assert breakdown["cost_by_category"]["task_breakdown"] is None
+    assert breakdown["cost_by_category"]["adapter_verification"] is None
+    assert breakdown["cost_by_category"]["other"] is None
+
+
+def test_token_usage_breakdown_distinguishes_zero_priced_from_null_unpriced(tmp_path):
+    db_path = tmp_path / "harness.db"
+    init_db(db_path)
+    session = create_session(
+        db_path,
+        task_description="zero vs null",
+        model="mixed",
+        session_key_hash="b" * 64,
+        guardrail_overrides={},
+        status="completed",
+    )
+    record_token_turn(
+        db_path,
+        session_id=session["id"],
+        usage_kind="worker",
+        model="mixed",
+        prompt_tokens=4,
+        completion_tokens=0,
+        cost=0.0,
+        raw_usage={"total_tokens": 4, "spend_category": "task_breakdown"},
+    )
+    record_token_turn(
+        db_path,
+        session_id=session["id"],
+        usage_kind="worker",
+        model="mixed",
+        prompt_tokens=6,
+        completion_tokens=0,
+        cost=None,
+        raw_usage={"total_tokens": 6, "spend_category": "control_plane"},
+    )
+
+    breakdown = token_usage_breakdown(db_path)
+
+    assert breakdown["cost_by_category"]["task_breakdown"] == 0.0
+    assert breakdown["cost_by_category"]["control_plane"] is None
+    assert breakdown["total_cost"] == 0.0
+    assert breakdown["priced_tokens"] == 4
+    assert breakdown["unpriced_tokens"] == 6
+
+
+def test_token_usage_breakdown_reports_null_total_cost_when_all_unpriced(tmp_path):
+    db_path = tmp_path / "harness.db"
+    init_db(db_path)
+    session = create_session(
+        db_path,
+        task_description="all unpriced",
+        model="unpriced",
+        session_key_hash="c" * 64,
+        guardrail_overrides={},
+        status="completed",
+    )
+    for category, tokens in [("control_plane", 3), ("worker_execution", 4)]:
+        record_token_turn(
+            db_path,
+            session_id=session["id"],
+            usage_kind="worker",
+            model="unpriced",
+            prompt_tokens=tokens,
+            completion_tokens=0,
+            cost=None,
+            raw_usage={"total_tokens": tokens, "spend_category": category},
+        )
+
+    breakdown = token_usage_breakdown(db_path)
+
+    assert breakdown["total_tokens"] == 7
+    assert breakdown["priced_tokens"] == 0
+    assert breakdown["unpriced_tokens"] == 7
+    assert breakdown["total_cost"] is None
+    assert breakdown["cost_by_category"]["control_plane"] is None
+    assert breakdown["cost_by_category"]["worker_execution"] is None
 
 
 def test_estimation_accuracy_excludes_tasks_with_missing_actuals(tmp_path):

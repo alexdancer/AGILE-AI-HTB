@@ -205,11 +205,13 @@ class FakeEstimatorLLM:
         }
 
 
-def _client_with_llm(tmp_path, llm, *, connected_project: bool = True):
+def _client_with_llm(
+    tmp_path, llm, *, connected_project: bool = True, estimator_model: str = "openai/gpt-4.1-mini"
+):
     settings = Settings(
         database_path=tmp_path / "harness.db",
         guardrails_path=ROOT / "guardrails.yaml",
-        estimator_model="openai/gpt-4.1-mini",
+        estimator_model=estimator_model,
     )
     app = create_app(settings)
     db.init_db(settings.database_path)
@@ -593,6 +595,39 @@ def test_estimate_uses_llm_structured_json_creates_estimated_task_and_tracks_usa
     assert len(estimation_session["session_key_hash"]) == 64
     assert all(char in "0123456789abcdef" for char in estimation_session["session_key_hash"])
     assert dashboard.json()["budget"]["total_tokens"] == 133
+
+
+def test_estimate_records_provider_reported_cost(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeEstimatorLLM(
+        usage={"prompt_tokens": 111, "completion_tokens": 22, "total_tokens": 133, "cost": 0.0042}
+    )
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/estimate",
+            headers=_auth_headers(),
+            json={"description": "Estimate with OpenRouter reported cost"},
+        )
+        with db.connect(tmp_path / "harness.db") as conn:
+            token_turn = conn.execute("select * from token_turns").fetchone()
+
+    assert response.status_code == 200
+    assert token_turn["cost"] == pytest.approx(0.0042)
+
+
+def test_estimate_records_null_when_provider_cost_is_unavailable(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client_with_llm(tmp_path, FakeEstimatorLLM(), estimator_model="unpriced-model") as client:
+        response = client.post(
+            "/estimate",
+            headers=_auth_headers(),
+            json={"description": "Estimate with unavailable provider cost"},
+        )
+        with db.connect(tmp_path / "harness.db") as conn:
+            token_turn = conn.execute("select * from token_turns").fetchone()
+
+    assert response.status_code == 200
+    assert token_turn["cost"] is None
 
 
 def test_estimate_without_allowed_worker_models_blocks_launch_with_setup_reason(tmp_path, monkeypatch):
@@ -1262,6 +1297,31 @@ def test_project_intake_rejects_archived_project(tmp_path, monkeypatch, react_js
         task["description"] == "Estimate archived DEMO task 2099"
         for task in db.list_tasks(database_path)
     )
+
+def test_estimate_form_breakdown_missing_source_field_still_proposes(tmp_path, monkeypatch):
+    # `source` is a provenance constant the code owns; the model dropping it must
+    # not fail the whole breakdown into the manual-review board.
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    content = _breakdown_content("DEMO_TASK_2099 without source field")
+    content.pop("source", None)
+    llm = FakeSequentialLLM([content])
+    markdown = "# DEMO_TASK_2099 missing source\n\n- [ ] Add route"
+
+    with _client_with_llm(tmp_path, llm) as client:
+        response = client.post(
+            "/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "text/html"},
+            data={"description": markdown},
+            follow_redirects=False,
+        )
+        breakdown_id = response.headers["location"].split("/")[2]
+        breakdown = db.get_task_breakdown(tmp_path / "harness.db", breakdown_id)
+
+    assert response.status_code == 303
+    assert breakdown["status"] == "proposed"
+    assert breakdown["failure_type"] is None
+    assert breakdown["candidates"][0]["title"] == "DEMO_TASK_2099 without source field"
+
 
 def test_estimate_form_invalid_breakdown_output_creates_manual_recovery_review(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)

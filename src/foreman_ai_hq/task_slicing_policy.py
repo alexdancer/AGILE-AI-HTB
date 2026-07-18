@@ -29,7 +29,6 @@ Return ONLY valid JSON with exactly these top-level fields:
 - recommended_sequence: array of candidate titles
 - confidence: number 0-1
 - rationale: string
-- source: use 'llm'
 
 Each candidate object must include:
 - kind: implementation or acceptance_verification
