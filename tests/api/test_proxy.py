@@ -135,14 +135,14 @@ def test_chat_completions_budget_zone_counts_prior_agent_review_spend(tmp_path):
     assert artifact["guardrail_snapshots"][0]["zone"] == "yellow"
 
 
-def test_chat_completions_uses_request_model_for_cost_calculation(tmp_path, monkeypatch):
+def test_chat_completions_uses_request_model_for_cost_resolution(tmp_path, monkeypatch):
     seen = {}
 
-    def fake_calculate_cost(model, prompt_tokens, completion_tokens):
-        seen.update({"model": model, "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens})
+    def fake_resolve_cost(model, response):
+        seen.update({"model": model, "response": response})
         return 0.42
 
-    monkeypatch.setattr(proxy, "calculate_cost", fake_calculate_cost)
+    monkeypatch.setattr(proxy, "resolve_cost", fake_resolve_cost)
     client, _fake = _client(tmp_path)
     with client:
         started = client.post(
@@ -156,9 +156,40 @@ def test_chat_completions_uses_request_model_for_cost_calculation(tmp_path, monk
             json={"model": "request-model", "messages": [{"role": "user", "content": "finish"}]},
         )
 
-    assert seen == {"model": "request-model", "prompt_tokens": 600, "completion_tokens": 500}
+    assert seen == {
+        "model": "request-model",
+        "response": {
+            "id": "chatcmpl_fake",
+            "object": "chat.completion",
+            "model": "request-model",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "done"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 600, "completion_tokens": 500, "total_tokens": 1100},
+        },
+    }
     artifact = db.build_session_artifact(tmp_path / "harness.db", started["session_id"])
     assert artifact["token_log"][0]["cost"] == 0.42
+
+
+def test_chat_completions_persists_null_when_cost_is_unavailable(tmp_path):
+    client, _fake = _client(tmp_path)
+    with client:
+        started = client.post(
+            "/session/start",
+            headers={"Authorization": "Bearer test-portal-token"},
+            json={"task_description": "Proxy request", "model": "unpriced-worker-model"},
+        ).json()
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {started['session_api_key']}"},
+            json={
+                "model": "unpriced-worker-model",
+                "messages": [{"role": "user", "content": "finish"}],
+            },
+        )
+
+    assert response.status_code == 200
+    artifact = db.build_session_artifact(tmp_path / "harness.db", started["session_id"])
+    assert artifact["token_log"][0]["cost"] is None
 
 
 def test_chat_completions_ignores_previous_day_usage_for_zone_selection(tmp_path):

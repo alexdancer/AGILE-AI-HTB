@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import secrets
 
 from datetime import UTC, datetime
@@ -46,8 +47,9 @@ from foreman_ai_hq.evidence_reporting import (
     token_totals as _token_totals,
 )
 from foreman_ai_hq.guardrails import get_budget_zone
-from foreman_ai_hq.llm import LLMClient, extract_usage, response_to_dict
+from foreman_ai_hq.llm import LLMClient, extract_usage, resolve_cost, response_to_dict
 from foreman_ai_hq.operator_config import (
+    control_plane_provider_defaults,
     ensure_secret_placeholder,
     load_operator_secrets_env,
     update_operator_config,
@@ -210,10 +212,10 @@ class TokenBudgetSettingsRequest(BaseModel):
 
 
 class ControlPlaneSettingsRequest(BaseModel):
-    control_plane_provider: str = Field(min_length=1, pattern="^(openai|anthropic|openai-compatible)$")
+    control_plane_provider: str = Field(min_length=1, pattern="^(openai|anthropic|openai-compatible|openrouter)$")
     control_plane_model: str = Field(min_length=1)
     control_plane_base_url: str = ""
-    control_plane_api_key_env: str = Field(min_length=1, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    control_plane_api_key_env: str = ""
     control_plane_api_key: str = ""
     apply_to_estimator_breakdown: bool = True
 
@@ -245,8 +247,15 @@ class ControlPlaneSettingsRequest(BaseModel):
 
     @model_validator(mode="after")
     def _compatible_provider_requires_base_url(self) -> "ControlPlaneSettingsRequest":
+        defaults = control_plane_provider_defaults(self.control_plane_provider)
+        if not self.control_plane_api_key_env:
+            self.control_plane_api_key_env = defaults.get("control_plane_api_key_env", "")
+        if not self.control_plane_base_url:
+            self.control_plane_base_url = defaults.get("control_plane_base_url", "")
         if self.control_plane_provider == "openai-compatible" and not self.control_plane_base_url:
             raise ValueError("openai-compatible provider requires a base URL")
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", self.control_plane_api_key_env):
+            raise ValueError("API key env name is invalid")
         return self
 
 
@@ -262,6 +271,9 @@ CURATED_CONTROL_PLANE_MODELS: tuple[tuple[str, str, str], ...] = (
     ("anthropic", "claude-opus-4-8", "Anthropic · Claude Opus 4.8"),
     ("anthropic", "claude-sonnet-4-6", "Anthropic · Claude Sonnet 4.6"),
     ("anthropic", "claude-haiku-4-5", "Anthropic · Claude Haiku 4.5"),
+    ("openrouter", "anthropic/claude-sonnet-5", "OpenRouter · Claude Sonnet 5 (recommended)"),
+    ("openrouter", "openai/gpt-5.6-terra", "OpenRouter · GPT-5.6 Terra (recommended)"),
+    ("openrouter", "google/gemini-3.5-flash", "OpenRouter · Gemini 3.5 Flash (recommended)"),
 )
 
 
@@ -1324,6 +1336,7 @@ async def test_control_plane_connection(request: Request):
                 "model": settings.control_plane_model,
                 "api_key_env": settings.control_plane_api_key_env,
                 "usage": extract_usage(response),
+                "cost": resolve_cost(settings.control_plane_model, response),
                 "response": _safe_worker_evidence(response_to_dict(response)),
             },
         )

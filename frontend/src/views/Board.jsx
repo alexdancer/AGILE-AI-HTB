@@ -4,6 +4,38 @@ import { AppLink, NavContext } from "../nav.jsx";
 import { getJSON } from "../api.js";
 
 const COLUMNS = ["Estimated", "Running", "Review", "Done", "Blocked"];
+const TASK_NAME_WORD_LIMIT = 7;
+
+export function taskDisplayName(task) {
+  const source = String(task?.name || task?.title || task?.summary?.text || task?.id || "Untitled task").trim();
+  const lines = source.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const heading = lines.find((line) => /^#{1,6}\s+/.test(line));
+  let candidate = (heading || lines[0] || source)
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/^[-*+]\s+(?:\[[ xX]\]\s*)?/, "")
+    .replace(/^\d+[.)]\s+/, "")
+    .replace(/[*_`]/g, "")
+    .replace(/^(?:task|title|summary)\s*:\s*/i, "")
+    .replace(/^please\s+/i, "")
+    .replace(/^(?:can|could|would)\s+you\s+/i, "")
+    .replace(/^(?:i\s+(?:kind of\s+)?want(?:ed)?\s+to|we\s+need\s+to)\s+/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  candidate = candidate.split(/[.!?;]\s+/)[0].replace(/[.!?;:]$/, "").trim();
+  for (const separator of [" so that ", " and then ", " while ", " but ", " and "]) {
+    const index = candidate.toLowerCase().indexOf(separator);
+    if (index > 0 && candidate.slice(0, index).trim().split(/\s+/).length >= 3) {
+      candidate = candidate.slice(0, index).trim();
+      break;
+    }
+  }
+
+  let words = candidate.split(/\s+/).filter(Boolean).slice(0, TASK_NAME_WORD_LIMIT);
+  while (words.length > 1 && /^(?:a|an|and|for|of|or|the|to|with)$/i.test(words.at(-1))) words = words.slice(0, -1);
+  const compact = words.join(" ") || task?.id || "Untitled task";
+  return compact.charAt(0).toUpperCase() + compact.slice(1);
+}
 
 const safeError = (error) =>
   error?.status === 401
@@ -72,6 +104,7 @@ export default function Board({ projectId }) {
   const [state, setState] = useState({ data: null, error: null, loading: true });
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState(null);
+  const [estimating, setEstimating] = useState(false);
 
   const load = async () => {
     setState((current) => ({ ...current, loading: true, error: null }));
@@ -110,6 +143,15 @@ export default function Board({ projectId }) {
     });
   };
 
+  const estimateTask = async (body) => {
+    setEstimating(true);
+    try {
+      await action(`/projects/${projectId}/tasks/estimate-form`, body);
+    } finally {
+      setEstimating(false);
+    }
+  };
+
   return <BoardState
     projectId={projectId}
     data={state.data}
@@ -119,6 +161,8 @@ export default function Board({ projectId }) {
     setQuery={setQuery}
     notice={notice}
     action={action}
+    estimateTask={estimateTask}
+    estimating={estimating}
   />;
 }
 
@@ -131,6 +175,8 @@ export function BoardState({
   setQuery = () => {},
   notice = null,
   action = () => {},
+  estimateTask = () => {},
+  estimating = false,
 }) {
   if (loading) return <p className="spinner">Loading board…</p>;
   if (isArchivedBoardError(error)) return <>
@@ -151,26 +197,47 @@ export function BoardState({
     <h1 className="page-title">{data.project.name} · Board</h1>
     <p className="page-sub">Governed project task loop. FastAPI owns lifecycle and guardrails.</p>
     {notice && <div className="notice danger">{notice.message}{notice.setupHref && <> · <a href={notice.setupHref}>Open setup</a></>}</div>}
-    <div className="toolbar">
-      <span className={`pill ${queueRunning ? "running" : "idle"}`}>Queue {data.automation.queue.status}</span>
-      <span className="column-count">{data.board_summary.total_tasks} tasks · {data.automation.eligible_count} eligible</span>
-      <button className="btn small" onClick={() => action(`/projects/${projectId}/run-next`)}>Run next</button>
-      {queueRunning ? <button className="btn small secondary" onClick={() => action(`/projects/${projectId}/queue/stop`)}>Stop queue</button> : <QueueStart projectId={projectId} queue={data.automation.queue} action={action} />}
-      {data.board_summary.counts.Done > 0 && <button className="btn small secondary" onClick={() => action(`/projects/${projectId}/tasks/archive-done`)}>Archive all Done</button>}
-      <AppLink className="btn small secondary" to={`/projects/${projectId}`}>Workspace</AppLink>
-      <AppLink className="btn small secondary" to={data.history_href}>History</AppLink>
-      <a className="btn small secondary" href={`/projects/${projectId}/board`}>Server board</a>
+    <div className="board-command-bar">
+      <div className="board-command-status">
+        <span className={`pill ${queueRunning ? "running" : "idle"}`}>Queue {data.automation.queue.status}</span>
+        <span className="column-count">{data.board_summary.total_tasks} tasks · {data.automation.eligible_count} eligible</span>
+      </div>
+      <div className="board-command-actions">
+        <button className="btn small" onClick={() => action(`/projects/${projectId}/run-next`)}>Run next</button>
+        {queueRunning ? <button className="btn small secondary" onClick={() => action(`/projects/${projectId}/queue/stop`)}>Stop queue</button> : <QueueStart projectId={projectId} queue={data.automation.queue} action={action} />}
+        {data.board_summary.counts.Done > 0 && <button className="btn small secondary" onClick={() => action(`/projects/${projectId}/tasks/archive-done`)}>Archive all Done</button>}
+        <AppLink className="btn small secondary" to={`/projects/${projectId}`}>Workspace</AppLink>
+        <AppLink className="btn small secondary" to={data.history_href}>History</AppLink>
+        <a className="btn small secondary" href={`/projects/${projectId}/board`}>Server board</a>
+      </div>
     </div>
-    <section className="panel">
-      <label htmlFor="react-board-intake">Short task intake</label>
-      <form className="board-intake" onSubmit={(event) => { event.preventDefault(); action(`/projects/${projectId}/tasks/estimate-form`, new FormData(event.currentTarget)); }}>
-        <textarea className="board-input" id="react-board-intake" name="description" placeholder="Describe a short task or paste Markdown" rows="3" />
-        <input className="board-file" name="markdown_file" type="file" accept=".md,text/markdown,text/plain" />
-        <button className="btn small" type="submit">Estimate task</button>
-      </form>
-      <p className="muted">Markdown paste or upload opens authoritative Task Breakdown Review.</p>
+    <section className="panel board-intake-panel" aria-busy={estimating}>
+      <div className="panel-header"><h3>Short task intake</h3></div>
+      <div className="panel-body">
+        <form className="board-intake" onSubmit={(event) => { event.preventDefault(); if (estimating) return; estimateTask(new FormData(event.currentTarget)); }}>
+          <label className="board-intake-task-field" htmlFor="react-board-intake">
+            <span>Task description</span>
+            <textarea className="board-input" id="react-board-intake" name="description" placeholder="Describe a short task or paste Markdown" rows="3" disabled={estimating} />
+          </label>
+          <label className="board-intake-file-field">
+            <span>Markdown file <em>(optional)</em></span>
+            <input className="board-file" name="markdown_file" type="file" accept=".md,text/markdown,text/plain" disabled={estimating} />
+          </label>
+          <button className="btn small" type="submit" disabled={estimating}>{estimating ? "Estimating…" : "Estimate task"}</button>
+          {estimating && <div className="board-intake-progress" role="status" aria-live="polite">
+            <div className="board-intake-progress-copy">
+              <strong>Preparing Task Breakdown Review</strong>
+              <span>Estimating and breaking down the task. Keep this page open.</span>
+            </div>
+            <div className="board-intake-progress-track" role="progressbar" aria-label="Task estimation progress" aria-valuetext="Estimating task and preparing review">
+              <span className="board-intake-progress-bar" />
+            </div>
+          </div>}
+        </form>
+        <p className="board-intake-hint muted">Markdown paste or upload opens authoritative Task Breakdown Review.</p>
+      </div>
     </section>
-    <div className="toolbar"><input className="board-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter loaded tasks" /><span className="column-count">{cards.filter(visible).length} of {cards.length} visible</span></div>
+    <div className="board-filter-toolbar"><input className="board-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter loaded tasks" /><span className="column-count">{cards.filter(visible).length} of {cards.length} visible</span></div>
     <div className="board">
       {COLUMNS.map((column) => <section className="column" key={column}><div className="panel-header"><h3>{column}</h3><span className="column-count">{data.tasks_by_status[column].filter(visible).length}</span></div>{data.tasks_by_status[column].filter(visible).map((task) => <TaskCard key={task.id} task={task} projectId={projectId} adapters={data.adapters} action={action} />)}{data.tasks_by_status[column].filter(visible).length === 0 && <div className="empty-state">{query ? "No matching tasks" : data.board_empty_states[column]}</div>}</section>)}
     </div>
@@ -186,7 +253,7 @@ function boundedError(value, fallback) {
 }
 
 function QueueStart({ projectId, queue, action }) {
-  return <form className="toolbar" onSubmit={(event) => {
+  return <form className="board-queue-start" onSubmit={(event) => {
     event.preventDefault();
     action(`/projects/${projectId}/queue/start`, new FormData(event.currentTarget));
   }}>
@@ -197,6 +264,8 @@ function QueueStart({ projectId, queue, action }) {
 
 function TaskCard({ task, projectId, adapters, action }) {
   const { controls, details } = task;
+  const fullSummary = task.summary.text || task.id;
+  const displayName = taskDisplayName(task);
   const defaultAdapter = adapters.find((adapter) => adapter.is_default) || adapters[0];
   const [adapterId, setAdapterId] = useState(defaultAdapter?.id || "");
   const selectedAdapter = adapters.find((adapter) => adapter.id === adapterId) || defaultAdapter;
@@ -223,8 +292,11 @@ function TaskCard({ task, projectId, adapters, action }) {
   };
 
   return <article className="task">
-    <p className="task-title">{task.summary.text || task.id}</p>
-    <div className="task-meta"><span>{task.id}</span>{task.estimate_tokens != null && <span>Estimate: {task.estimate_tokens.toLocaleString()}</span>}{task.actual_tokens != null && <span>Actual: {task.actual_tokens.toLocaleString()}</span>}{task.launch_model && <span>Run: {task.launch_model}</span>}{task.launch_model && task.recommended_model && task.launch_model !== task.recommended_model && <span>Recommended: {task.recommended_model}</span>}</div>
+    <header className="task-heading">
+      <span className="task-id">{task.id}</span>
+      <h4 className="task-title" title={fullSummary}>{displayName}</h4>
+    </header>
+    <div className="task-meta">{task.estimate_tokens != null && <span>Estimate {task.estimate_tokens.toLocaleString()}</span>}{task.actual_tokens != null && <span>Actual {task.actual_tokens.toLocaleString()}</span>}{task.launch_model && <span>Run {task.launch_model}</span>}{task.launch_model && task.recommended_model && task.launch_model !== task.recommended_model && <span>Recommended {task.recommended_model}</span>}</div>
     {controls.can_launch && <div className="card-controls">
       <label>Worker Adapter<select className="board-input" value={adapterId} onChange={(event) => {
         const nextId = event.target.value;
@@ -257,8 +329,8 @@ function TaskCard({ task, projectId, adapters, action }) {
 function TaskDetails({ task }) {
   const { details } = task;
   const review = details.review.agent_review;
-  return <details>
-    <summary>Details</summary>
+  return <details className="task-details">
+    <summary>Task details</summary>
     {task.session_href && <p><a href={task.session_href}>Session report</a></p>}
     <TextEvidence label="Task body" value={details.task_body} />
     {details.token_components.available && <section><h4>Worker token components</h4><ul>{details.token_components.items.map((item) => <li key={item.key}>{item.label}: {item.value}</li>)}</ul>{details.token_components.turn_count != null && <p>Turns: {details.token_components.turn_count}</p>}{details.token_components.cost != null && <p>Cost: {details.token_components.cost}</p>}</section>}

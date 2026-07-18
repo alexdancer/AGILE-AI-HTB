@@ -230,7 +230,7 @@ export function WorkerSettingsState({
       <section className="panel">
         <div className="panel-header"><h3>Choose active adapter</h3></div>
         <div className="panel-body">
-          <div className="btn-row" role="group" aria-label="Active adapter">
+          <div className="worker-adapter-selector" role="group" aria-label="Active adapter">
             {adapters.map((adapter) => (
               <button
                 key={adapter.id}
@@ -256,15 +256,15 @@ export function WorkerSettingsState({
               {activeAdapter.launchable ? "launchable" : "setup needed"}
             </span>
           </div>
-          <div className="panel-body grid cols-2">
-            <div className="card">
+          <div className="panel-body worker-setup-grid">
+            <div className="worker-setup-card">
               <h3>1. Select default Worker Adapter</h3>
               <p className="muted">
                 Project root is selected from the connected project workspace. Adapter setup only controls the Worker CLI and tracking verification.
               </p>
               <button
                 type="button"
-                className="primary"
+                className="worker-primary"
                 onClick={setDefault}
                 disabled={busy || activeAdapter.is_default}
               >
@@ -272,14 +272,14 @@ export function WorkerSettingsState({
               </button>
             </div>
 
-            <div className="card">
+            <div className="worker-setup-card">
               <h3>2. Discover Worker models</h3>
               <p className="muted">
                 Use the Worker CLI&apos;s native model list when available. If a CLI has no reliable model-list command, select from explicit/curated models instead; discovery failure does not block native usage verification.
               </p>
               <button
                 type="button"
-                className="btn"
+                className="worker-secondary"
                 onClick={discoverModels}
                 disabled={busy}
               >
@@ -293,32 +293,38 @@ export function WorkerSettingsState({
               )}
 
               {activeAdapter.discovered_models?.length > 0 ? (
-                <form onSubmit={saveAllowedModels} style={{ marginTop: 10 }}>
-                  <p className="muted">Allowed for estimates and board launch</p>
-                  <div className="btn-row" style={{ margin: "8px 0" }}>
+                <form className="worker-model-form" onSubmit={saveAllowedModels}>
+                  <p className="worker-model-label muted">Allowed for estimates and board launch</p>
+                  <div className="worker-model-bulk" role="group" aria-label="Model selection shortcuts">
                     <button
                       type="button"
+                      className="worker-text-button"
                       onClick={() => setSelectedModels(activeAdapter.discovered_models || [])}
                       disabled={busy}
                     >
                       Check all
                     </button>
-                    <button type="button" onClick={() => setSelectedModels([])} disabled={busy}>
+                    <button type="button" className="worker-text-button" onClick={() => setSelectedModels([])} disabled={busy}>
                       Uncheck all
                     </button>
                   </div>
-                  {activeAdapter.discovered_models.map((model) => (
-                    <label key={model} className="mono" style={{ display: "block", fontSize: 11 }}>
+                  <div className="worker-model-list">
+                    {activeAdapter.discovered_models.map((model) => (
+                    <label
+                      key={model}
+                      className={`worker-model-option ${selectedModels.includes(model) ? "is-selected" : ""}`}
+                    >
                       <input
                         type="checkbox"
                         checked={selectedModels.includes(model)}
                         onChange={() => toggleModel(model)}
                         disabled={busy}
-                      />{" "}
+                      />
                       {model}
                     </label>
-                  ))}
-                  <button type="submit" className="btn" style={{ marginTop: 8 }} disabled={busy}>
+                    ))}
+                  </div>
+                  <button type="submit" className="worker-primary" disabled={busy}>
                     Save allowed models
                   </button>
                 </form>
@@ -327,10 +333,10 @@ export function WorkerSettingsState({
               )}
             </div>
 
-            <div className="card">
+            <div className="worker-setup-card">
               <h3>3. Verify Worker tracking</h3>
               <p><span className="pill purple">{activeAdapter.connection_type}</span></p>
-              <form onSubmit={verifyTracking}>
+              <form className="worker-verify-form" onSubmit={verifyTracking}>
                 <label htmlFor="verify-model">Model</label>
                 <select
                   id="verify-model"
@@ -375,7 +381,7 @@ export function WorkerSettingsState({
                   </>
                 )}
 
-                <button type="submit" className="btn" disabled={busy || !verifyModel || !verifyTrackingMode}>
+                <button type="submit" className="worker-primary" disabled={busy || !verifyModel || !verifyTrackingMode}>
                   Verify tracking
                 </button>
               </form>
@@ -387,7 +393,7 @@ export function WorkerSettingsState({
               )}
             </div>
 
-            <div className="card">
+            <div className="worker-setup-card">
               <h3>4. Launch readiness</h3>
               <p>
                 <span className={`pill ${activeAdapter.configured ? "green" : "yellow"}`}>
@@ -423,7 +429,7 @@ export function WorkerSettingsState({
               {activeAdapter.launchable && <p><a className="btn primary" href="/board">Open board</a></p>}
             </div>
 
-            <div className="card">
+            <div className="worker-setup-card">
               <h3>5. Diagnostics</h3>
               <p>
                 <strong>{activeAdapter.kind} diagnostics</strong>
@@ -435,16 +441,15 @@ export function WorkerSettingsState({
               )}
               <button
                 type="button"
-                className="btn"
+                className="worker-secondary"
                 onClick={refreshDiagnostics}
                 disabled={busy}
-                style={{ marginTop: 6 }}
               >
                 Refresh diagnostics
               </button>
             </div>
 
-            <div className="card">
+            <div className="worker-setup-card">
               <h3>6. Advanced details</h3>
               <div className="kv" style={{ marginTop: 8 }}>
                 <div className="k">kind</div>

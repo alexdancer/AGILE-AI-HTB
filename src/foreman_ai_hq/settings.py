@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from foreman_ai_hq.operator_config import load_operator_config
+from foreman_ai_hq.operator_config import control_plane_provider_defaults, load_operator_config
 
 
 @dataclass(frozen=True)
@@ -74,11 +74,23 @@ class Settings:
             or config.get("provider_api_key_env")
             or "PROVIDER_API_KEY"
         )
+        resolved_control_provider = (
+            control_plane_provider
+            or os.getenv("FOREMAN_AI_HQ_CONTROL_PROVIDER")
+            or os.getenv("TOKEN_TRACKER_CONTROL_PLANE_PROVIDER")
+            or config.get("control_plane_provider")
+            or "openai"
+        )
+        provider_defaults = control_plane_provider_defaults(resolved_control_provider)
+        use_provider_defaults = control_plane_provider is not None and control_plane_api_key_env is None
+        default_control_api_env = provider_defaults.get("control_plane_api_key_env") if use_provider_defaults else None
         resolved_control_api_env = (
             control_plane_api_key_env
+            or default_control_api_env
             or os.getenv("FOREMAN_AI_HQ_CONTROL_API_KEY_ENV")
             or os.getenv("TOKEN_TRACKER_CONTROL_PLANE_API_KEY_ENV")
-            or config.get("control_plane_api_key_env")
+            or (None if use_provider_defaults else config.get("control_plane_api_key_env"))
+            or provider_defaults.get("control_plane_api_key_env")
             or "FOREMAN_AI_HQ_CONTROL_API_KEY"
         )
         resolved_control_model = (
@@ -93,21 +105,24 @@ class Settings:
         object.__setattr__(
             self,
             "control_plane_provider",
-            control_plane_provider
-            or os.getenv("FOREMAN_AI_HQ_CONTROL_PROVIDER")
-            or os.getenv("TOKEN_TRACKER_CONTROL_PLANE_PROVIDER")
-            or config.get("control_plane_provider")
-            or "openai",
+            resolved_control_provider,
         )
         object.__setattr__(self, "control_plane_model", resolved_control_model)
         object.__setattr__(self, "control_plane_api_key_env", resolved_control_api_env)
+        default_control_base_url = (
+            provider_defaults.get("control_plane_base_url")
+            if control_plane_provider is not None and control_plane_base_url is None
+            else None
+        )
         object.__setattr__(
             self,
             "control_plane_base_url",
             control_plane_base_url
+            or default_control_base_url
             or os.getenv("FOREMAN_AI_HQ_CONTROL_BASE_URL")
             or os.getenv("TOKEN_TRACKER_CONTROL_PLANE_BASE_URL")
-            or config.get("control_plane_base_url")
+            or (None if control_plane_provider is not None and control_plane_base_url is None else config.get("control_plane_base_url"))
+            or provider_defaults.get("control_plane_base_url")
             or "",
         )
         object.__setattr__(

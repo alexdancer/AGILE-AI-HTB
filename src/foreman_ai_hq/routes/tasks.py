@@ -18,7 +18,7 @@ from foreman_ai_hq.estimation import EstimatorError, estimate_task
 from foreman_ai_hq.evidence_reporting import completion_content as _completion_content
 from foreman_ai_hq.evidence_reporting import safe_evidence as _safe_review_value
 from foreman_ai_hq.evidence_reporting import token_totals
-from foreman_ai_hq.llm import LLMClientError, calculate_cost, extract_usage, response_to_dict
+from foreman_ai_hq.llm import LLMClientError, extract_usage, resolve_cost, response_to_dict
 from foreman_ai_hq.model_routing import route_worker_model
 from foreman_ai_hq.project_context import project_task_metadata, task_project_board_path
 from foreman_ai_hq.repo_context import build_repo_context_brief
@@ -336,8 +336,7 @@ async def _estimate_and_create_task(
         model=estimator_model,
         prompt_tokens=usage["prompt_tokens"],
         completion_tokens=usage["completion_tokens"],
-        cost=calculate_cost(estimator_model, usage["prompt_tokens"], usage["completion_tokens"])
-        or 0.0,
+        cost=resolve_cost(estimator_model, llm_response),
         raw_usage={**usage, "response": response_to_dict(llm_response)},
     )
     adapter = _selected_worker_adapter(database_path, adapter_id)
@@ -906,7 +905,7 @@ async def _task_breakdown_agent_updates(
             model=model,
             prompt_tokens=usage["prompt_tokens"],
             completion_tokens=usage["completion_tokens"],
-            cost=calculate_cost(model, usage["prompt_tokens"], usage["completion_tokens"]) or 0.0,
+            cost=resolve_cost(model, response_body),
             raw_usage={**usage, "spend_category": "task_breakdown", "usage_source": "control_plane"},
         )
         payload = result.as_dict()
@@ -1518,8 +1517,7 @@ async def _run_agent_review(request: Request, task: dict[str, Any], prompt: str 
             model=settings.control_plane_model,
             prompt_tokens=usage["prompt_tokens"],
             completion_tokens=usage["completion_tokens"],
-            cost=calculate_cost(settings.control_plane_model, usage["prompt_tokens"], usage["completion_tokens"])
-            or 0.0,
+            cost=resolve_cost(settings.control_plane_model, response_body),
             raw_usage={
                 **usage,
                 "spend_category": "reporting_summary",

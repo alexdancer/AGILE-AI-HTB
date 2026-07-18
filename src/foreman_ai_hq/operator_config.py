@@ -12,6 +12,8 @@ from typing import Any
 DEFAULT_CONFIG_PATH = Path(".foreman/config.toml")
 DEFAULT_SECRETS_PATH = Path(".foreman/secrets.env")
 CONTROL_API_KEY_PLACEHOLDER = "<your-control-plane-api-key>"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY"
 DEFAULT_LOCAL_CONFIG: dict[str, Any] = {
     "database_path": ".foreman/harness.db",
     "guardrails_path": ".foreman/guardrails.yaml",
@@ -67,9 +69,22 @@ def update_operator_config(path: Path | str = DEFAULT_CONFIG_PATH, **updates: An
     config = dict(DEFAULT_LOCAL_CONFIG)
     config.update(load_operator_config(config_path))
     config.update({key: value for key, value in updates.items() if value is not None})
+    if updates.get("control_plane_provider") == "openrouter":
+        for key, value in control_plane_provider_defaults("openrouter").items():
+            if key not in updates or updates[key] in (None, ""):
+                config[key] = value
     _sanitize_env_name_fields(config)
     config_path.write_text(_render_config(config), encoding="utf-8")
     return config
+
+
+def control_plane_provider_defaults(provider: str) -> dict[str, str]:
+    if provider.lower().strip() == "openrouter":
+        return {
+            "control_plane_api_key_env": OPENROUTER_API_KEY_ENV,
+            "control_plane_base_url": OPENROUTER_BASE_URL,
+        }
+    return {}
 
 
 def write_default_secrets_env(

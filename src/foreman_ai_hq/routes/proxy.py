@@ -12,7 +12,7 @@ from foreman_ai_hq import db
 from foreman_ai_hq.alarms import detect_budget_alarms
 from foreman_ai_hq.governance import GovernanceDecision, apply_governance
 from foreman_ai_hq.guardrails import get_budget_zone
-from foreman_ai_hq.llm import LLMClientError, calculate_cost, extract_usage, response_to_dict
+from foreman_ai_hq.llm import LLMClientError, extract_cost, extract_usage, resolve_cost, response_to_dict
 
 router = APIRouter()
 
@@ -47,7 +47,7 @@ async def chat_completions(payload: dict[str, Any], request: Request):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     response_body = response_to_dict(llm_response)
     usage = extract_usage(response_body)
-    _persist_turn(request, session, decision, usage)
+    _persist_turn(request, session, decision, usage, response_body)
     _persist_budget_alarms(request, session, budget)
     return response_body
 
@@ -74,14 +74,19 @@ async def _stream_chunks(
     decision: GovernanceDecision,
 ) -> AsyncIterator[str]:
     final_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    final_response: dict[str, Any] | None = None
     async for chunk in stream:
         chunk_body = response_to_dict(chunk)
         chunk_usage = extract_usage(chunk_body)
         if any(chunk_usage.values()):
             # Usage may arrive only in the final provider chunk; keep the last non-zero value.
             final_usage = chunk_usage
+            final_response = chunk_body
+        elif extract_cost(chunk_body) is not None:
+            # A provider may emit the reported cost in a separate usage tail with no tokens.
+            final_response = chunk_body
         yield f"data: {json.dumps(chunk_body, separators=(',', ':'))}\n\n"
-    _persist_turn(request, session, decision, final_usage)
+    _persist_turn(request, session, decision, final_usage, final_response)
     _persist_budget_alarms(request, session, session.get("guardrail_overrides", {}).get("budget", {}))
     yield "data: [DONE]\n\n"
 
@@ -91,17 +96,18 @@ def _persist_turn(
     session: dict[str, Any],
     decision: GovernanceDecision,
     usage: dict[str, int],
+    response: dict[str, Any] | None,
 ) -> None:
     database_path = request.app.state.settings.database_path
     model = decision.request.get("model", session["model"])
-    cost = calculate_cost(model, usage["prompt_tokens"], usage["completion_tokens"])
+    cost = resolve_cost(model, response or {"usage": usage})
     db.record_token_turn(
         database_path,
         session_id=session["id"],
         model=model,
         prompt_tokens=usage["prompt_tokens"],
         completion_tokens=usage["completion_tokens"],
-        cost=cost or 0.0,
+        cost=cost,
         raw_usage=usage,
     )
     db.record_guardrail_snapshot(

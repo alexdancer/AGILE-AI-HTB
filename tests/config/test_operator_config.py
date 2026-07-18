@@ -2,6 +2,8 @@ import os
 
 from foreman_ai_hq.operator_config import (
     CONTROL_API_KEY_PLACEHOLDER,
+    OPENROUTER_API_KEY_ENV,
+    OPENROUTER_BASE_URL,
     ensure_secret_placeholder,
     load_operator_config,
     update_operator_config,
@@ -31,6 +33,16 @@ def test_update_operator_config_preserves_unrelated_values(tmp_path):
     assert config["control_plane_provider"] == "anthropic"
     assert config["control_plane_model"] == "claude-haiku-4-5"
     assert load_operator_config(config_path)["control_plane_api_key_env"] == "ANTHROPIC_API_KEY"
+
+
+def test_update_operator_config_defaults_openrouter_connection_values(tmp_path):
+    config = update_operator_config(
+        tmp_path / ".foreman" / "config.toml",
+        control_plane_provider="openrouter",
+    )
+
+    assert config["control_plane_api_key_env"] == OPENROUTER_API_KEY_ENV
+    assert config["control_plane_base_url"] == OPENROUTER_BASE_URL
 
 
 def test_ensure_secret_placeholder_adds_missing_env_without_overwriting(tmp_path):

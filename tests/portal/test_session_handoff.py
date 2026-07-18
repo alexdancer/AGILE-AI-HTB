@@ -126,6 +126,7 @@ def test_report_api_exact_parity_redaction_and_continuations(tmp_path, monkeypat
     assert set(report["summary"]["evidence_counts"]) == {"alarms", "checkpoints", "failed_checkpoints", "worker_runs", "worker_events", "error_events"}
     assert report["tokens"]["provider_totals"]["total_tokens"] == 500
     assert report["tokens"]["normalized"]["by_category"]["worker_execution"] == 500
+    assert set(report["tokens"]["normalized"]) == {"total_tokens", "by_category"}
     assert report["related_agent_review"]["review_total_tokens"] is None
     assert all(item.status_code == 200 and item.headers["cache-control"] == "no-store" for item in full)
     assert "END2099TASK" in full[0].text and "END2099RAW" in full[1].text and "END2099REPO" in full[2].text

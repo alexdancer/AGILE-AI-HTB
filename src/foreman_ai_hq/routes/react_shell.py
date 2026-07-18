@@ -215,6 +215,12 @@ def react_portal_nav(request: Request):
     }
 
 
+def _dashboard_cost(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) and value >= 0 else None
+
+
 @router.get("/api/dashboard", dependencies=[Depends(require_portal_auth)])
 def react_dashboard_state(request: Request):
     """Bounded read-only dashboard state reusing the existing backend calculation."""
@@ -224,7 +230,8 @@ def react_dashboard_state(request: Request):
     from foreman_ai_hq.routes.portal import _dashboard_context
 
     context = _dashboard_context(request)
-    categories = context["token_breakdown"]["by_category"]
+    token_breakdown = context["token_breakdown"]
+    categories = token_breakdown["by_category"]
     worker_summary = context["worker_token_summary"]
     components = worker_summary.get("components") or {}
     sidebar_projects = portal_template_context(request).get("sidebar_projects", [])
@@ -266,6 +273,13 @@ def react_dashboard_state(request: Request):
             "planning_estimation": categories["task_breakdown"] + categories["control_plane"],
             "setup_verification": categories["adapter_verification"],
             "other": categories["other"],
+            "cost_by_category": {
+                key: _dashboard_cost(token_breakdown["cost_by_category"][key])
+                for key in categories
+            },
+            "total_cost": _dashboard_cost(token_breakdown["total_cost"]),
+            "priced_tokens": token_breakdown["priced_tokens"],
+            "unpriced_tokens": token_breakdown["unpriced_tokens"],
         },
         "alarms": {
             "total": context["alarm_count"],

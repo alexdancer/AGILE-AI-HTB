@@ -134,6 +134,32 @@ def test_control_plane_save_loads_existing_secret_env_for_new_key(tmp_path, monk
     assert os.getenv("NEW_CONTROL_KEY") == "real-test-key"
 
 
+def test_control_plane_save_defaults_openrouter_connection_and_secret_env(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/settings/control-plane",
+            headers=_portal_headers(),
+            json={
+                "control_plane_provider": "openrouter",
+                "control_plane_model": "anthropic/claude-sonnet-5",
+            },
+        )
+
+    assert response.status_code == 200
+    settings = response.json()["settings"]
+    assert settings["control_plane_provider"] == "openrouter"
+    assert settings["control_plane_api_key_env"] == "OPENROUTER_API_KEY"
+    assert settings["control_plane_base_url"] == "https://openrouter.ai/api/v1"
+    config = load_operator_config(tmp_path / ".foreman" / "config.toml")
+    assert config["control_plane_api_key_env"] == "OPENROUTER_API_KEY"
+    assert config["control_plane_base_url"] == "https://openrouter.ai/api/v1"
+    assert "OPENROUTER_API_KEY" in (tmp_path / ".foreman" / "secrets.env").read_text(encoding="utf-8")
+
+
 def test_control_plane_save_writes_submitted_api_key_without_config_leak(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
@@ -315,6 +341,9 @@ def test_control_plane_settings_json_handoff_shows_presets_and_needs_test(tmp_pa
         ("anthropic", "claude-opus-4-8"),
         ("anthropic", "claude-sonnet-4-6"),
         ("anthropic", "claude-haiku-4-5"),
+        ("openrouter", "anthropic/claude-sonnet-5"),
+        ("openrouter", "openai/gpt-5.6-terra"),
+        ("openrouter", "google/gemini-3.5-flash"),
     }
     assert body["connection_status"]["state"] == "needs_test"
 
@@ -458,6 +487,22 @@ def test_control_plane_connection_test_records_sanitized_status(tmp_path, monkey
     assert body["status"]["details"]["usage"]["total_tokens"] == 10
     assert "«redacted:sk_…»" not in str(body)
     assert llm.requests[0]["model"] == "claude-sonnet-4-6"
+
+
+def test_control_plane_connection_test_records_reported_cost(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    llm = FakeControlPlaneLLM(cost=0.0042)
+    with _client_with_control_plane_llm(
+        tmp_path,
+        llm,
+        control_plane_provider="openrouter",
+        control_plane_model="anthropic/claude-sonnet-5",
+        control_plane_base_url="https://openrouter.ai/api/v1",
+    ) as client:
+        response = client.post("/settings/control-plane/test", headers=_portal_headers())
+
+    assert response.status_code == 200
+    assert response.json()["status"]["details"]["cost"] == pytest.approx(0.0042)
 
 
 def test_control_plane_connection_test_browser_success_returns_to_settings_ui(tmp_path, monkeypatch):

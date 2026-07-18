@@ -267,7 +267,6 @@ def validate_breakdown_result(
         "recommended_sequence",
         "confidence",
         "rationale",
-        "source",
     }
     missing = sorted(required - data.keys())
     if missing:
@@ -283,8 +282,11 @@ def validate_breakdown_result(
     confidence = data["confidence"]
     if isinstance(confidence, bool) or not isinstance(confidence, int | float) or not 0 <= float(confidence) <= 1:
         raise TaskBreakdownValidationError("confidence must be a number between 0 and 1")
-    if data["source"] != "llm":
-        raise TaskBreakdownValidationError("source must be llm")
+    # `source` is provenance the code already owns: this breakdown came from the
+    # Task Breakdown Agent LLM call by construction. Do not let the model fail the
+    # whole breakdown by dropping (or mis-typing) this constant. If it echoes a
+    # non-"llm" value, ignore it rather than routing to manual review.
+    source = "llm"
     rationale = data["rationale"]
     if not isinstance(rationale, str):
         raise TaskBreakdownValidationError("rationale must be a string")
@@ -302,7 +304,7 @@ def validate_breakdown_result(
         recommended_sequence=_validate_string_array(data["recommended_sequence"], "recommended_sequence"),
         confidence=float(confidence),
         rationale=rationale,
-        source=data["source"],
+        source=source,
     )
 
 

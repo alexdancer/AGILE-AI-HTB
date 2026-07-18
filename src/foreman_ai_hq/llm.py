@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import math
 import os
 import re
 import socket
@@ -16,6 +17,7 @@ from foreman_ai_hq.settings import Settings
 
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
+DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_PROVIDER_TIMEOUT_SECONDS = 120
 INTERNAL_REQUEST_KEYS = {"timeout_seconds"}
@@ -49,14 +51,18 @@ class LLMClient:
     async def acompletion(self, request: dict[str, Any]) -> Any:
         config = _provider_config(self.settings, request)
         # Keep the rest of the app on an OpenAI-shaped chat-completion contract.
-        if config.provider in {"openai", "openai-compatible"}:
+        if config.provider in {"openai", "openai-compatible", "openrouter"}:
             return await self._openai_compatible_completion(config, request)
         if config.provider == "anthropic":
             return await self._anthropic_completion(config, request)
         raise LLMClientError(f"unsupported control-plane provider: {config.provider}")
 
     async def _openai_compatible_completion(self, config: ProviderConfig, request: dict[str, Any]) -> Any:
-        payload = _openai_compatible_payload(request, config.model)
+        payload = _openai_compatible_payload(
+            request,
+            config.model,
+            preserve_provider_prefix=config.provider == "openrouter",
+        )
         headers = {
             "Authorization": f"Bearer {config.api_key}",
             "Content-Type": "application/json",
@@ -107,6 +113,26 @@ def extract_usage(response: Any) -> dict[str, int]:
     }
 
 
+def extract_cost(response: Any) -> float | None:
+    usage = _get(response, "usage", {}) or {}
+    cost = _get(usage, "cost")
+    if isinstance(cost, bool) or cost is None:
+        return None
+    try:
+        resolved = float(cost)
+    except (TypeError, ValueError):
+        return None
+    return resolved if math.isfinite(resolved) else None
+
+
+def resolve_cost(model: str, response: Any) -> float | None:
+    reported_cost = extract_cost(response)
+    if reported_cost is not None:
+        return reported_cost
+    usage = extract_usage(response)
+    return _calculate_known_cost(model, usage["prompt_tokens"], usage["completion_tokens"])
+
+
 def calculate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:
     return _calculate_known_cost(model, prompt_tokens, completion_tokens)
 
@@ -148,6 +174,8 @@ def _provider_base_url(settings: Settings, provider: str) -> str:
         return DEFAULT_OPENAI_BASE_URL
     if provider == "anthropic":
         return DEFAULT_ANTHROPIC_BASE_URL
+    if provider == "openrouter":
+        return DEFAULT_OPENROUTER_BASE_URL
     return DEFAULT_OPENAI_BASE_URL
 
 
@@ -270,8 +298,10 @@ def _strip_provider_prefix(model: str) -> str:
     return model
 
 
-def _openai_compatible_payload(request: dict[str, Any], model: str) -> dict[str, Any]:
-    resolved_model = _strip_provider_prefix(model)
+def _openai_compatible_payload(
+    request: dict[str, Any], model: str, *, preserve_provider_prefix: bool = False
+) -> dict[str, Any]:
+    resolved_model = model if preserve_provider_prefix else _strip_provider_prefix(model)
     payload = {key: value for key, value in request.items() if key not in INTERNAL_REQUEST_KEYS}
     payload["model"] = resolved_model
     if _requires_max_completion_tokens(resolved_model):

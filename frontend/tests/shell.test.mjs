@@ -14,6 +14,7 @@ let Sidebar;
 let DashboardState;
 let BoardState;
 let mergeBoardStatus;
+let taskDisplayName;
 let parseRoute;
 let ProjectsState;
 let pollBoardStatus;
@@ -50,7 +51,7 @@ before(async () => {
   ({ Sidebar } = await server.ssrLoadModule("/src/components/Shell.jsx"));
   ({ DashboardState } = await server.ssrLoadModule("/src/views/Dashboard.jsx"));
   ({ ProjectsState } = await server.ssrLoadModule("/src/views/Projects.jsx"));
-  ({ BoardState, mergeBoardStatus, pollBoardStatus, submitBoardAction } = await server.ssrLoadModule("/src/views/Board.jsx"));
+  ({ BoardState, mergeBoardStatus, pollBoardStatus, submitBoardAction, taskDisplayName } = await server.ssrLoadModule("/src/views/Board.jsx"));
   ({ WorkspaceState, submitProjectRestore } = await server.ssrLoadModule("/src/views/Workspace.jsx"));
   ({ SessionsState } = await server.ssrLoadModule("/src/views/Sessions.jsx"));
   ({ AlarmsState } = await server.ssrLoadModule("/src/views/Alarms.jsx"));
@@ -114,6 +115,17 @@ function dashboardData(overrides = {}) {
       planning_estimation: 0,
       setup_verification: 0,
       other: 0,
+      cost_by_category: {
+        control_plane: 1.0,
+        task_breakdown: 0.5,
+        worker_execution: 0.01,
+        adapter_verification: 0,
+        reporting_summary: 0,
+        other: 0,
+      },
+      total_cost: 1.51,
+      priced_tokens: 150,
+      unpriced_tokens: 0,
     },
     alarms: {
       total: 1,
@@ -692,6 +704,45 @@ test("dashboard renders loading, error, populated, and empty states", () => {
   assert.match(empty, /href="\/settings\/project"/);
 });
 
+test("dashboard spend breakdown shows priced USD per category, unpriced labels, and coverage", () => {
+  const populated = renderDashboard({ data: dashboardData(), error: null, loading: false });
+  assert.match(populated, /Worker execution/);
+  assert.match(populated, /\$0\.0100/);
+  assert.match(populated, /Planning\/estimation/);
+  assert.match(populated, /\$1\.5000/);
+  assert.match(populated, /Priced spend/);
+  assert.match(populated, /\$1\.5100/);
+  assert.match(populated, /100% of tokens priced/);
+
+  const unpriced = renderDashboard({
+    data: dashboardData({
+      spend: {
+        worker_execution: 50,
+        agent_review_reporting: 0,
+        planning_estimation: 0,
+        setup_verification: 0,
+        other: 0,
+        cost_by_category: {
+          control_plane: null,
+          task_breakdown: null,
+          worker_execution: null,
+          adapter_verification: 0,
+          reporting_summary: null,
+          other: 0,
+        },
+        total_cost: null,
+        priced_tokens: 0,
+        unpriced_tokens: 50,
+      },
+    }),
+    error: null,
+    loading: false,
+  });
+  assert.match(unpriced, /unpriced/);
+  assert.match(unpriced, /no priced spend recorded/);
+  assert.match(unpriced, /0% of tokens priced/);
+});
+
 test("dashboard estimation accuracy panel shows absent, progress, and figures states", () => {
   const absent = renderDashboard({
     data: dashboardData({ estimation_accuracy: { completed_count: null, median_error_ratio: null, within_2x_pct: null } }),
@@ -929,10 +980,10 @@ test("React board renders every governed workflow state and bounded detail", () 
     "Block",
     "Dismiss",
     "Archive",
-    "Estimate: 100",
-    "Actual: 89",
-    "Run: gpt-5.4",
-    "Recommended: gpt-5.3",
+    "Estimate 100",
+    "Actual 89",
+    "Run gpt-5.4",
+    "Recommended gpt-5.3",
     "Output",
     "DEMO timeline detail",
     "2099-01-01T00:00:00Z",
@@ -964,6 +1015,33 @@ test("React board renders every governed workflow state and bounded detail", () 
   }));
   assert.match(filtered, /0 of 5 visible/);
   assert.match(filtered, /No matching tasks/);
+});
+
+test("board intake shows progress while task estimation is running", () => {
+  const idle = renderToStaticMarkup(React.createElement(BoardState, {
+    projectId: "demo-999", data: boardData(), error: null, loading: false, action: () => {},
+  }));
+  assert.match(idle, /Estimate task/);
+  assert.doesNotMatch(idle, /Estimating…/);
+  assert.doesNotMatch(idle, /role="progressbar"/);
+
+  const busy = renderToStaticMarkup(React.createElement(BoardState, {
+    projectId: "demo-999", data: boardData(), error: null, loading: false, action: () => {}, estimating: true,
+  }));
+  assert.match(busy, /Estimating…/);
+  assert.match(busy, /Preparing Task Breakdown Review/);
+  assert.match(busy, /Estimating and breaking down the task/);
+  assert.match(busy, /role="progressbar"/);
+  assert.match(busy, /aria-valuetext="Estimating task and preparing review"/);
+  assert.match(busy, /aria-busy="true"/);
+  assert.match(busy, /disabled=""/);
+});
+
+test("board cards derive short names from long task descriptions", () => {
+  assert.equal(taskDisplayName({ summary: { text: "# Dashboard card cleanup\nMake every card easier to scan." } }), "Dashboard card cleanup");
+  assert.equal(taskDisplayName({ summary: { text: "Please update the dashboard so that card titles read like short names and preserve the full task body." } }), "Update the dashboard");
+  assert.equal(taskDisplayName({ summary: { text: "Build and deploy the operator portal" } }), "Build and deploy the operator portal");
+  assert.equal(taskDisplayName({ id: "task-demo-999", summary: { text: "" } }), "Task-demo-999");
 });
 
 test("React task history sanitizes errors and links back to the canonical board", () => {
@@ -1688,6 +1766,9 @@ function controlPlaneData(overrides = {}) {
       { provider: "anthropic", model: "claude-opus-4-8", label: "Anthropic · Claude Opus 4.8" },
       { provider: "anthropic", model: "claude-sonnet-4-6", label: "Anthropic · Claude Sonnet 4.6" },
       { provider: "anthropic", model: "claude-haiku-4-5", label: "Anthropic · Claude Haiku 4.5" },
+      { provider: "openrouter", model: "anthropic/claude-sonnet-5", label: "OpenRouter · Claude Sonnet 5 (recommended)" },
+      { provider: "openrouter", model: "openai/gpt-5.6-terra", label: "OpenRouter · GPT-5.6 Terra (recommended)" },
+      { provider: "openrouter", model: "google/gemini-3.5-flash", label: "OpenRouter · Gemini 3.5 Flash (recommended)" },
     ],
     connection_status: { state: "needs_test", checked_at: null, details: null },
     ...overrides,
@@ -1698,9 +1779,8 @@ function controlPlaneData(overrides = {}) {
 // <option selected>/hidden/disabled markup: dataToForm() in
 // ControlPlaneSettings.jsx now decides "is this model custom" itself, by
 // checking whether the stored (provider, model) pair is in curated_models.
-// Table-driven over the one curated case plus the three ways a stored model
-// can fail to match (wrong provider namespace entirely, a curated model name
-// reused under the wrong provider, and a stale provider-prefixed id).
+// Table-driven over curated cases plus stored model/provider pairs that must
+// remain reachable through Custom model.
 test("ControlPlaneSettings dataToForm resolves curated vs. custom models by provider+model pair", async () => {
   const cases = [
     {
@@ -1725,6 +1805,18 @@ test("ControlPlaneSettings dataToForm resolves curated vs. custom models by prov
       name: "a stale provider-prefixed model id is custom",
       provider: "anthropic",
       model: "anthropic/claude-sonnet-4-20250514",
+      expectCustom: true,
+    },
+    {
+      name: "a curated OpenRouter model renders selected, not custom",
+      provider: "openrouter",
+      model: "anthropic/claude-sonnet-5",
+      expectCustom: false,
+    },
+    {
+      name: "an uncurated OpenRouter model remains available through Custom model",
+      provider: "openrouter",
+      model: "meta-llama/custom-demo-999",
       expectCustom: true,
     },
   ];
@@ -1755,6 +1847,98 @@ test("ControlPlaneSettings dataToForm resolves curated vs. custom models by prov
 
     await act(async () => { renderer.unmount(); });
   }
+});
+
+test("ControlPlaneSettings saves an uncurated OpenRouter model ID unchanged", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  let posted = null;
+  globalThis.fetch = async (url, options) => {
+    posted = { url, body: JSON.parse(options.body) };
+    return { ok: true, json: async () => ({ ok: true }) };
+  };
+
+  let renderer;
+  await act(async () => {
+    renderer = create(
+      React.createElement(ControlPlaneSettingsState, {
+        data: controlPlaneData({
+          provider: "openrouter",
+          model: "meta-llama/custom-demo-999",
+          base_url: "https://openrouter.ai/api/v1",
+          api_key_env: "OPENROUTER_API_KEY",
+        }),
+        error: null,
+        loading: false,
+        onRefresh: () => {},
+      }),
+    );
+  });
+
+  const form = renderer.root.findByProps({ className: "control-plane-form" });
+  await act(async () => { await form.props.onSubmit({ preventDefault: () => {} }); });
+
+  assert.equal(posted.url, "/settings/control-plane");
+  assert.equal(posted.body.control_plane_provider, "openrouter");
+  assert.equal(posted.body.control_plane_model, "meta-llama/custom-demo-999");
+  assert.equal(posted.body.control_plane_base_url, "https://openrouter.ai/api/v1");
+  assert.equal(posted.body.control_plane_api_key_env, "OPENROUTER_API_KEY");
+  await act(async () => { renderer.unmount(); });
+});
+
+test("ControlPlaneSettings renders reported cost and unavailable cost distinctly", async () => {
+  for (const [cost, expected] of [[0.0042, "$0.004200"], [null, "unavailable"]]) {
+    let renderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(ControlPlaneSettingsState, {
+          data: controlPlaneData({
+            connection_status: {
+              state: "online",
+              checked_at: "2099-01-01T00:00:00Z",
+              details: {
+                provider: "openrouter",
+                model: "anthropic/claude-sonnet-5",
+                usage: { total_tokens: 10 },
+                cost,
+              },
+            },
+          }),
+          error: null,
+          loading: false,
+          onRefresh: () => {},
+        }),
+      );
+    });
+    assert.match(JSON.stringify(renderer.toJSON()), new RegExp(expected.replace("$", "\\$")));
+    await act(async () => { renderer.unmount(); });
+  }
+});
+
+test("ControlPlaneSettings clears OpenRouter connection defaults when switching providers", async () => {
+  let renderer;
+  await act(async () => {
+    renderer = create(
+      React.createElement(ControlPlaneSettingsState, {
+        data: controlPlaneData({ provider: "openrouter", model: "anthropic/claude-sonnet-5" }),
+        error: null,
+        loading: false,
+        onRefresh: () => {},
+      }),
+    );
+  });
+
+  await act(async () => {
+    renderer.root.findByProps({ id: "control-plane-provider" }).props.onChange({ target: { value: "openai" } });
+  });
+
+  assert.equal(renderer.root.findByProps({ id: "control-plane-base-url" }).props.value, "");
+  assert.equal(
+    renderer.root.findByProps({ id: "control-plane-api-key-env" }).props.value,
+    "FOREMAN_AI_HQ_CONTROL_API_KEY",
+  );
+  assert.equal(renderer.root.findByProps({ id: "control-plane-model" }).props.value, "gpt-5.4");
+  await act(async () => { renderer.unmount(); });
 });
 
 test("the not-found branch routes to a canonical URL", async () => {

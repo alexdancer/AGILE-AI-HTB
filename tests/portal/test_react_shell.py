@@ -842,7 +842,23 @@ def test_react_dashboard_projection_is_safe_and_bounded(tmp_path, monkeypatch):
         "planning_estimation",
         "setup_verification",
         "other",
+        "cost_by_category",
+        "total_cost",
+        "priced_tokens",
+        "unpriced_tokens",
     }
+    assert set(payload["spend"]["cost_by_category"]) == {
+        "control_plane",
+        "task_breakdown",
+        "worker_execution",
+        "adapter_verification",
+        "reporting_summary",
+        "other",
+    }
+    assert payload["spend"]["cost_by_category"]["worker_execution"] == 0.01
+    assert payload["spend"]["total_cost"] == 0.01
+    assert payload["spend"]["priced_tokens"] == 150
+    assert payload["spend"]["unpriced_tokens"] == 0
     assert set(payload["alarms"]) == {"total", "open", "critical", "recent"}
     assert payload["budget"]["total_tokens"] == 150
     assert payload["worker_execution"]["token_total"] == 150
@@ -2548,6 +2564,7 @@ def test_react_control_plane_settings_json_uses_exact_contract_and_key_value_nev
 
 
 def test_react_control_plane_connection_status_mapping(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     llm = FakeControlPlaneLLM()
     with _client_with_control_plane_llm(tmp_path, llm) as client:
@@ -2607,6 +2624,7 @@ def test_react_control_plane_connection_status_mapping(tmp_path, monkeypatch):
 def test_react_control_plane_save_json_outcome_key_free_and_persistence(
     tmp_path, monkeypatch
 ):
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     monkeypatch.setenv("TEST_CONTROL_PLANE_KEY", "sk_real_key_999")
     with _client_with_control_plane_llm(tmp_path, FakeControlPlaneLLM()) as client:
@@ -2636,6 +2654,7 @@ def test_react_control_plane_save_json_outcome_key_free_and_persistence(
 
 
 def test_react_control_plane_save_error_sanitized(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
 
     def fail_write(**_updates):
@@ -2664,6 +2683,7 @@ def test_react_control_plane_save_error_sanitized(tmp_path, monkeypatch):
 
 
 def test_react_control_plane_save_html_redirect_preserved(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     with _client(tmp_path) as client:
         response = client.post(

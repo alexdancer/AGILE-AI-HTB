@@ -97,8 +97,8 @@ def test_eval_proxy_multiple_turns_accumulate_in_artifact(tmp_path):
         assert entry["total_tokens"] == 1100
 
 
-def test_eval_proxy_token_turn_includes_cost(tmp_path):
-    """Token turn includes a cost field calculated from the model and usage."""
+def test_eval_proxy_token_turn_records_null_for_unpriced_model(tmp_path):
+    """Unpriced proxy usage stays distinguishable from a genuinely free call."""
     client, fake = _client(tmp_path)
     with client:
         started = _start_session(client)
@@ -107,7 +107,7 @@ def test_eval_proxy_token_turn_includes_cost(tmp_path):
     artifact = db.build_session_artifact(tmp_path / "harness.db", started["session_id"])
     log = artifact["token_log"][0]
     assert "cost" in log
-    assert log["cost"] >= 0
+    assert log["cost"] is None
 
 
 def test_eval_proxy_usage_kind_persisted_in_db_row(tmp_path):

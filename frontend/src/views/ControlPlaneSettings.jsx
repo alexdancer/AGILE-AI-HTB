@@ -8,7 +8,22 @@ const safeError = (error) =>
     ? "Control-plane settings require sign-in."
     : "Could not load control-plane settings. Retry.";
 
-const PROVIDERS = ["openai", "anthropic", "openai-compatible"];
+const PROVIDERS = [
+  { value: "openai", label: "openai" },
+  { value: "anthropic", label: "anthropic" },
+  { value: "openai-compatible", label: "openai-compatible" },
+  { value: "openrouter", label: "OpenRouter (recommended)" },
+];
+
+const OPENROUTER_DEFAULTS = {
+  baseUrl: "https://openrouter.ai/api/v1",
+  apiKeyEnv: "OPENROUTER_API_KEY",
+};
+
+const DEFAULT_CONNECTION = {
+  baseUrl: "",
+  apiKeyEnv: "FOREMAN_AI_HQ_CONTROL_API_KEY",
+};
 
 function dataToForm(data) {
   const curated = (data.curated_models || []).find(
@@ -78,15 +93,21 @@ export function ControlPlaneSettingsState({ data, error, loading, onRefresh }) {
       const matching = (data.curated_models || []).find(
         (m) => m.provider === newProvider && m.model === effective
       );
+      const defaults = newProvider === "openrouter"
+        ? OPENROUTER_DEFAULTS
+        : prev.provider === "openrouter"
+          ? DEFAULT_CONNECTION
+          : {};
       if (matching) {
-        return { ...prev, provider: newProvider, model: matching.model, customModel: "" };
+        return { ...prev, ...defaults, provider: newProvider, model: matching.model, customModel: "" };
       }
-      if (newProvider === "openai-compatible" || effective.trim()) {
-        return { ...prev, provider: newProvider, model: "__custom__", customModel: effective };
+      if (newProvider === "openai-compatible") {
+        return { ...prev, ...defaults, provider: newProvider, model: "__custom__", customModel: effective };
       }
       const first = (data.curated_models || []).find((m) => m.provider === newProvider);
       return {
         ...prev,
+        ...defaults,
         provider: newProvider,
         model: first ? first.model : "__custom__",
         customModel: "",
@@ -187,38 +208,43 @@ export function ControlPlaneSettingsState({ data, error, loading, onRefresh }) {
         {inlineError || status || ""}
       </div>
 
-      <section className="grid cols-2">
+      <section className="control-plane-layout">
         <article className="panel">
           <div className="panel-header"><h3>Choose model</h3></div>
           <div className="panel-body">
-            <form onSubmit={submitSave}>
-              <label htmlFor="control-plane-provider">Provider</label>
-              <select
-                id="control-plane-provider"
-                value={form.provider}
-                onChange={(e) => handleProviderChange(e.target.value)}
-                disabled={busy}
-              >
-                {PROVIDERS.map((p) => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </select>
+            <form className="control-plane-form" onSubmit={submitSave}>
+              <div className="control-plane-fields">
+                <div className="control-plane-field">
+                  <label htmlFor="control-plane-provider">Provider</label>
+                  <select
+                    id="control-plane-provider"
+                    value={form.provider}
+                    onChange={(e) => handleProviderChange(e.target.value)}
+                    disabled={busy}
+                  >
+                    {PROVIDERS.map((provider) => (
+                      <option key={provider.value} value={provider.value}>{provider.label}</option>
+                    ))}
+                  </select>
+                </div>
 
-              <label htmlFor="control-plane-model">Model</label>
-              <select
-                id="control-plane-model"
-                value={form.model}
-                onChange={(e) => handleModelChange(e.target.value)}
-                disabled={busy}
-              >
-                {curatedForProvider.map((m) => (
-                  <option key={m.model} value={m.model}>{m.label}</option>
-                ))}
-                <option value="__custom__">Custom model…</option>
-              </select>
+                <div className="control-plane-field">
+                  <label htmlFor="control-plane-model">Model</label>
+                  <select
+                    id="control-plane-model"
+                    value={form.model}
+                    onChange={(e) => handleModelChange(e.target.value)}
+                    disabled={busy}
+                  >
+                    {curatedForProvider.map((m) => (
+                      <option key={m.model} value={m.model}>{m.label}</option>
+                    ))}
+                    <option value="__custom__">Custom model…</option>
+                  </select>
+                </div>
 
-              {customSelected && (
-                <>
+                {customSelected && (
+                  <div className="control-plane-field control-plane-field-wide">
                   <label htmlFor="control-plane-custom-model">Custom model</label>
                   <input
                     id="control-plane-custom-model"
@@ -231,45 +257,52 @@ export function ControlPlaneSettingsState({ data, error, loading, onRefresh }) {
                   <p className="muted">
                     Use Custom model for OpenAI-compatible endpoints or provider model IDs that are not in the curated dropdown.
                   </p>
-                </>
-              )}
+                  </div>
+                )}
 
-              <label htmlFor="control-plane-base-url">Base URL</label>
-              <input
-                id="control-plane-base-url"
-                value={form.baseUrl}
-                onChange={(e) => updateField("baseUrl", e.target.value)}
-                placeholder="Required for OpenAI-compatible endpoints"
-                disabled={busy}
-              />
-              <p className="muted">Required for OpenAI-compatible endpoints; leave blank for provider defaults.</p>
+                <div className="control-plane-field control-plane-field-wide">
+                  <label htmlFor="control-plane-base-url">Base URL</label>
+                  <input
+                    id="control-plane-base-url"
+                    value={form.baseUrl}
+                    onChange={(e) => updateField("baseUrl", e.target.value)}
+                    placeholder="Required for OpenAI-compatible endpoints"
+                    disabled={busy}
+                  />
+                  <p className="muted">Required for OpenAI-compatible endpoints; leave blank for provider defaults.</p>
+                </div>
 
-              <label htmlFor="control-plane-api-key">API key</label>
-              <input
-                id="control-plane-api-key"
-                type="password"
-                value={form.apiKey}
-                onChange={(e) => updateField("apiKey", e.target.value)}
-                placeholder="Paste provider API key"
-                disabled={busy}
-              />
-              <p className="muted">
-                Leave blank to keep the existing key. The key is saved to ignored <code>.foreman/secrets.env</code>, never shown again, and never written to <code>.foreman/config.toml</code>.
-              </p>
+                <div className="control-plane-field control-plane-field-wide">
+                  <label htmlFor="control-plane-api-key">API key</label>
+                  <input
+                    id="control-plane-api-key"
+                    type="password"
+                    value={form.apiKey}
+                    onChange={(e) => updateField("apiKey", e.target.value)}
+                    placeholder="Paste provider API key"
+                    disabled={busy}
+                  />
+                  <p className="muted">
+                    Leave blank to keep the existing key. The key is saved to ignored <code>.foreman/secrets.env</code>, never shown again, and never written to <code>.foreman/config.toml</code>.
+                  </p>
+                </div>
+              </div>
 
-              <details style={{ marginTop: 10 }}>
+              <details className="control-plane-advanced">
                 <summary>Advanced connection settings</summary>
-                <label htmlFor="control-plane-api-key-env">API key env name</label>
-                <input
-                  id="control-plane-api-key-env"
-                  value={form.apiKeyEnv}
-                  onChange={(e) => updateField("apiKeyEnv", e.target.value)}
-                  required
-                  disabled={busy}
-                />
+                <div className="control-plane-field">
+                  <label htmlFor="control-plane-api-key-env">API key env name</label>
+                  <input
+                    id="control-plane-api-key-env"
+                    value={form.apiKeyEnv}
+                    onChange={(e) => updateField("apiKeyEnv", e.target.value)}
+                    required
+                    disabled={busy}
+                  />
+                </div>
               </details>
 
-              <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+              <label className="control-plane-checkbox">
                 <input
                   type="checkbox"
                   checked={form.applyToEstimator}
@@ -279,19 +312,19 @@ export function ControlPlaneSettingsState({ data, error, loading, onRefresh }) {
                 Use this model for estimation and task breakdown too
               </label>
 
-              <div className="btn-row" style={{ marginTop: 14 }}>
-                <button type="submit" className="primary" disabled={busy}>
+              <div className="control-plane-actions">
+                <button type="submit" className="control-plane-primary" disabled={busy}>
                   Save control-plane model
                 </button>
               </div>
             </form>
 
-            <p className="muted" style={{ marginTop: 14 }}>
+            <p className="control-plane-save-note muted">
               Saves non-secrets to <code>.foreman/config.toml</code> and applies to new control-plane requests.
             </p>
 
             {Object.keys(data.shadowed_settings).length > 0 && (
-              <p className="pill muted" style={{ marginTop: 14 }}>
+              <p className="control-plane-override muted">
                 Effective value is overridden by environment: {JSON.stringify(data.shadowed_settings)}
               </p>
             )}
@@ -301,23 +334,23 @@ export function ControlPlaneSettingsState({ data, error, loading, onRefresh }) {
         <article className="panel">
           <div className="panel-header"><h3>Configured connection</h3></div>
           <div className="panel-body">
-            <div className="kv">
-              <div className="k">Provider</div><div className="v">{data.provider}</div>
-              <div className="k">Model</div><div className="v">{data.model}</div>
-              <div className="k">API key env</div><div className="v">{data.api_key_env}</div>
-              <div className="k">API key present</div><div className="v">{data.api_key_present ? "yes" : "no"}</div>
-              <div className="k">Estimator model</div><div className="v">{data.estimator_model}</div>
-              <div className="k">Task breakdown model</div><div className="v">{data.task_breakdown_model}</div>
-              <div className="k">Legacy env fallback</div>
-              <div className="v">{data.legacy_api_key_configured ? "configured" : "not set"}</div>
-            </div>
-            <p className="muted" style={{ marginTop: 14 }}>
+            <dl className="connection-details">
+              <dt>Provider</dt><dd>{data.provider}</dd>
+              <dt>Model</dt><dd>{data.model}</dd>
+              <dt>API key env</dt><dd>{data.api_key_env}</dd>
+              <dt>API key present</dt><dd>{data.api_key_present ? "yes" : "no"}</dd>
+              <dt>Estimator model</dt><dd>{data.estimator_model}</dd>
+              <dt>Task breakdown model</dt><dd>{data.task_breakdown_model}</dd>
+              <dt>Legacy env fallback</dt>
+              <dd>{data.legacy_api_key_configured ? "configured" : "not set"}</dd>
+            </dl>
+            <p className="control-plane-connection-note muted">
               This connection powers estimation, planning, recommendations, and budget reporting. It is not passed into OpenCode, Claude Code, Codex, or other Worker Harnesses.
             </p>
-            <div className="btn-row" style={{ marginTop: 14 }}>
+            <div className="control-plane-actions">
               <button
                 type="button"
-                className="primary"
+                className="control-plane-primary"
                 onClick={submitTest}
                 disabled={busy || isDirty}
                 aria-describedby={isDirty ? "test-dirty-hint" : undefined}
@@ -353,6 +386,14 @@ export function ControlPlaneSettingsState({ data, error, loading, onRefresh }) {
                     <>
                       <div className="k">Total tokens</div>
                       <div className="v">{details.usage.total_tokens || 0}</div>
+                    </>
+                  )}
+                  {details.usage && (
+                    <>
+                      <div className="k">Cost</div>
+                      <div className="v">
+                        {typeof details.cost === "number" ? `$${details.cost.toFixed(6)}` : "unavailable"}
+                      </div>
                     </>
                   )}
                   {details.error && (

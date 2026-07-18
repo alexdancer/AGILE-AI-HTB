@@ -12,19 +12,23 @@ PORTAL_TOKEN = "test-portal-token"
 
 
 class FakeControlPlaneLLM:
-    def __init__(self, *, exc: Exception | None = None):
+    def __init__(self, *, exc: Exception | None = None, cost: float | None = None):
         self.exc = exc
+        self.cost = cost
         self.requests = []
 
     async def acompletion(self, request):
         self.requests.append(request)
         if self.exc:
             raise self.exc
-        return {
+        response = {
             "choices": [{"message": {"content": "FOREMAN_AI_HQ_CONTROL_PLANE_OK"}}],
             "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10},
             "api_key": "sk_sho...nder",
         }
+        if self.cost is not None:
+            response["usage"]["cost"] = self.cost
+        return response
 
 
 def _client(tmp_path, *, portal_auth_required: bool = True, local_runner_enabled: bool = True):
