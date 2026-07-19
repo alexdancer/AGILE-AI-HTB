@@ -699,6 +699,40 @@ def api_session_report(session_id: str, request: Request):
     return report_projection(build_session_report_context(request, session_id))
 
 
+@router.get("/api/sessions/{session_id}/events", dependencies=[Depends(require_portal_auth)])
+def api_session_events(
+    session_id: str,
+    request: Request,
+    since_id: int | None = Query(None, ge=0),
+):
+    database_path = request.app.state.settings.database_path
+    try:
+        db.get_session(database_path, session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="session not found") from exc
+    events = db.list_worker_run_events(database_path, session_id=session_id, since_id=since_id, limit=101)
+    has_more = len(events) > 100
+    events = events[:100]
+    projected = [
+        {
+            "id": event["id"],
+            "created_at": _optional_string(event.get("created_at"), 64),
+            "kind": _string(event.get("kind"), 64),
+            "layer": _string(event.get("layer"), 64),
+            "title": _string(event.get("title"), 200),
+            "detail_summary": _string(_json_text(event.get("detail")), 1_000),
+        }
+        for event in events
+        if _is_non_negative_int(event.get("id"))
+    ]
+    return {
+        "session_id": _string(session_id, 128),
+        "events": projected,
+        "next_since_id": projected[-1]["id"] if projected else since_id,
+        "has_more": has_more,
+    }
+
+
 @router.get("/api/sessions/{session_id}/evidence/{collection_id}", dependencies=[Depends(require_portal_auth)])
 def api_session_evidence(session_id: str, collection_id: str, request: Request, offset: int = Query(0, ge=0), limit: int | None = Query(None, ge=1)):
     context = build_session_report_context(request, session_id)

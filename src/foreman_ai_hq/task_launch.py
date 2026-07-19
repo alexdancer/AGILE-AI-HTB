@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -10,7 +11,7 @@ import threading
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from foreman_ai_hq import db
 from foreman_ai_hq.adapter_readiness import evaluate_adapter_readiness
@@ -19,12 +20,12 @@ from foreman_ai_hq.native_cli_diagnostics import native_cli_diagnostic, redact_n
 from foreman_ai_hq.native_usage import NativeUsageEvidence, parse_native_usage_evidence
 from foreman_ai_hq.project_context import project_task_metadata, resolve_task_project
 from foreman_ai_hq.repo_context import build_repo_context_brief, repo_context_prompt
+from foreman_ai_hq.stream_events import streaming_runner
 from foreman_ai_hq.tracking_modes import NATIVE_USAGE, PROXY_GOVERNED
 from foreman_ai_hq.worker_adapters import (
     Runner,
     get_adapter_builder,
     redact_command_plan,
-    subprocess_runner,
 )
 
 
@@ -423,7 +424,7 @@ def _record_worker_event(
         session_id=worker_run["session_id"],
         task_id=worker_run["task_id"],
         kind=kind,
-        layer="worker_harness" if kind in {"adapter", "token", "file"} else "control_plane",
+        layer="worker_harness" if kind in {"adapter", "agent_message", "tool_call", "token", "status", "file"} else "control_plane",
         level=level,
         title=title,
         detail=detail,
@@ -561,7 +562,25 @@ def _execute_worker_run(
         title="Worker adapter started",
         detail={"adapter_id": selected_adapter_id, "model": selected_model, "tracking_mode": tracking_mode},
     )
-    result = _run_worker_adapter(plan, runner)
+    builder = get_adapter_builder(db.get_worker_adapter(database_path, selected_adapter_id))
+
+    def on_stream_line(raw_line: str) -> None:
+        try:
+            event = builder.map_stream_event(_redact_stream_line(plan, raw_line))
+            if event is not None:
+                event = _redact_stream_event(plan, event)
+                _record_worker_event(
+                    database_path,
+                    worker_run,
+                    kind=event["kind"],
+                    title=event["title"],
+                    detail=event["detail"],
+                )
+        except Exception:
+            # Timeline capture must not change Worker execution semantics.
+            pass
+
+    result = _run_worker_adapter(plan, runner, on_stream_line)
     outcome = _classify_worker_run_result(
         database_path=database_path,
         session=session,
@@ -592,9 +611,21 @@ def _execute_worker_run(
     )
 
 
-def _run_worker_adapter(plan: Any, runner: Runner | None) -> WorkerProcessResult:
+def _run_worker_adapter(
+    plan: Any,
+    runner: Callable[..., Any] | None,
+    on_event: Callable[[str], None] | None = None,
+) -> WorkerProcessResult:
+    on_event = on_event or (lambda _raw_line: None)
     try:
-        completed = (runner or subprocess_runner)(plan)
+        if runner is None:
+            completed = streaming_runner(plan, on_event)
+        elif _runner_accepts_event_callback(runner):
+            completed = runner(plan, on_event)
+        else:
+            completed = runner(plan)
+            for raw_line in str(_result_field(completed, "stdout", "")).splitlines(keepends=True):
+                on_event(raw_line)
     except Exception as exc:
         completed = subprocess.CompletedProcess(
             plan.command,
@@ -607,6 +638,52 @@ def _run_worker_adapter(plan: Any, runner: Runner | None) -> WorkerProcessResult
         stdout=str(_result_field(completed, "stdout", "")),
         stderr=str(_result_field(completed, "stderr", "")),
     )
+
+
+def _runner_accepts_event_callback(runner: Callable[..., Any]) -> bool:
+    try:
+        parameters = list(inspect.signature(runner).parameters.values())
+    except (TypeError, ValueError):
+        return False
+    return any(parameter.kind == inspect.Parameter.VAR_POSITIONAL for parameter in parameters) or len(parameters) >= 2
+
+
+def _redact_stream_event(plan: Any, event: Any) -> Any:
+    prompts = _stream_prompts(plan)
+    return {
+        **event,
+        "title": _redact_stream_value(event["title"], prompts),
+        "detail": _redact_stream_value(event["detail"], prompts),
+    }
+
+
+def _redact_stream_line(plan: Any, raw_line: str) -> str:
+    return _redact_stream_value(raw_line, _stream_prompts(plan))
+
+
+def _stream_prompts(plan: Any) -> list[str]:
+    command = getattr(plan, "command", []) or []
+    metadata = getattr(plan, "metadata", {}) or {}
+    prompts: list[str] = []
+    for index in metadata.get("prompt_argument_indices", []):
+        if isinstance(index, int) and 0 <= index < len(command):
+            prompt = str(command[index])
+            if prompt:
+                prompts.append(prompt)
+    return prompts
+
+
+def _redact_stream_value(value: Any, prompts: list[str]) -> Any:
+    if isinstance(value, str):
+        for prompt in prompts:
+            value = value.replace(prompt, "***PROMPT_REDACTED***")
+            value = value.replace(json.dumps(prompt)[1:-1], "***PROMPT_REDACTED***")
+        return redact_native_cli_text(value)
+    if isinstance(value, dict):
+        return {key: _redact_stream_value(item, prompts) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_stream_value(item, prompts) for item in value]
+    return value
 
 
 def _classify_worker_run_result(

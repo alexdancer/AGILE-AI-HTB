@@ -1153,7 +1153,7 @@ def _react_task(task: dict) -> dict:
                 "retryable_failure": {"returncode": _optional_number(failure.get("returncode"), integer=True, minimum=-(2**31), maximum=2**31 - 1), "summary": _bounded_text(failure.get("error") or failure.get("stderr") or "", 4000)},
                 "diagnostic": {"summary": _bounded_text(launch.get("summary"), 4000), "next_action": _bounded_text(launch.get("next_action"), 4000), "setup_href": _safe_local_href(launch.get("setup_href"))},
             },
-            "timeline": [{"created_at": _bounded_scalar(event.get("created_at"), 100), "kind": _bounded_scalar(event.get("kind"), 100), "title": _bounded_scalar(event.get("title"), 400), "detail_summary": _bounded_text(event.get("detail_summary") or event.get("detail"), 1000)} for event in events[-6:]],
+            "timeline": [{"id": _optional_number(event.get("id"), integer=True, minimum=0, maximum=10**15), "created_at": _bounded_scalar(event.get("created_at"), 100), "kind": _bounded_scalar(event.get("kind"), 100), "layer": _bounded_scalar(event.get("layer"), 100), "title": _bounded_scalar(event.get("title"), 400), "detail_summary": _bounded_text(event.get("detail_summary") or event.get("detail"), 1000)} for event in events[-6:]],
             "logs": {"stdout": _bounded_text(failure.get("stdout") or metadata.get("launch_stdout"), 4000), "stderr": _bounded_text(failure.get("stderr"), 4000)},
             "review": _react_review(metadata.get("review_prompt"), review, findings),
             "blocked": {"reason": _bounded_text(metadata.get("blocked_reason"), 4000), "requires_manual_estimate": bool(metadata.get("requires_manual_estimate"))},

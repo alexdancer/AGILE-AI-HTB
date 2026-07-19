@@ -7,6 +7,8 @@ __pycache__/
 build/
 dist/
 .demo/
+.codex/
+test-results/
 # Runtime SQLite Harness state
 harness.db
 *.db

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 
 import { AppLink, NavContext } from "../nav.jsx";
 import { getJSON } from "../api.js";
+import { drainLiveEvents, runSingleFlight } from "../live-events.js";
 
 const COLUMNS = ["Estimated", "Running", "Review", "Done", "Blocked"];
 const TASK_NAME_WORD_LIMIT = 7;
@@ -99,12 +100,37 @@ export async function pollBoardStatus({ getStatus, reload, update }) {
   }
 }
 
+export function mergeBoardLiveEvents(current, sessionId, events) {
+  if (!current.data || !events.length) return current;
+  let changed = false;
+  const tasksByStatus = Object.fromEntries(Object.entries(current.data.tasks_by_status).map(([status, tasks]) => [status, tasks.map((task) => {
+    if (task.status !== "Running" || task.session_href !== `/sessions/${sessionId}`) return task;
+    const timeline = task.details.timeline || [];
+    const known = new Set(timeline.map((event) => event.id).filter((id) => Number.isInteger(id)));
+    const appended = events.filter((event) => Number.isInteger(event.id) && !known.has(event.id)).map((event) => ({
+      ...event,
+      detail_summary: { text: event.detail_summary || "", truncated: false },
+    }));
+    if (!appended.length) return task;
+    changed = true;
+    return { ...task, details: { ...task.details, timeline: [...timeline, ...appended].slice(-50) } };
+  })]));
+  return changed ? { ...current, data: { ...current.data, tasks_by_status: tasksByStatus } } : current;
+}
+
 export default function Board({ projectId }) {
   const navigate = React.useContext(NavContext);
   const [state, setState] = useState({ data: null, error: null, loading: true });
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState(null);
   const [estimating, setEstimating] = useState(false);
+  const eventCursors = React.useRef(new Map());
+  const eventPollInFlight = React.useRef(false);
+  const runningSessionKey = useMemo(() => (state.data?.tasks_by_status.Running || [])
+    .map((task) => task.session_href || "")
+    .filter(Boolean)
+    .sort()
+    .join(","), [state.data?.tasks_by_status.Running]);
 
   const load = async () => {
     setState((current) => ({ ...current, loading: true, error: null }));
@@ -128,6 +154,42 @@ export default function Board({ projectId }) {
     }, 2500);
     return () => window.clearInterval(timer);
   }, [projectId, state.data?.automation?.live_refresh_enabled]);
+  useEffect(() => {
+    if (!state.data?.automation?.live_refresh_enabled) return undefined;
+    const running = state.data.tasks_by_status.Running || [];
+    const sessionIds = running
+      .map((task) => task.session_href?.replace(/^\/sessions\//, ""))
+      .filter(Boolean);
+    if (!sessionIds.length) return undefined;
+    for (const task of running) {
+      const sessionId = task.session_href?.replace(/^\/sessions\//, "");
+      if (!sessionId || eventCursors.current.has(sessionId)) continue;
+      const ids = (task.details.timeline || []).map((event) => event.id).filter(Number.isInteger);
+      eventCursors.current.set(sessionId, ids.length ? Math.max(...ids) : null);
+    }
+    let stopped = false;
+    const poll = () => runSingleFlight(eventPollInFlight, async () => {
+      for (const sessionId of sessionIds) {
+        const sinceId = eventCursors.current.get(sessionId);
+        try {
+          const next = await drainLiveEvents({
+            sessionId,
+            sinceId,
+            getEvents: getJSON,
+            stopped: () => stopped,
+            append: (events) => setState((current) => mergeBoardLiveEvents(current, sessionId, events)),
+          });
+          if (stopped) return;
+          if (Number.isInteger(next)) eventCursors.current.set(sessionId, next);
+        } catch {
+          // Board status polling remains authoritative if the lightweight feed is unavailable.
+        }
+      }
+    });
+    poll();
+    const timer = window.setInterval(poll, 5000);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [state.data?.automation?.live_refresh_enabled, projectId, runningSessionKey]);
 
   const action = async (url, body = new FormData()) => {
     await submitBoardAction({
@@ -335,7 +397,7 @@ function TaskDetails({ task }) {
     <TextEvidence label="Task body" value={details.task_body} />
     {details.token_components.available && <section><h4>Worker token components</h4><ul>{details.token_components.items.map((item) => <li key={item.key}>{item.label}: {item.value}</li>)}</ul>{details.token_components.turn_count != null && <p>Turns: {details.token_components.turn_count}</p>}{details.token_components.cost != null && <p>Cost: {details.token_components.cost}</p>}</section>}
     <section><h4>Launch</h4><dl className="detail-grid">{Object.entries(details.launch).filter(([, value]) => value != null && typeof value !== "object").map(([key, value]) => <React.Fragment key={key}><dt>{key}</dt><dd>{String(value)}</dd></React.Fragment>)}</dl><TextEvidence label="Launch error" value={details.launch.error} /><TextEvidence label="Blocked reason" value={details.launch.blocked_reason} /><TextEvidence label="Retryable failure" value={details.launch.retryable_failure.summary} /><TextEvidence label="Diagnostic" value={details.launch.diagnostic.summary} /><TextEvidence label="Next action" value={details.launch.diagnostic.next_action} /></section>
-    {details.timeline.length > 0 && <section><h4>Timeline</h4><ul>{details.timeline.map((event, index) => <li key={`${event.created_at}-${index}`}><span className="muted">{event.created_at} · {event.kind}</span><br /><strong>{event.title || event.kind}</strong> · {event.detail_summary.text}</li>)}</ul></section>}
+    {details.timeline.length > 0 && <section><h4>Timeline</h4><ul>{details.timeline.map((event, index) => <li key={event.id ?? `${event.created_at}-${index}`}><span className="muted">{event.created_at} · {event.layer || "worker_harness"} · {event.kind}</span><br /><strong>{event.title || event.kind}</strong> · {event.detail_summary.text}{event.kind === "token" && <em> · Provisional usage; final total recorded on completion.</em>}</li>)}</ul></section>}
     <TextEvidence label="Worker stdout" value={details.logs.stdout} />
     <TextEvidence label="Worker stderr" value={details.logs.stderr} />
     <TextEvidence label="Saved review prompt" value={details.review.prompt} />

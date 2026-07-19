@@ -36,6 +36,7 @@ test = [
     "pytest",
     "pytest-asyncio",
     "httpx",
+    "playwright",
 ]
 
 [project.scripts]

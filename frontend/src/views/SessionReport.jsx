@@ -2,6 +2,7 @@ import React from "react";
 
 import { getJSON } from "../api.js";
 import { AppLink } from "../nav.jsx";
+import { drainLiveEvents } from "../live-events.js";
 
 const safeError = (error) => error?.status === 401
   ? "Session Report requires sign-in."
@@ -12,6 +13,8 @@ export default function SessionReport({ sessionId }) {
   const [state, setState] = React.useState({ data: null, error: null, loading: true });
   const [notice, setNotice] = React.useState(null);
   const [refreshError, setRefreshError] = React.useState(null);
+  const [liveEvents, setLiveEvents] = React.useState([]);
+  const liveCursor = React.useRef(null);
 
   const load = React.useCallback(async () => {
     try {
@@ -29,6 +32,10 @@ export default function SessionReport({ sessionId }) {
 
   React.useEffect(() => { load(); }, [load]);
   React.useEffect(() => {
+    liveCursor.current = null;
+    setLiveEvents([]);
+  }, [sessionId]);
+  React.useEffect(() => {
     if (!state.data?.freshness.active) return undefined;
     let stopped = false;
     const poll = async () => {
@@ -36,6 +43,15 @@ export default function SessionReport({ sessionId }) {
         const freshness = await getJSON(`/api/sessions/${encodeURIComponent(sessionId)}/freshness`);
         if (stopped) return;
         if (freshness.version !== state.data.freshness.version) setNotice(freshness);
+        const next = await drainLiveEvents({
+          sessionId,
+          sinceId: liveCursor.current,
+          getEvents: getJSON,
+          stopped: () => stopped,
+          append: (events) => setLiveEvents((current) => mergeLiveEvents(current, events)),
+        });
+        if (stopped) return;
+        if (Number.isInteger(next)) liveCursor.current = next;
         if (freshness.active) timer = window.setTimeout(poll, 5000);
       } catch {
         if (!stopped) {
@@ -54,6 +70,7 @@ export default function SessionReport({ sessionId }) {
       freshnessNotice={notice}
       refreshError={refreshError}
       refresh={load}
+      liveEvents={liveEvents}
     />
   );
 }
@@ -63,7 +80,7 @@ function currentMessage(error) {
 }
 
 export function SessionReportState({
-  data, error, loading, freshnessNotice = null, refreshError = null, refresh = () => {},
+  data, error, loading, freshnessNotice = null, refreshError = null, refresh = () => {}, liveEvents = [],
 }) {
   if (loading && !data) return <div className="notice">Loading Session Report…</div>;
   if (error && !data) return <div className="notice danger" role="alert">{safeError(error)}</div>;
@@ -101,12 +118,25 @@ export function SessionReportState({
       {data.related_agent_review && <AgentReview key={`review-${version}`} review={data.related_agent_review} isReviewSession={session.kind === "Agent Review"} />}
       <EvidenceSection key={`tokens-${version}`} title="Token log" page={tokens.log} renderItem={(item, index) => <TokenRow key={index} item={item} />} />
       <EvidenceSection key={`zones-${version}`} title="Budget-zone timeline" page={data.zone_timeline} renderItem={(item, index) => <EvidenceItem key={index} title={`${item.zone || "unknown"} zone`} meta={`${item.created_at || "time unavailable"} · max tokens ${item.max_tokens ?? "unavailable"}`} />} />
+      {liveEvents.length > 0 && <LiveWorkerFeed events={liveEvents} />}
       <EvidenceSection key={`worker-${version}`} title="Worker Run timeline" page={data.worker_timeline} renderItem={(item, index) => <EvidenceItem key={index} title={`${item.level} · ${item.layer} · ${item.kind} · ${item.title}`} meta={`${item.created_at || "time unavailable"} · ${item.detail_summary}`} detail={item.detail} />} />
       <RepoContext key={`repo-${version}`} page={data.repo_context_briefs} />
       <EvidenceSection key={`alarms-${version}`} title="Alarms" page={data.alarms} renderItem={(item) => <EvidenceItem key={item.id} title={`${item.severity} · ${item.type}`} meta={`${item.id} · ${item.created_at || "time unavailable"}`} body={item.recommended_action} />} />
       <EvidenceSection key={`checkpoints-${version}`} title="Checkpoint results" page={data.checkpoints} renderItem={(item, index) => <EvidenceItem key={index} title={`${item.passed ? "PASS" : "FAIL"} · ${item.name}`} detail={item.details} />} />
     </>
   );
+}
+
+export function mergeLiveEvents(current, incoming) {
+  const known = new Set(current.map((event) => event.id).filter((id) => Number.isInteger(id)));
+  return [...current, ...incoming.filter((event) => Number.isInteger(event.id) && !known.has(event.id))].slice(-100);
+}
+
+function LiveWorkerFeed({ events }) {
+  return <section className="panel evidence-section">
+    <div className="panel-header"><h3>Live Worker Run feed</h3><span>system evidence</span></div>
+    <div className="panel-body">{events.map((event) => <EvidenceItem key={event.id} title={`${event.layer} · ${event.kind} · ${event.title}`} meta={`${event.created_at || "time unavailable"} · ${event.detail_summary}${event.kind === "token" ? " · provisional usage" : ""}`} />)}</div>
+  </section>;
 }
 
 function Summary({ label, children }) {

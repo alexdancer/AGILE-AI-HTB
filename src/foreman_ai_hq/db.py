@@ -1131,6 +1131,8 @@ def list_worker_run_events(
     worker_run_id: str | None = None,
     session_id: str | None = None,
     task_id: str | None = None,
+    since_id: int | None = None,
+    limit: int | None = None,
 ) -> list[dict[str, Any]]:
     clauses: list[str] = []
     params: list[Any] = []
@@ -1143,9 +1145,16 @@ def list_worker_run_events(
     if task_id is not None:
         clauses.append("task_id = ?")
         params.append(task_id)
+    if since_id is not None:
+        clauses.append("id > ?")
+        params.append(since_id)
     where = f" where {' and '.join(clauses)}" if clauses else ""
+    query = "select * from worker_run_events" + where + " order by id"
+    if limit is not None:
+        query += " limit ?"
+        params.append(limit)
     with connect(path) as conn:
-        rows = conn.execute("select * from worker_run_events" + where + " order by created_at, id", params).fetchall()
+        rows = conn.execute(query, params).fetchall()
     return [_worker_run_event_from_row(row) for row in rows]
 
 
