@@ -212,6 +212,16 @@ The Portal writes submitted API keys only to ignored local secret storage and do
 uv run --extra test pytest -q
 ```
 
+This run includes the browser tests under `tests/e2e`, which build the React
+shell and drive Chromium. They need Node plus a one-time browser install:
+
+```bash
+npm --prefix frontend install
+uv run --extra test playwright install chromium
+```
+
+To skip them, run the focused checks below instead.
+
 Focused contributor checks:
 
 ```bash

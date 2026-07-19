@@ -32,6 +32,10 @@ uv run --extra test pytest -q
 uv run foremanctl --help
 ```
 
+The full run includes the `tests/e2e` browser tests, which need Node and a
+one-time `uv run --extra test playwright install chromium`. Run
+`uv run --extra test pytest tests/portal tests/api tests/workers -q` to skip them.
+
 `uv run foremanctl ...` is a contributor convenience. The public operator path is an installed bare `foremanctl` command.
 
 ## Model and credential split

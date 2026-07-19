@@ -76,6 +76,14 @@ uv run --extra test pytest tests/evals -v
 uv run --extra test pytest -q
 ```
 
+The last command also runs the `tests/e2e` browser tests, which build the React
+shell and drive Chromium. Install their prerequisites once:
+
+```bash
+npm --prefix frontend install
+uv run --extra test playwright install chromium
+```
+
 For packaging, release, installer, or entrypoint changes, also run:
 
 ```bash
