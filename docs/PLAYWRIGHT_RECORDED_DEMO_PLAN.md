@@ -1,5 +1,10 @@
 # Synthetic Playwright Recorded Demo Plan
 
+**Status: shipped 2026-07-19**, archived as
+`openspec/changes/archive/2026-07-19-playwright-recorded-demo/`. The demo drives
+a synthetic Claude-shaped stream — no real CLI, key, or network. Kept below as
+the design record.
+
 **Goal:** Add one unattended, fully synthetic Portal browser run proving the
 `DEMO_2099_SIMPLE_MD_LINK_CHECKER.md` workflow, including streamed Worker Run
 evidence while `Running` and final Review/Session Report state.

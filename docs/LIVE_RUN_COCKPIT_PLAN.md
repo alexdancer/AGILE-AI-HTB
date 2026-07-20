@@ -38,7 +38,12 @@ discarded, so there is no live view of the agent working.
 
 ---
 
-## Phase 1 — Live Run Cockpit (the slice to build now)
+## Phase 1 — Live Run Cockpit (shipped 2026-07-19)
+
+Shipped and archived as
+`openspec/changes/archive/2026-07-19-live-worker-run-streaming/`, with the
+browser proof in `.../2026-07-19-playwright-recorded-demo/`. The rest of this
+section is kept as the design record.
 
 Read the agent's stream incrementally, persist each event to the existing
 `worker_run_events` table as it arrives, and render a live feed in the Portal —
