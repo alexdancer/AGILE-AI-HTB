@@ -263,13 +263,12 @@ class ControlPlaneSettingsRequest(BaseModel):
 # (JSON handoff and React shell) consumes this list so the dropdown cannot drift
 # between surfaces.
 CURATED_CONTROL_PLANE_MODELS: tuple[tuple[str, str, str], ...] = (
-    ("openai", "gpt-5.4", "OpenAI · gpt-5.4"),
-    ("openai", "gpt-5.4-mini", "OpenAI · gpt-5.4-mini"),
-    ("openai", "gpt-5.5", "OpenAI · gpt-5.5"),
+    ("openai", "gpt-5.6-sol", "OpenAI · gpt-5.6-sol"),
+    ("openai", "gpt-5.6-terra", "OpenAI · gpt-5.6-terra"),
+    ("openai", "gpt-5.6-luna", "OpenAI · gpt-5.6-luna"),
     ("anthropic", "claude-fable-5", "Anthropic · Claude Fable 5"),
     ("anthropic", "claude-sonnet-5", "Anthropic · Claude Sonnet 5"),
     ("anthropic", "claude-opus-4-8", "Anthropic · Claude Opus 4.8"),
-    ("anthropic", "claude-sonnet-4-6", "Anthropic · Claude Sonnet 4.6"),
     ("anthropic", "claude-haiku-4-5", "Anthropic · Claude Haiku 4.5"),
     ("openrouter", "anthropic/claude-sonnet-5", "OpenRouter · Claude Sonnet 5 (recommended)"),
     ("openrouter", "openai/gpt-5.6-terra", "OpenRouter · GPT-5.6 Terra (recommended)"),

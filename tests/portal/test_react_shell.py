@@ -1550,7 +1550,7 @@ def test_react_board_projection_uses_exact_nested_allowlists_and_safe_evidence()
         "native_usage_override_ack_text": "Acknowledge DEMO native usage",
         "active_worker_run_id": "wr_DEMO_999",
         "launch_adapter_id": "codex",
-        "launch_model": "gpt-5.4",
+        "launch_model": "gpt-5.6-terra",
         "tracking_mode": "native_usage",
         "usage_source": "worker",
         "worker_run_status": "completed",
@@ -1616,7 +1616,7 @@ def test_react_board_projection_uses_exact_nested_allowlists_and_safe_evidence()
         "board_empty_states": {column: f"No {column}" for column in columns},
         "adapters": [{
             "id": "codex", "name": "Codex", "is_default": True, "launchable": True,
-            "supported_models": ["gpt-5.4"], "tracking_label": "Native",
+            "supported_models": ["gpt-5.6-terra"], "tracking_label": "Native",
             "tracking": {
                 "mode": "native_usage", "runtime_request_guardrails": True,
                 "accounting": "authoritative", "budget_authoritative": True,
@@ -1627,7 +1627,7 @@ def test_react_board_projection_uses_exact_nested_allowlists_and_safe_evidence()
             column: ([{
                 "id": "task_DEMO_999", "status": "Review", "description": "Review DEMO task",
                 "estimate_tokens": 9000, "actual_tokens": 4000,
-                "recommended_model": "gpt-5.4", "session_id": "sess_DEMO_999",
+                "recommended_model": "gpt-5.6-terra", "session_id": "sess_DEMO_999",
                 "metadata": metadata,
             }] if column == "Review" else [])
             for column in columns
@@ -2914,7 +2914,7 @@ def test_react_worker_settings_mutation_json_allowed_models_success_and_rejectio
         success = client.post(
             "/settings/workers/codex/allowed-models",
             headers=headers,
-            json={"allowed_models": ["gpt-5.4"]},
+            json={"allowed_models": ["gpt-5.6-terra"]},
         )
         reject = client.post(
             "/settings/workers/codex/allowed-models",
@@ -2925,7 +2925,7 @@ def test_react_worker_settings_mutation_json_allowed_models_success_and_rejectio
     assert success.json()["ok"] is True
     assert success.json()["error"] is None
     adapter = db.get_worker_adapter(database_path, "codex")
-    assert adapter["supported_models"] == ["gpt-5.4"]
+    assert adapter["supported_models"] == ["gpt-5.6-terra"]
 
     assert reject.status_code == 200
     assert reject.json()["ok"] is False
@@ -2941,7 +2941,7 @@ def test_react_worker_settings_mutation_html_allowed_models_redirect_preserved(
         success = client.post(
             "/settings/workers/codex/allowed-models",
             headers=_portal_headers(),
-            data={"allowed_models": "gpt-5.4"},
+            data={"allowed_models": "gpt-5.6-terra"},
             follow_redirects=False,
         )
         reject = client.post(
@@ -3055,12 +3055,12 @@ def test_react_worker_settings_verify_json_shape_unchanged(
             database_path,
             "codex",
             config={"allowed_models_configured": True},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
         )
         response = client.post(
             "/settings/workers/codex/verify",
             headers=headers,
-            json={"model": "gpt-5.4", "tracking_mode": "native_usage"},
+            json={"model": "gpt-5.6-terra", "tracking_mode": "native_usage"},
         )
     assert response.status_code == 200
     payload = response.json()

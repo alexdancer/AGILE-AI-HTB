@@ -117,10 +117,7 @@ def test_claude_code_discovery_route_uses_curated_inventory_and_preserves_adapte
     assert claude["model_discovery_label"] == "Curated model inventory"
     expected_curated = {
         "claude-opus-4-8",
-        "claude-opus-4-7",
-        "claude-opus-4-6",
         "claude-sonnet-5",
-        "claude-sonnet-4-6",
         "claude-haiku-4-5",
     }
     assert expected_curated <= set(claude["discovered_models"])

@@ -124,7 +124,7 @@ def test_write_capable_codex_native_launch_blocks_non_git_project_before_runner(
         "codex",
         workdir=str(root),
         config={"command": "codex"},
-        supported_models=["gpt-5.4"],
+        supported_models=["gpt-5.6-terra"],
         is_default=True,
     )
     db.mark_worker_adapter_verification(
@@ -138,7 +138,7 @@ def test_write_capable_codex_native_launch_blocks_non_git_project_before_runner(
         description="Write Codex change",
         status="Ready",
         estimate_tokens=1000,
-        recommended_model="gpt-5.4",
+        recommended_model="gpt-5.6-terra",
         metadata={**project_task_metadata(project), "launch_mode": "write_capable"},
     )
     calls = []

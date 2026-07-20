@@ -37,7 +37,7 @@ def _configure_codex_worker(db_path: Path, tmp_path: Path, *, tracking_mode: str
         "codex",
         workdir=str(tmp_path),
         config={"launch_template": ["codex", "--model", "{model}"]},
-        supported_models=["gpt-5.4"],
+        supported_models=["gpt-5.6-terra"],
         is_default=True,
     )
     db.mark_worker_adapter_verification(
@@ -249,7 +249,7 @@ def test_launch_blocks_unverified_adapter_without_session_or_runner(tmp_path, mo
             json={
                 "description": "Launch only after token proof",
                 "estimate_tokens": 8000,
-                "recommended_model": "gpt-5.4",
+                "recommended_model": "gpt-5.6-terra",
             },
         ).json()
         db.update_worker_adapter(
@@ -257,7 +257,7 @@ def test_launch_blocks_unverified_adapter_without_session_or_runner(tmp_path, mo
             "codex",
             workdir=str(tmp_path),
             config={"command": "codex"},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
             is_default=True,
         )
 
@@ -342,7 +342,7 @@ def test_codex_launch_rejects_disallowed_model_before_runner(tmp_path, monkeypat
             description="Launch unsupported Codex model",
             status="Estimated",
             estimate_tokens=9000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(project),
         )
         db.update_worker_adapter(
@@ -350,7 +350,7 @@ def test_codex_launch_rejects_disallowed_model_before_runner(tmp_path, monkeypat
             "codex",
             workdir=str(project["root_path"]),
             config={"command": "codex"},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(
@@ -388,7 +388,7 @@ def test_launch_verified_adapter_creates_running_session_and_redacts_raw_session
             json={
                 "description": "Implement launch button",
                 "estimate_tokens": 8000,
-                "recommended_model": "gpt-5.4",
+                "recommended_model": "gpt-5.6-terra",
             },
         ).json()
         db.update_worker_adapter(
@@ -396,7 +396,7 @@ def test_launch_verified_adapter_creates_running_session_and_redacts_raw_session
             "codex",
             workdir=str(tmp_path),
             config={"launch_template": ["codex", "--model", "{model}", "--prompt", "{prompt}"]},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -455,7 +455,7 @@ def test_launch_sanitizes_runner_output_everywhere(tmp_path, monkeypatch):
                 "description": "Do not leak runner output secrets",
                 "project_id": project["id"],
                 "estimate_tokens": 8000,
-                "recommended_model": "gpt-5.4",
+                "recommended_model": "gpt-5.6-terra",
             },
         ).json()
         db.update_worker_adapter(
@@ -463,7 +463,7 @@ def test_launch_sanitizes_runner_output_everywhere(tmp_path, monkeypatch):
             "codex",
             workdir=str(tmp_path),
             config={"command": "codex"},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -522,7 +522,7 @@ def test_board_form_launch_uses_default_proxy_for_verified_default_adapter(
             json={
                 "description": "Launch from board form",
                 "estimate_tokens": 8000,
-                "recommended_model": "gpt-5.4",
+                "recommended_model": "gpt-5.6-terra",
             },
         ).json()
         db.update_worker_adapter(
@@ -530,7 +530,7 @@ def test_board_form_launch_uses_default_proxy_for_verified_default_adapter(
             "codex",
             workdir=str(tmp_path),
             config={"launch_template": ["codex", "--model", "{model}"]},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -582,7 +582,7 @@ def test_codex_native_launch_records_normalized_usage_and_exec_command(tmp_path,
             description="Implement DEMO_2099 Codex native usage accounting",
             status="Estimated",
             estimate_tokens=9000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(project),
         )
         db.update_worker_adapter(
@@ -590,7 +590,7 @@ def test_codex_native_launch_records_normalized_usage_and_exec_command(tmp_path,
             "codex",
             workdir=str(tmp_path),
             config={"command": "codex"},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(
@@ -603,7 +603,7 @@ def test_codex_native_launch_records_normalized_usage_and_exec_command(tmp_path,
         response = client.post(
             f"/tasks/{task['id']}/launch",
             headers=_auth_headers(),
-            json={"adapter_id": "codex", "model": "gpt-5.4", "proxy_url": "http://127.0.0.1:8000/v1"},
+            json={"adapter_id": "codex", "model": "gpt-5.6-terra", "proxy_url": "http://127.0.0.1:8000/v1"},
         )
         _wait_for_worker_run(tmp_path / "harness.db", task["id"], "completed")
         refreshed = db.get_task(tmp_path / "harness.db", task["id"])
@@ -622,7 +622,7 @@ def test_codex_native_launch_records_normalized_usage_and_exec_command(tmp_path,
         "--sandbox",
         "workspace-write",
         "-m",
-        "gpt-5.4",
+        "gpt-5.6-terra",
     ]
     assert runner_calls[0].command[-3:-1] == ["--cd", project_root]
     assert runner_calls[0].cwd == Path(project_root)
@@ -635,7 +635,7 @@ def test_codex_native_launch_records_normalized_usage_and_exec_command(tmp_path,
         "--sandbox",
         "workspace-write",
         "-m",
-        "gpt-5.4",
+        "gpt-5.6-terra",
     ]
     assert refreshed["metadata"]["launch_command_plan"]["cwd"] == project_root
     assert refreshed["metadata"]["launch_command_plan"]["metadata"]["project_root"] == project_root
@@ -664,7 +664,7 @@ def test_codex_native_read_only_non_git_mutation_blocks_task(tmp_path, monkeypat
             description="Read only DEMO_2099 Codex task",
             status="Estimated",
             estimate_tokens=9000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata={**project_task_metadata(project), "launch_mode": "read_only"},
         )
         db.update_worker_adapter(
@@ -672,7 +672,7 @@ def test_codex_native_read_only_non_git_mutation_blocks_task(tmp_path, monkeypat
             "codex",
             workdir=str(project["root_path"]),
             config={"command": "codex"},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(
@@ -685,7 +685,7 @@ def test_codex_native_read_only_non_git_mutation_blocks_task(tmp_path, monkeypat
         response = client.post(
             f"/tasks/{task['id']}/launch",
             headers=_auth_headers(),
-            json={"adapter_id": "codex", "model": "gpt-5.4"},
+            json={"adapter_id": "codex", "model": "gpt-5.6-terra"},
         )
         _wait_for_worker_run(tmp_path / "harness.db", task["id"], "failed")
         blocked = db.get_task(tmp_path / "harness.db", task["id"])
@@ -710,7 +710,7 @@ def test_codex_native_launch_failed_exit_does_not_record_costless_usage(tmp_path
             description="Fail DEMO_2099 Codex native usage accounting",
             status="Estimated",
             estimate_tokens=9000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(project),
         )
         db.update_worker_adapter(
@@ -718,7 +718,7 @@ def test_codex_native_launch_failed_exit_does_not_record_costless_usage(tmp_path
             "codex",
             workdir=str(tmp_path),
             config={"command": "codex"},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(
@@ -731,7 +731,7 @@ def test_codex_native_launch_failed_exit_does_not_record_costless_usage(tmp_path
         response = client.post(
             f"/tasks/{task['id']}/launch",
             headers=_auth_headers(),
-            json={"adapter_id": "codex", "model": "gpt-5.4", "proxy_url": "http://127.0.0.1:8000/v1"},
+            json={"adapter_id": "codex", "model": "gpt-5.6-terra", "proxy_url": "http://127.0.0.1:8000/v1"},
         )
         _wait_for_worker_run(tmp_path / "harness.db", task["id"], "failed")
         refreshed = db.get_task(tmp_path / "harness.db", task["id"])
@@ -761,7 +761,7 @@ def test_board_shows_codex_trusted_directory_failure_as_retryable_setup_diagnost
             description="DEMO_2099 Codex trust diagnostic task",
             status="Estimated",
             estimate_tokens=9000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(project),
         )
         db.update_worker_adapter(
@@ -769,7 +769,7 @@ def test_board_shows_codex_trusted_directory_failure_as_retryable_setup_diagnost
             "codex",
             workdir=str(project["root_path"]),
             config={"command": "codex"},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(
@@ -782,7 +782,7 @@ def test_board_shows_codex_trusted_directory_failure_as_retryable_setup_diagnost
         response = client.post(
             f"/tasks/{task['id']}/launch",
             headers={**_auth_headers(), "accept": "text/html"},
-            data={"adapter_id": "codex", "model": "gpt-5.4"},
+            data={"adapter_id": "codex", "model": "gpt-5.6-terra"},
             follow_redirects=False,
         )
         _wait_for_worker_run(tmp_path / "harness.db", task["id"], "failed")
@@ -826,7 +826,7 @@ def test_codex_native_sandbox_rejection_with_zero_exit_stays_retryable(tmp_path,
             description="DEMO_2099 Codex sandbox rejected venv setup",
             status="Estimated",
             estimate_tokens=9000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(project),
         )
         db.update_worker_adapter(
@@ -834,7 +834,7 @@ def test_codex_native_sandbox_rejection_with_zero_exit_stays_retryable(tmp_path,
             "codex",
             workdir=str(project["root_path"]),
             config={"command": "codex"},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(
@@ -847,7 +847,7 @@ def test_codex_native_sandbox_rejection_with_zero_exit_stays_retryable(tmp_path,
         response = client.post(
             f"/tasks/{task['id']}/launch",
             headers=_auth_headers(),
-            json={"adapter_id": "codex", "model": "gpt-5.4", "proxy_url": "http://127.0.0.1:8000/v1"},
+            json={"adapter_id": "codex", "model": "gpt-5.6-terra", "proxy_url": "http://127.0.0.1:8000/v1"},
         )
         run = _wait_for_worker_run(tmp_path / "harness.db", task["id"], "failed")
         refreshed = db.get_task(tmp_path / "harness.db", task["id"])
@@ -875,7 +875,7 @@ def test_board_form_recoverable_launch_error_stays_on_task_card_with_launch_form
                 "description": "Retryable DEMO launch timeout 2099",
                 "status": "Ready",
                 "estimate_tokens": 8000,
-                "recommended_model": "gpt-5.4",
+                "recommended_model": "gpt-5.6-terra",
             },
         ).json()
         db.update_worker_adapter(
@@ -883,7 +883,7 @@ def test_board_form_recoverable_launch_error_stays_on_task_card_with_launch_form
             "codex",
             workdir=str(tmp_path),
             config={"launch_template": ["codex", "--model", "{model}"]},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -954,7 +954,7 @@ def test_react_refresh_returns_stable_json_outcome(tmp_path, monkeypatch, matchi
         session = db.create_session(
             database_path,
             task_description="Refresh completed DEMO task",
-            model="gpt-5.4",
+            model="gpt-5.6-terra",
             session_key_hash="r" * 64,
             guardrail_overrides={},
             status="completed",
@@ -1017,7 +1017,7 @@ def test_project_board_status_endpoint_reports_terminal_worker_run_without_manua
             json={
                 "description": "Launch for live refresh",
                 "estimate_tokens": 8000,
-                "recommended_model": "gpt-5.4",
+                "recommended_model": "gpt-5.6-terra",
             },
         ).json()
         project_id = task["metadata"]["connected_project_id"]
@@ -1026,7 +1026,7 @@ def test_project_board_status_endpoint_reports_terminal_worker_run_without_manua
             "codex",
             workdir=str(tmp_path),
             config={"launch_template": ["codex", "--model", "{model}"]},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -1077,7 +1077,7 @@ def test_project_run_next_launches_one_project_task_with_automation_metadata(
             description="first automated task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(project),
         )
         second = db.create_task(
@@ -1085,7 +1085,7 @@ def test_project_run_next_launches_one_project_task_with_automation_metadata(
             description="second automated task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(project),
         )
         db.update_worker_adapter(
@@ -1093,7 +1093,7 @@ def test_project_run_next_launches_one_project_task_with_automation_metadata(
             "codex",
             workdir=str(tmp_path),
             config={"launch_template": ["codex", "--model", "{model}"]},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -1216,7 +1216,7 @@ def test_project_run_queue_launches_next_after_review_without_cross_project_fall
             description="first queue task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(project),
         )
         second = db.create_task(
@@ -1224,7 +1224,7 @@ def test_project_run_queue_launches_next_after_review_without_cross_project_fall
             description="second queue task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(project),
         )
         other = db.create_task(
@@ -1232,7 +1232,7 @@ def test_project_run_queue_launches_next_after_review_without_cross_project_fall
             description="other project task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(other_project),
         )
         db.update_worker_adapter(
@@ -1240,7 +1240,7 @@ def test_project_run_queue_launches_next_after_review_without_cross_project_fall
             "codex",
             workdir=str(tmp_path),
             config={"launch_template": ["codex", "--model", "{model}"]},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -1273,7 +1273,7 @@ def test_project_run_queue_stops_before_budget_override(tmp_path, monkeypatch):
             description="over budget queue task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(project),
         )
         _configure_codex_worker(tmp_path / "harness.db", tmp_path)
@@ -1296,7 +1296,7 @@ def test_project_run_queue_stops_before_native_usage_acknowledgement(tmp_path, m
             description="native usage budget queue task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(project),
         )
         _configure_codex_worker(tmp_path / "harness.db", tmp_path, tracking_mode="native_usage")
@@ -1321,7 +1321,7 @@ def test_project_run_queue_stops_on_observed_only_adapter(tmp_path, monkeypatch)
             description="observed only queue task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(project),
         )
         _configure_codex_worker(tmp_path / "harness.db", tmp_path, tracking_mode="observed_only")
@@ -1357,7 +1357,7 @@ def test_project_run_queue_stops_on_retryable_worker_failure(tmp_path, monkeypat
             description="retryable queue task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(project),
         )
         _configure_codex_worker(tmp_path / "harness.db", tmp_path)
@@ -1389,7 +1389,7 @@ def test_project_run_queue_does_not_relaunch_retryable_task_without_active_point
             description="paused retryable queue task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata={**project_task_metadata(project), "launch_retryable": True, "active_worker_run_id": "wr_DEMO_999"},
         )
         _configure_codex_worker(tmp_path / "harness.db", tmp_path)
@@ -1418,7 +1418,7 @@ def test_project_run_queue_stops_retryable_task_with_stale_active_worker_pointer
             description="stale active worker retryable queue task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata={**project_task_metadata(project), "launch_retryable": True},
         )
         portal_routes.start_run_automation(
@@ -1506,7 +1506,7 @@ def test_launch_accepts_manual_estimate_payload_before_guardrails(tmp_path, monk
             "codex",
             workdir=str(tmp_path),
             config={"command": "codex"},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -1514,7 +1514,7 @@ def test_launch_accepts_manual_estimate_payload_before_guardrails(tmp_path, monk
         response = client.post(
             f"/tasks/{task['id']}/launch",
             headers=_auth_headers(),
-            json={"adapter_id": "codex", "model": "gpt-5.4", "estimate_tokens": 9000},
+            json={"adapter_id": "codex", "model": "gpt-5.6-terra", "estimate_tokens": 9000},
         )
         _wait_for_worker_run(tmp_path / "harness.db", task["id"], "completed")
 
@@ -1522,7 +1522,7 @@ def test_launch_accepts_manual_estimate_payload_before_guardrails(tmp_path, monk
     assert response.status_code == 200
     assert body["task"]["status"] == "Running"
     assert body["task"]["estimate_tokens"] == 9000
-    assert body["task"]["recommended_model"] == "gpt-5.4"
+    assert body["task"]["recommended_model"] == "gpt-5.6-terra"
     assert body["task"]["metadata"]["estimation_source"] == "manual"
     assert runner_calls[0].env["OPENAI_BASE_URL"] == "http://127.0.0.1:8000/v1"
 
@@ -1536,21 +1536,21 @@ def test_launch_done_with_manual_estimate_payload_stays_done_without_session_or_
             description="Already done",
             status="Done",
             estimate_tokens=8000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
         )
         before_sessions = len(db.list_sessions(tmp_path / "harness.db"))
 
         response = client.post(
             f"/tasks/{task['id']}/launch",
             headers=_auth_headers(),
-            json={"adapter_id": "codex", "model": "gpt-5.4", "estimate_tokens": 9000},
+            json={"adapter_id": "codex", "model": "gpt-5.6-terra", "estimate_tokens": 9000},
         )
         after = db.get_task(tmp_path / "harness.db", task["id"])
 
     assert response.status_code == 409
     assert after["status"] == "Done"
     assert after["estimate_tokens"] == 8000
-    assert after["recommended_model"] == "gpt-5.4"
+    assert after["recommended_model"] == "gpt-5.6-terra"
     assert len(db.list_sessions(tmp_path / "harness.db")) == before_sessions
     assert runner_calls == []
 
@@ -1570,7 +1570,7 @@ def test_launch_second_call_after_running_claim_is_rejected_without_second_runne
             json={
                 "description": "Launch once only",
                 "estimate_tokens": 8000,
-                "recommended_model": "gpt-5.4",
+                "recommended_model": "gpt-5.6-terra",
             },
         ).json()
         db.update_worker_adapter(
@@ -1578,7 +1578,7 @@ def test_launch_second_call_after_running_claim_is_rejected_without_second_runne
             "codex",
             workdir=str(tmp_path),
             config={"command": "codex"},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -1615,7 +1615,7 @@ def test_duplicate_launch_rejects_mismatched_project_before_active_run_reuse(tmp
             json={
                 "description": "Launch only from bound board",
                 "estimate_tokens": 8000,
-                "recommended_model": "gpt-5.4",
+                "recommended_model": "gpt-5.6-terra",
             },
         ).json()
         project_a = db.get_connected_project(tmp_path / "harness.db", task["metadata"]["connected_project_id"])
@@ -1633,7 +1633,7 @@ def test_duplicate_launch_rejects_mismatched_project_before_active_run_reuse(tmp
             "codex",
             workdir=str(tmp_path),
             config={"command": "codex"},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -1663,7 +1663,7 @@ def test_launch_rejects_invalid_manual_estimate_tokens(tmp_path, monkeypatch, es
         response = client.post(
             f"/tasks/{task['id']}/launch",
             headers=_auth_headers(),
-            json={"model": "gpt-5.4", "estimate_tokens": estimate_tokens},
+            json={"model": "gpt-5.6-terra", "estimate_tokens": estimate_tokens},
         )
 
     assert response.status_code == 422
@@ -1680,7 +1680,7 @@ def test_launch_is_status_gated_without_session_or_runner(tmp_path, monkeypatch,
             session_id = db.create_session(
                 tmp_path / "harness.db",
                 task_description="Already running",
-                model="gpt-5.4",
+                model="gpt-5.6-terra",
                 session_key_hash="d" * 64,
                 guardrail_overrides={},
                 status="running",
@@ -1690,14 +1690,14 @@ def test_launch_is_status_gated_without_session_or_runner(tmp_path, monkeypatch,
             description=f"{status} task",
             status=status,
             estimate_tokens=8000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             session_id=session_id,
         )
         before_sessions = len(db.list_sessions(tmp_path / "harness.db"))
         response = client.post(
             f"/tasks/{task['id']}/launch",
             headers=_auth_headers(),
-            json={"adapter_id": "codex", "model": "gpt-5.4"},
+            json={"adapter_id": "codex", "model": "gpt-5.6-terra"},
         )
         after = db.get_task(tmp_path / "harness.db", task["id"])
 
@@ -1752,14 +1752,14 @@ def test_fake_worker_token_row_after_launch_appears_in_session_report(tmp_path, 
         client.app.state.task_launch_runner = fake_runner
         task = client.post(
             "/tasks",
-            json={"description": "Record worker tokens", "estimate_tokens": 8000, "recommended_model": "gpt-5.4"},
+            json={"description": "Record worker tokens", "estimate_tokens": 8000, "recommended_model": "gpt-5.6-terra"},
         ).json()
         db.update_worker_adapter(
             tmp_path / "harness.db",
             "codex",
             workdir=str(tmp_path),
             config={"command": "codex"},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(tmp_path / "harness.db", "codex", verified=True, evidence={"ok": True})
@@ -1882,7 +1882,7 @@ def test_project_run_queue_auto_agent_review_stores_advisory_evidence(tmp_path, 
             description="auto review queue task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(project),
         )
         _configure_codex_worker(tmp_path / "harness.db", tmp_path)
@@ -1936,7 +1936,7 @@ def test_project_run_queue_auto_agent_review_failure_leaves_review(tmp_path, mon
             description="failing auto review queue task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(project),
         )
         _configure_codex_worker(tmp_path / "harness.db", tmp_path)
@@ -1975,7 +1975,7 @@ def test_project_run_queue_waits_when_manual_project_run_is_active(tmp_path, mon
             description="manual running project task",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(project),
         )
         queued = db.create_task(
@@ -1983,7 +1983,7 @@ def test_project_run_queue_waits_when_manual_project_run_is_active(tmp_path, mon
             description="queued task must wait",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(project),
         )
         _configure_codex_worker(tmp_path / "harness.db", tmp_path)
@@ -2008,7 +2008,7 @@ def test_auto_agent_review_claim_is_single_use(tmp_path):
         description="review claim task",
         status="Review",
         estimate_tokens=8000,
-        recommended_model="gpt-5.4",
+        recommended_model="gpt-5.6-terra",
         metadata={},
     )
 
@@ -2056,7 +2056,7 @@ def test_project_run_queue_honors_stop_after_auto_review_before_next_launch(tmp_
             description="first queue task before stop",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(project),
         )
         second = db.create_task(
@@ -2064,7 +2064,7 @@ def test_project_run_queue_honors_stop_after_auto_review_before_next_launch(tmp_
             description="second queue task must not launch after stop",
             status="Estimated",
             estimate_tokens=8000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(project),
         )
         _configure_codex_worker(tmp_path / "harness.db", tmp_path)
@@ -2091,7 +2091,7 @@ def test_project_run_queue_auto_agent_review_skips_without_completed_evidence(tm
             description="review task without completed evidence",
             status="Review",
             estimate_tokens=8000,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_task_metadata(project),
         )
         portal_routes.start_run_automation(

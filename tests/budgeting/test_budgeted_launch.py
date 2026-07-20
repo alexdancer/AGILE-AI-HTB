@@ -328,7 +328,7 @@ def test_default_adapter_selection_skips_observed_only_adapter(tmp_path):
         "codex",
         workdir=str(tmp_path),
         config={"launch_template": ["codex", "--model", "{model}"]},
-        supported_models=["gpt-5.4"],
+        supported_models=["gpt-5.6-terra"],
     )
     db.mark_worker_adapter_verification(db_path, "codex", verified=True, evidence={"ok": True})
     task = db.create_task(
@@ -336,7 +336,7 @@ def test_default_adapter_selection_skips_observed_only_adapter(tmp_path):
         description="Use launchable default fallback",
         status="Estimated",
         estimate_tokens=50,
-        recommended_model="gpt-5.4",
+        recommended_model="gpt-5.6-terra",
         metadata={**project_task_metadata(project), "budget": {"daily_used_tokens": 0, "daily_cap_tokens": 100}},
     )
 

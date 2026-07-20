@@ -5,7 +5,17 @@ from dataclasses import dataclass
 from typing import Any
 
 
-CODEX_NATIVE_MODELS = {"5.3-codex-spark", "5.4", "5.4-mini", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5"}
+CODEX_NATIVE_MODELS = {
+    "5.3-codex-spark",
+    "5.4",
+    "5.4-mini",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.5",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+}
 
 
 @dataclass(frozen=True)

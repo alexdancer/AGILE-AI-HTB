@@ -1758,13 +1758,12 @@ function controlPlaneData(overrides = {}) {
     legacy_api_key_configured: false,
     shadowed_settings: {},
     curated_models: [
-      { provider: "openai", model: "gpt-5.4", label: "OpenAI · gpt-5.4" },
-      { provider: "openai", model: "gpt-5.4-mini", label: "OpenAI · gpt-5.4-mini" },
-      { provider: "openai", model: "gpt-5.5", label: "OpenAI · gpt-5.5" },
+      { provider: "openai", model: "gpt-5.6-sol", label: "OpenAI · gpt-5.6-sol" },
+      { provider: "openai", model: "gpt-5.6-terra", label: "OpenAI · gpt-5.6-terra" },
+      { provider: "openai", model: "gpt-5.6-luna", label: "OpenAI · gpt-5.6-luna" },
       { provider: "anthropic", model: "claude-fable-5", label: "Anthropic · Claude Fable 5" },
       { provider: "anthropic", model: "claude-sonnet-5", label: "Anthropic · Claude Sonnet 5" },
       { provider: "anthropic", model: "claude-opus-4-8", label: "Anthropic · Claude Opus 4.8" },
-      { provider: "anthropic", model: "claude-sonnet-4-6", label: "Anthropic · Claude Sonnet 4.6" },
       { provider: "anthropic", model: "claude-haiku-4-5", label: "Anthropic · Claude Haiku 4.5" },
       { provider: "openrouter", model: "anthropic/claude-sonnet-5", label: "OpenRouter · Claude Sonnet 5 (recommended)" },
       { provider: "openrouter", model: "openai/gpt-5.6-terra", label: "OpenRouter · GPT-5.6 Terra (recommended)" },
@@ -1786,7 +1785,7 @@ test("ControlPlaneSettings dataToForm resolves curated vs. custom models by prov
     {
       name: "a curated model for its own provider renders selected, not custom",
       provider: "anthropic",
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
       expectCustom: false,
     },
     {
@@ -1798,7 +1797,7 @@ test("ControlPlaneSettings dataToForm resolves curated vs. custom models by prov
     {
       name: "a curated model name reused under the wrong provider is custom",
       provider: "openai",
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
       expectCustom: true,
     },
     {
@@ -1937,7 +1936,7 @@ test("ControlPlaneSettings clears OpenRouter connection defaults when switching 
     renderer.root.findByProps({ id: "control-plane-api-key-env" }).props.value,
     "FOREMAN_AI_HQ_CONTROL_API_KEY",
   );
-  assert.equal(renderer.root.findByProps({ id: "control-plane-model" }).props.value, "gpt-5.4");
+  assert.equal(renderer.root.findByProps({ id: "control-plane-model" }).props.value, "gpt-5.6-sol");
   await act(async () => { renderer.unmount(); });
 });
 
