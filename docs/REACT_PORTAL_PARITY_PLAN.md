@@ -8,7 +8,7 @@
 
 **Current state:** A complete React build owns the authenticated front door, Dashboard, project workspace, normal governed Orchestration Board loop, Sessions/Session Report, canonical Task Breakdown Review, Project Task History, the Alarms inbox, all four Settings surfaces (Budget, Control Plane, Worker, Project), and Setup Overview. FastAPI returns the missing-build recovery response when the React index or any referenced asset is missing; there is no Jinja page left to fall back to.
 
-Every canonical Portal URL now renders React build-aware, including `/dashboard`, `/projects`, `/projects/{id}`, and `/projects/{id}/board`. `/app/*` are permanent redirect aliases to their canonical URLs, and `/board` stays a redirect shim onto the first connected project's board. Login stays server-rendered by decision, as the standalone Portal Recovery Surface.
+Every canonical Portal URL now renders React build-aware, including `/dashboard`, `/projects`, the Pipeline at `/projects/{id}`, and the Execution Floor at `/projects/{id}/floor`. `/app/*` and `/projects/{id}/board` are permanent redirect aliases to canonical URLs, and `/board` stays a redirect shim onto the first connected project's Pipeline. Login stays server-rendered by decision, as the standalone Portal Recovery Surface.
 
 ---
 

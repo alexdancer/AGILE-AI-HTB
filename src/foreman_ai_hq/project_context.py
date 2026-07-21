@@ -30,7 +30,7 @@ def task_project_board_path(task_or_metadata: dict[str, Any]) -> str:
     metadata = task_or_metadata.get("metadata") if "metadata" in task_or_metadata else task_or_metadata
     project_id = (metadata or {}).get("connected_project_id")
     if project_id:
-        return f"/projects/{project_id}/board"
+        return f"/projects/{project_id}"
     return "/board"
 
 

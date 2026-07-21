@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, TypedDict
 
 from foreman_ai_hq import db
 from foreman_ai_hq.native_usage import native_sentinel_matched, parse_native_usage_evidence
@@ -72,6 +72,12 @@ class Runner(Protocol):
     def __call__(self, plan: CommandPlan) -> Any: ...
 
 
+class CommonEvent(TypedDict):
+    kind: str
+    title: str
+    detail: dict[str, Any]
+
+
 class WorkerAdapterBuilder:
     api_key_env = "OPENAI_API_KEY"
     base_url_env = "OPENAI_BASE_URL"
@@ -83,6 +89,10 @@ class WorkerAdapterBuilder:
     def supports_model(self, model: str) -> bool:
         supported = allowed_worker_model_ids(self.adapter)
         return bool(supported and model in supported)
+
+    def map_stream_event(self, raw_line: str) -> CommonEvent | None:
+        payload = _stream_payload(raw_line)
+        return _generic_stream_event(payload) if payload is not None else None
 
     def build_verification_command(
         self,
@@ -282,6 +292,26 @@ class ClaudeCodeAdapterBuilder(WorkerAdapterBuilder):
     api_key_env = "ANTHROPIC_API_KEY"
     base_url_env = "ANTHROPIC_BASE_URL"
 
+    def map_stream_event(self, raw_line: str) -> CommonEvent | None:
+        payload = _stream_payload(raw_line)
+        if payload is None:
+            return None
+        message = payload.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, list):
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") == "tool_use":
+                    return _tool_stream_event(item.get("name"), item.get("input"))
+                if item.get("text"):
+                    return _message_stream_event(item["text"], title="Claude Code message")
+        if payload.get("type") == "result" and isinstance(payload.get("usage"), dict):
+            return _token_stream_event(payload["usage"])
+        if payload.get("result"):
+            return _message_stream_event(payload["result"], title="Claude Code result")
+        return _generic_stream_event(payload)
+
     def _default_native_verification_template(self) -> list[str]:
         return [
             "claude",
@@ -324,6 +354,19 @@ class ClaudeCodeAdapterBuilder(WorkerAdapterBuilder):
 class CodexAdapterBuilder(WorkerAdapterBuilder):
     api_key_env = "OPENAI_API_KEY"
     base_url_env = "OPENAI_BASE_URL"
+
+    def map_stream_event(self, raw_line: str) -> CommonEvent | None:
+        payload = _stream_payload(raw_line)
+        if payload is None:
+            return None
+        item = payload.get("item")
+        if isinstance(item, dict):
+            item_type = str(item.get("type") or "")
+            if item_type in {"agent_message", "message"}:
+                return _message_stream_event(item.get("text") or item.get("content"), title="Codex message")
+            if item_type in {"command_execution", "function_call", "tool_call"}:
+                return _tool_stream_event(item.get("name") or item.get("command"), item.get("arguments") or item.get("input"))
+        return _generic_stream_event(payload)
 
     def _default_native_verification_template(self) -> list[str]:
         command = self.config.get("command") or self.adapter["kind"]
@@ -402,6 +445,19 @@ class CodexAdapterBuilder(WorkerAdapterBuilder):
 class OpenCodeAdapterBuilder(WorkerAdapterBuilder):
     api_key_env = "OPENAI_API_KEY"
     base_url_env = "OPENAI_BASE_URL"
+
+    def map_stream_event(self, raw_line: str) -> CommonEvent | None:
+        payload = _stream_payload(raw_line)
+        if payload is None:
+            return None
+        part = payload.get("part")
+        part = part if isinstance(part, dict) else payload
+        event_type = str(payload.get("type") or part.get("type") or "")
+        if event_type in {"text", "message"}:
+            return _message_stream_event(part.get("text") or part.get("content"), title="OpenCode message")
+        if event_type in {"tool", "tool_use", "tool_call"}:
+            return _tool_stream_event(part.get("tool") or part.get("name"), part.get("input") or part.get("arguments"))
+        return _generic_stream_event(payload)
 
     def build_launch_command(
         self,
@@ -965,6 +1021,76 @@ def _json_line_payloads(text: str) -> list[dict[str, Any]]:
         if isinstance(payload, dict):
             payloads.append(payload)
     return payloads
+
+
+def _stream_payload(raw_line: str) -> dict[str, Any] | None:
+    line = raw_line.strip()
+    if line.startswith("data:"):
+        line = line[5:].strip()
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _message_stream_event(value: Any, *, title: str) -> CommonEvent | None:
+    text = _cli_text(value)
+    if not text:
+        return None
+    return {"kind": "agent_message", "title": title, "detail": {"text": _redact_value(text)[:1000]}}
+
+
+def _tool_stream_event(name: Any, arguments: Any) -> CommonEvent | None:
+    if not name:
+        return None
+    detail = _redact_value(json.dumps(arguments or {}, sort_keys=True, default=str))[:1000]
+    return {
+        "kind": "tool_call",
+        "title": f"Tool: {_redact_value(str(name))[:200]}",
+        "detail": {"arguments": detail},
+    }
+
+
+def _token_stream_event(usage: dict[str, Any]) -> CommonEvent | None:
+    values = {
+        key: value
+        for key, value in usage.items()
+        if key in {"input_tokens", "output_tokens", "prompt_tokens", "completion_tokens", "total_tokens"}
+        and isinstance(value, int)
+        and not isinstance(value, bool)
+        and value >= 0
+    }
+    return {"kind": "token", "title": "Provisional usage", "detail": values} if values else None
+
+
+def _generic_stream_event(payload: dict[str, Any]) -> CommonEvent | None:
+    event_type = payload.get("type") or payload.get("event")
+    if event_type in {"error", "failed", "status", "started"}:
+        return {
+            "kind": "status",
+            "title": _redact_value(str(event_type))[:200],
+            "detail": {"status": _redact_value(str(payload.get("status") or event_type))[:500]},
+        }
+    usage = payload.get("usage")
+    if isinstance(usage, dict):
+        token = _token_stream_event(usage)
+        if token is not None:
+            return token
+    for name_key, arguments_key in (("tool", "input"), ("name", "arguments")):
+        if payload.get(name_key) and (payload.get(arguments_key) is not None or payload.get("type") in {"tool", "tool_call", "tool_use"}):
+            return _tool_stream_event(payload[name_key], payload.get(arguments_key))
+    for key in ("text", "result", "message", "content"):
+        event = _message_stream_event(payload.get(key), title="Worker message")
+        if event is not None:
+            return event
+    if event_type:
+        return {
+            "kind": "status",
+            "title": _redact_value(str(event_type))[:200],
+            "detail": {"status": _redact_value(str(payload.get("status") or event_type))[:500]},
+        }
+    return None
 
 
 def _cli_payload_text(payload: dict[str, Any]) -> str | None:

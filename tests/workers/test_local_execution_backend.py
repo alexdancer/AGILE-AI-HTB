@@ -268,7 +268,7 @@ def test_read_only_proof_blocks_when_worker_modifies_files(tmp_path):
     _wait_for_worker_run(db_path, task["id"], "failed")
     blocked = db.get_task(db_path, task["id"])
 
-    assert blocked["status"] == "Blocked"
+    assert blocked["status"] == "Review"
     assert blocked["metadata"]["launch_blocked_reason"] == "Read-only Worker session modified the connected project."
     assert "src/" in blocked["metadata"]["readonly_diff_evidence"]["after"]
 
@@ -451,7 +451,7 @@ def test_native_worker_run_blocks_when_no_workdir_changes_are_produced(tmp_path)
     harness_target.mkdir()
     (harness_target / "README.md").write_text("# DEMO_2099\n")
     _connect_project(db_path, harness_target)
-    db.update_worker_adapter(db_path, "codex", workdir=str(harness_target), supported_models=["gpt-5.4"])
+    db.update_worker_adapter(db_path, "codex", workdir=str(harness_target), supported_models=["gpt-5.6-terra"])
     db.mark_worker_adapter_verification(db_path, "codex", verified=True, evidence={"tracking_mode": "native_usage"})
     task = _estimated_task(db_path)
 
@@ -459,9 +459,9 @@ def test_native_worker_run_blocks_when_no_workdir_changes_are_produced(tmp_path)
         db_path,
         task["id"],
         adapter_id="codex",
-        model="gpt-5.4",
+        model="gpt-5.6-terra",
         proxy_url="http://127.0.0.1:8000/v1",
-        runner=lambda plan: {"returncode": 0, "stdout": _native_usage_stdout("gpt-5.4"), "stderr": ""},
+        runner=lambda plan: {"returncode": 0, "stdout": _native_usage_stdout("gpt-5.6-terra"), "stderr": ""},
     )
     run = _wait_for_worker_run(db_path, task["id"], "failed")
     blocked = db.get_task(db_path, task["id"])
@@ -493,19 +493,19 @@ def test_native_worker_dirty_git_edit_is_not_misclassified_as_no_workdir_changes
     )
     readme.write_text("# DEMO_2099 dirty before\n")
     _connect_project(db_path, harness_target)
-    db.update_worker_adapter(db_path, "codex", workdir=str(harness_target), supported_models=["gpt-5.4"])
+    db.update_worker_adapter(db_path, "codex", workdir=str(harness_target), supported_models=["gpt-5.6-terra"])
     db.mark_worker_adapter_verification(db_path, "codex", verified=True, evidence={"tracking_mode": "native_usage"})
     task = _estimated_task(db_path)
 
     def runner(plan):
         readme.write_text("# DEMO_2099 dirty after\n")
-        return {"returncode": 0, "stdout": _native_usage_stdout("gpt-5.4"), "stderr": ""}
+        return {"returncode": 0, "stdout": _native_usage_stdout("gpt-5.6-terra"), "stderr": ""}
 
     launch_task(
         db_path,
         task["id"],
         adapter_id="codex",
-        model="gpt-5.4",
+        model="gpt-5.6-terra",
         proxy_url="http://127.0.0.1:8000/v1",
         runner=runner,
     )

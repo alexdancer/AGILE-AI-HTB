@@ -32,6 +32,7 @@ from foreman_ai_hq.auth import require_portal_auth
 from foreman_ai_hq.board_workspace import (
     BOARD_COLUMNS,
     board_page_context,
+    project_bound_tasks,
     project_board_counts,
     project_task_history_context,
     project_workspace_summary,
@@ -168,27 +169,38 @@ def react_shell_or_missing_build():
 
 
 @router.get("/app", dependencies=[Depends(require_portal_auth)])
-def react_app_alias() -> RedirectResponse:
+def react_app_alias(request: Request) -> RedirectResponse:
     """Permanent redirect for the retired ``/app`` alias.
 
     Nothing links here — slice 11b moved every target onto the canonical URLs.
     The redirect exists for operator bookmarks and external links only.
     """
 
-    return RedirectResponse("/dashboard", status_code=status.HTTP_301_MOVED_PERMANENTLY)
+    query = f"?{request.url.query}" if request.url.query else ""
+    return RedirectResponse(f"/dashboard{query}", status_code=status.HTTP_301_MOVED_PERMANENTLY)
 
 
 @router.get("/app/projects/{project_id}", dependencies=[Depends(require_portal_auth)])
-def react_app_project_alias(project_id: str) -> RedirectResponse:
+def react_app_project_alias(project_id: str, request: Request) -> RedirectResponse:
+    query = f"?{request.url.query}" if request.url.query else ""
     return RedirectResponse(
-        f"/projects/{project_id}", status_code=status.HTTP_301_MOVED_PERMANENTLY
+        f"/projects/{project_id}{query}", status_code=status.HTTP_301_MOVED_PERMANENTLY
     )
 
 
 @router.get("/app/projects/{project_id}/board", dependencies=[Depends(require_portal_auth)])
-def react_app_board_alias(project_id: str) -> RedirectResponse:
+def react_app_board_alias(project_id: str, request: Request) -> RedirectResponse:
+    query = f"?{request.url.query}" if request.url.query else ""
     return RedirectResponse(
-        f"/projects/{project_id}/board", status_code=status.HTTP_301_MOVED_PERMANENTLY
+        f"/projects/{project_id}{query}", status_code=status.HTTP_301_MOVED_PERMANENTLY
+    )
+
+
+@router.get("/app/projects/{project_id}/floor", dependencies=[Depends(require_portal_auth)])
+def react_app_floor_alias(project_id: str, request: Request) -> RedirectResponse:
+    query = f"?{request.url.query}" if request.url.query else ""
+    return RedirectResponse(
+        f"/projects/{project_id}/floor{query}", status_code=status.HTTP_301_MOVED_PERMANENTLY
     )
 
 
@@ -202,6 +214,7 @@ def react_portal_nav(request: Request):
     """
 
     context = portal_template_context(request)
+    database_path = request.app.state.settings.database_path
     return {
         "portal_auth_required": bool(context.get("portal_auth_required")),
         "sidebar_projects": [
@@ -209,6 +222,9 @@ def react_portal_nav(request: Request):
                 "id": str(project["id"]),
                 "name": project.get("name", ""),
                 "task_count": project.get("task_count", 0),
+                "needs_you_count": _needs_you_state(
+                    database_path, str(project["id"])
+                )["count"],
             }
             for project in context.get("sidebar_projects", [])
         ],
@@ -719,7 +735,7 @@ def _react_workspace_projection(project: dict, summary: dict) -> dict:
     summary = _mapping(summary)
     archived_at = _workspace_optional_string(project.get("archived_at"), 64)
     archived = archived_at is not None
-    board_href = None if archived else f"/projects/{project_id}/board"
+    board_href = None if archived else f"/projects/{project_id}"
     restore_href = f"/projects/{project_id}/restore" if archived else None
     counts = _workspace_counts(summary.get("counts"))
 
@@ -761,6 +777,7 @@ def _react_workspace_projection(project: dict, summary: dict) -> dict:
         },
         "links": {
             "board_href": board_href,
+            "floor_href": None if archived else f"/projects/{project_id}/floor",
             "task_history_href": f"/projects/{project_id}/task-history",
             "sessions_href": "/sessions",
             "worker_setup_href": "/settings/workers",
@@ -836,10 +853,12 @@ def _workspace_attention_actions(value, project_id: str) -> list[dict[str, str]]
 def _workspace_action_href(value, project_id: str) -> str | None:
     if not isinstance(value, str):
         return None
-    board_href = f"/projects/{project_id}/board"
+    board_href = f"/projects/{project_id}"
     allowed = {
         f"/projects/{project_id}/board": board_href,
         f"/app/projects/{project_id}/board": board_href,
+        f"/projects/{project_id}": board_href,
+        f"/projects/{project_id}/floor": f"/projects/{project_id}/floor",
         f"/projects/{project_id}/task-history": f"/projects/{project_id}/task-history",
         "/sessions": "/sessions",
         "/settings/workers": "/settings/workers",
@@ -869,6 +888,99 @@ def react_project_board_state(project_id: str, request: Request):
         default_proxy_url=DEFAULT_PROXY_URL,
     )
     return _react_board_projection(project, context)
+
+
+@router.get(
+    "/api/projects/{project_id}/needs-you",
+    dependencies=[Depends(require_portal_auth)],
+)
+def react_project_needs_you(project_id: str, request: Request):
+    database_path = request.app.state.settings.database_path
+    _ensure_project(database_path, project_id)
+    return _needs_you_state(database_path, project_id)
+
+
+def _needs_you_state(database_path, project_id: str) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    for breakdown in db.list_task_breakdowns_for_project(database_path, project_id):
+        failed = breakdown.get("status") == "failed"
+        intake_metadata = _mapping(breakdown.get("intake_metadata"))
+        candidates = breakdown.get("candidates")
+        items.append(
+            {
+                "id": f"breakdown:{breakdown['id']}",
+                "kind": "breakdown_review",
+                "title": "Task breakdown needs recovery" if failed else "Task breakdown awaits review",
+                "reason": _bounded_scalar(
+                    breakdown.get("error") or "Review proposed vertical slices before creating tasks.",
+                    1000,
+                ),
+                "action_label": "Retry or replace" if failed else "Review breakdown",
+                "href": f"/task-breakdowns/{breakdown['id']}/review",
+                "created_at": _optional_scalar(breakdown.get("created_at"), 64),
+                "source": _bounded_scalar(
+                    intake_metadata.get("source_name") or "Pasted task description",
+                    500,
+                ),
+                "candidate_count": len(candidates) if isinstance(candidates, list) else 0,
+                "status": _bounded_scalar(breakdown.get("status"), 64),
+                "breakdown_id": str(breakdown["id"]),
+                "task_id": None,
+            }
+        )
+
+    tasks = project_bound_tasks(db.list_tasks(database_path), project_id)
+    for task in tasks:
+        if db.task_is_archived(task):
+            continue
+        metadata = _mapping(task.get("metadata"))
+        blocked_condition = _mapping(metadata.get("blocked_condition"))
+        item = _needs_you_task_item(project_id, task, metadata, blocked_condition)
+        if item:
+            items.append(item)
+    priority = {
+        "breakdown_review": 0,
+        "manual_estimate": 1,
+        "launch_guardrail": 2,
+        "review_disposition": 3,
+        "budget_override": 4,
+    }
+    items.sort(key=lambda item: priority[item["kind"]])
+    return {"project_id": project_id, "count": len(items), "items": items}
+
+
+def _needs_you_task_item(
+    project_id: str,
+    task: dict[str, Any],
+    metadata: dict[str, Any],
+    blocked_condition: dict[str, Any],
+) -> dict[str, Any] | None:
+    kind = title = action_label = None
+    href = f"/projects/{project_id}#task-{task['id']}"
+    reason = blocked_condition.get("reason") or metadata.get("blocked_reason")
+    if task.get("status") == "Estimated" and metadata.get("budget_override_available"):
+        kind, title, action_label = "budget_override", "Budget override awaits approval", "Review budget override"
+    elif task.get("status") == "Estimated" and metadata.get("requires_manual_estimate"):
+        kind, title, action_label = "manual_estimate", "Task needs manual estimate", "Estimate task"
+    elif task.get("status") == "Estimated" and blocked_condition:
+        kind, title, action_label = "launch_guardrail", "Launch guardrail needs resolution", "Resolve launch blocker"
+    elif task.get("status") == "Review" and not metadata.get("review_decision"):
+        kind, title, action_label = "review_disposition", "Worker run awaits review", "Review evidence"
+        href = f"/projects/{project_id}/floor#task-{task['id']}"
+        reason = reason or "Choose Mark Done or Block after reviewing Worker evidence."
+    if kind is None:
+        return None
+    return {
+        "id": f"task:{task['id']}:{kind}",
+        "kind": kind,
+        "title": title,
+        "reason": _bounded_scalar(reason or title, 1000),
+        "action_label": action_label,
+        "href": href,
+        "created_at": _optional_scalar(task.get("created_at"), 64),
+        "breakdown_id": None,
+        "task_id": str(task["id"]),
+    }
 
 
 @router.get(
@@ -1108,13 +1220,15 @@ def _mapping(value) -> dict:
 
 def _react_task(task: dict) -> dict:
     metadata = _mapping(task.get("metadata"))
-    launch = _mapping(metadata.get("launch_diagnostic"))
-    failure = _mapping(metadata.get("last_launch_failure"))
-    review = _mapping(metadata.get("agent_review"))
-    findings = review.get("findings") or []
     raw_events = metadata.get("worker_run_events")
     events = [event for event in raw_events if isinstance(event, dict)] if isinstance(raw_events, list) else []
-    workdir_evidence = _mapping(metadata.get("workdir_evidence"))
+    blocked_condition = _mapping(metadata.get("blocked_condition"))
+    launch_diagnostic = _mapping(metadata.get("launch_diagnostic"))
+    launch_failure = _mapping(metadata.get("last_launch_failure"))
+    # A retryable run failure (not a guardrail block, which uses blocked_condition)
+    # keeps the task Estimated and launchable, so the card must still say why the
+    # last launch failed and let the operator retry — "show, don't reassure".
+    has_launch_failure = bool(metadata.get("last_launch_failure") or metadata.get("launch_error"))
     return {
         "id": task.get("id"),
         "status": task.get("status"),
@@ -1124,56 +1238,57 @@ def _react_task(task: dict) -> dict:
         "recommended_model": _optional_scalar(task.get("recommended_model"), 200),
         "launch_model": _optional_scalar(metadata.get("launch_model"), 200),
         "session_href": f"/sessions/{task['session_id']}" if task.get("session_id") else None,
+        "review_prompt": _bounded_text(metadata.get("review_prompt"), 4000),
+        "timeline": [
+            {
+                "id": _optional_number(event.get("id"), integer=True, minimum=0, maximum=10**15),
+                "created_at": _bounded_scalar(event.get("created_at"), 100),
+                "kind": _bounded_scalar(event.get("kind"), 100),
+                "layer": _bounded_scalar(event.get("layer"), 100),
+                "title": _bounded_scalar(event.get("title"), 400),
+                "detail_summary": _bounded_text(event.get("detail_summary") or event.get("detail"), 1000),
+            }
+            for event in events[-6:]
+        ],
+        "blocked_condition": {
+            "reason": _bounded_scalar(blocked_condition.get("reason"), 1000),
+            "origin": _bounded_scalar(blocked_condition.get("origin"), 100),
+            "timestamp": _optional_scalar(blocked_condition.get("timestamp"), 64),
+        } if blocked_condition else None,
+        # Slim, card-sized failure annotation only. The runner summary is a short
+        # preview (truncated flag set when longer); the full verbose stderr/stdout
+        # stays deferred to the session report, never inlined on the board card.
+        "launch_failure": {
+            "error": _bounded_text(metadata.get("launch_error"), 400),
+            "summary": _bounded_text(launch_failure.get("error") or launch_failure.get("stderr") or "", 240),
+            "returncode": _optional_number(
+                launch_failure.get("returncode"), integer=True, minimum=-(2**31), maximum=2**31 - 1
+            ),
+            "retryable": bool(metadata.get("launch_retryable")),
+            "diagnostic": _bounded_text(launch_diagnostic.get("summary"), 400),
+            "next_action": _bounded_text(launch_diagnostic.get("next_action"), 400),
+            "setup_href": _safe_local_href(launch_diagnostic.get("setup_href")),
+        } if has_launch_failure else None,
         "controls": {
             "can_launch": task.get("status") == "Estimated",
+            "requires_manual_estimate": bool(metadata.get("requires_manual_estimate")),
             "can_refresh": task.get("status") == "Running",
             "can_save_review_prompt": bool(metadata.get("review_actions_available")),
             "can_agent_review": bool(metadata.get("review_actions_available")),
             "can_mark_done": bool(metadata.get("review_actions_available")),
             "can_block": bool(metadata.get("review_actions_available")),
-            "can_archive": task.get("status") in {"Done", "Blocked"},
-            "can_dismiss": task.get("status") == "Estimated",
+            "can_archive": task.get("status") == "Done",
+            "can_dismiss": task.get("status") == "Estimated"
+            or (task.get("status") == "Review" and bool(blocked_condition)),
             "budget_override_available": bool(metadata.get("budget_override_available")),
             "native_usage_override_ack_required": bool(metadata.get("native_usage_override_ack_required")),
             "native_usage_override_ack_text": _optional_scalar(
                 metadata.get("native_usage_override_ack_text"), 1000
             ),
-            "setup_href": _safe_local_href(launch.get("setup_href")) or "/settings/workers",
-        },
-        "details": {
-            "task_body": _bounded_text(task.get("description"), 12000),
-            "token_components": _react_token_components(metadata.get("worker_token_components")),
-            "launch": {
-                "worker_run_id": _optional_scalar(metadata.get("active_worker_run_id"), 200), "adapter_id": _optional_scalar(metadata.get("launch_adapter_id"), 200),
-                "model": _optional_scalar(metadata.get("launch_model"), 200), "tracking_mode": _optional_scalar(metadata.get("tracking_mode"), 100),
-                "usage_source": _optional_scalar(metadata.get("usage_source"), 100), "status": _optional_scalar(metadata.get("worker_run_status"), 100),
-                "returncode": _optional_number(metadata.get("launch_returncode"), integer=True, minimum=-(2**31), maximum=2**31 - 1), "workdir": _optional_scalar(workdir_evidence.get("configured_workdir"), 1000),
-                "error": _bounded_text(metadata.get("launch_error"), 4000),
-                "blocked_reason": _bounded_text(metadata.get("launch_blocked_reason"), 4000),
-                "retryable_failure": {"returncode": _optional_number(failure.get("returncode"), integer=True, minimum=-(2**31), maximum=2**31 - 1), "summary": _bounded_text(failure.get("error") or failure.get("stderr") or "", 4000)},
-                "diagnostic": {"summary": _bounded_text(launch.get("summary"), 4000), "next_action": _bounded_text(launch.get("next_action"), 4000), "setup_href": _safe_local_href(launch.get("setup_href"))},
-            },
-            "timeline": [{"created_at": _bounded_scalar(event.get("created_at"), 100), "kind": _bounded_scalar(event.get("kind"), 100), "title": _bounded_scalar(event.get("title"), 400), "detail_summary": _bounded_text(event.get("detail_summary") or event.get("detail"), 1000)} for event in events[-6:]],
-            "logs": {"stdout": _bounded_text(failure.get("stdout") or metadata.get("launch_stdout"), 4000), "stderr": _bounded_text(failure.get("stderr"), 4000)},
-            "review": _react_review(metadata.get("review_prompt"), review, findings),
-            "blocked": {"reason": _bounded_text(metadata.get("blocked_reason"), 4000), "requires_manual_estimate": bool(metadata.get("requires_manual_estimate"))},
+            "setup_href": _safe_local_href(_mapping(metadata.get("launch_diagnostic")).get("setup_href"))
+            or "/settings/workers",
         },
     }
-
-
-def _react_token_components(components: dict | None) -> dict:
-    components = _mapping(components)
-    items = components.get("items")
-    return {"available": bool(components.get("available")), "items": [{"key": _bounded_scalar(item.get("key"), 100), "label": _bounded_scalar(item.get("label"), 200), "value": _bounded_scalar(item.get("value"), 400)} for item in (items if isinstance(items, list) else []) if isinstance(item, dict)], "cost": _optional_number(components.get("cost"), minimum=0, maximum=10**12), "turn_count": _optional_number(components.get("turn_count"), integer=True, minimum=0, maximum=10**9)}
-
-
-def _react_review(prompt, review: dict, findings) -> dict:
-    review = _mapping(review)
-    token_totals = _mapping(review.get("token_totals"))
-    finding_items = findings if isinstance(findings, list) else []
-    return {"prompt": _bounded_text(prompt, 4000), "agent_review": {"status": _optional_scalar(review.get("status"), 100), "recommendation": _optional_scalar(review.get("recommendation"), 100), "summary": _bounded_text(review.get("summary"), 4000), "failure": _bounded_text(review.get("error"), 4000), "findings": [{"severity": _bounded_scalar(finding.get("severity"), 40), "message": _bounded_text(finding.get("message"), 1000), "path": _optional_scalar(finding.get("path"), 400), "line": _optional_number(finding.get("line"), integer=True, minimum=0, maximum=10**9)} for finding in finding_items[:20] if isinstance(finding, dict)], "review_session_href": f"/sessions/{_bounded_scalar(review['review_session_id'], 200)}" if review.get("review_session_id") else None, "model": _optional_scalar(review.get("model"), 200), "token_total": _optional_number(token_totals.get("total_tokens"), integer=True, minimum=0, maximum=10**15)}}
-
-
 def _ensure_project(database_path, project_id: str) -> dict:
     try:
         return db.get_connected_project(database_path, project_id)

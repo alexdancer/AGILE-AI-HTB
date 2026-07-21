@@ -5,6 +5,7 @@ import asyncio
 import ipaddress
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Sequence
 
@@ -12,7 +13,7 @@ import uvicorn
 
 from foreman_ai_hq import db
 from foreman_ai_hq.adapter_readiness import evaluate_adapter_readiness
-from foreman_ai_hq.demo_seed import seed_demo_tasks
+from foreman_ai_hq.demo_seed import seed_demo_sandbox, seed_demo_tasks
 from foreman_ai_hq.llm import LLMClient
 from foreman_ai_hq.operator_config import (
     DEFAULT_CONFIG_PATH,
@@ -31,8 +32,16 @@ APP_REF = "foreman_ai_hq.app:create_app"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    if raw_argv and raw_argv[0] == "demo-worker":
+        # The synthetic Worker owns its own flags (--model, --workdir). Handing
+        # them to this parser first would let the shared options shadow them.
+        from foreman_ai_hq.demo_worker import main as demo_worker_main
+
+        return demo_worker_main(raw_argv[1:])
+
     parser = _build_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    args = parser.parse_args(raw_argv)
     command = args.command or "serve"
 
     if command == "init":
@@ -116,8 +125,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if command == "seed-demo":
         database_path = _arg_path(args, "seed_database_path", "global_database_path")
         db_path = Path(database_path or os.getenv("TOKEN_TRACKER_DATABASE_PATH", "harness.db"))
-        inserted = seed_demo_tasks(db_path)
-        print(f"seed-demo inserted {len(inserted)} synthetic DEMO tasks into {db_path}")
+        if not getattr(args, "with_project", False):
+            inserted = seed_demo_tasks(db_path)
+            print(f"seed-demo inserted {len(inserted)} synthetic DEMO tasks into {db_path}")
+            print("Tasks are board-visible but not launchable. Re-run with --with-project to connect a project.")
+            return 0
+        project_root = getattr(args, "project_root", None) or Path(db_path).resolve().parent / "demo-project"
+        sandbox = seed_demo_sandbox(db_path, project_root)
+        project = sandbox["project"]
+        print(f"seed-demo inserted {len(sandbox['inserted_tasks'])} synthetic DEMO tasks into {db_path}")
+        print(f"seed-demo connected project {project['id']} at {sandbox['project_root']}")
+        print(f"Open the Pipeline: /projects/{project['id']}")
         return 0
 
     parser.error(f"unknown command: {command}")
@@ -191,6 +209,25 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="seed_database_path",
         default=None,
         help="SQLite database path. Overrides TOKEN_TRACKER_DATABASE_PATH.",
+    )
+    seed_demo.add_argument(
+        "--with-project",
+        action="store_true",
+        default=False,
+        help="Also create a synthetic git repo, connect it as a project, and bind the tasks so they are launchable.",
+    )
+    seed_demo.add_argument(
+        "--project-root",
+        default=None,
+        help="Where to create the synthetic demo repo. Defaults to demo-project/ beside the database.",
+    )
+
+    # Registered for `--help` discoverability only; main() dispatches it before
+    # parsing so the synthetic Worker keeps its own flags.
+    subparsers.add_parser(
+        "demo-worker",
+        add_help=False,
+        help="Synthetic Worker that streams Claude stream-json events. Invoked by the seeded demo adapter.",
     )
 
     return parser

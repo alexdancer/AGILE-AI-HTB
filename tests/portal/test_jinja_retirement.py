@@ -93,7 +93,7 @@ def test_missing_build_returns_recovery_response_for_project_routes(tmp_path, mo
         project_id = project["id"]
         routes = [
             f"/projects/{project_id}",
-            f"/projects/{project_id}/board",
+            f"/projects/{project_id}/floor",
             f"/projects/{project_id}/task-history",
         ]
         responses = {
@@ -103,6 +103,20 @@ def test_missing_build_returns_recovery_response_for_project_routes(tmp_path, mo
 
     for route, response in responses.items():
         assert response.status_code == 503, f"{route} did not return the recovery response"
+
+
+def test_legacy_project_board_redirects_before_missing_build_recovery(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        project = _connect_project(tmp_path / "harness.db", tmp_path / "repo")
+        response = client.get(
+            f"/projects/{project['id']}/board",
+            headers=_portal_headers(),
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 301
+    assert response.headers["location"] == f"/projects/{project['id']}"
 
 
 def test_missing_build_returns_recovery_response_for_session_report(tmp_path, monkeypatch):
@@ -219,12 +233,20 @@ def test_app_aliases_redirect_permanently_to_canonical_urls(tmp_path, monkeypatc
             "/app/projects/p1/board": client.get(
                 "/app/projects/p1/board", headers=_portal_headers(), follow_redirects=False
             ),
+            "/app/projects/p1/floor": client.get(
+                "/app/projects/p1/floor", headers=_portal_headers(), follow_redirects=False
+            ),
+            "/app/projects/p1/board?error=DEMO": client.get(
+                "/app/projects/p1/board?error=DEMO", headers=_portal_headers(), follow_redirects=False
+            ),
         }
 
     assert responses["/app"].status_code == 301
     assert responses["/app"].headers["location"] == "/dashboard"
     assert responses["/app/projects/p1"].headers["location"] == "/projects/p1"
-    assert responses["/app/projects/p1/board"].headers["location"] == "/projects/p1/board"
+    assert responses["/app/projects/p1/board"].headers["location"] == "/projects/p1"
+    assert responses["/app/projects/p1/floor"].headers["location"] == "/projects/p1/floor"
+    assert responses["/app/projects/p1/board?error=DEMO"].headers["location"] == "/projects/p1?error=DEMO"
     assert all(response.status_code == 301 for response in responses.values())
 
 

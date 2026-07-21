@@ -1,6 +1,5 @@
-// Client routes mirror the canonical React-owned Portal URLs. The /app prefix
-// is a permanent redirect alias supported by the server; the client also
-// recognizes it so in-shell navigation from legacy bookmarks stays smooth.
+// Client routes own only canonical Portal URLs. Permanent redirect aliases are
+// intentionally left to the server so in-shell navigation cannot bypass them.
 export function parseRoute(pathname) {
   const normalized = pathname.replace(/\/$/, "");
   if (normalized === "/app") return { view: "dashboard" };
@@ -22,11 +21,11 @@ export function parseRoute(pathname) {
     return { view: "taskBreakdownReview", breakdownId: decodeURIComponent(breakdownReview[1]) };
   }
 
-  const board = normalized.match(/^\/(?:app\/)?projects\/([^/]+)\/board$/);
-  if (board) return { view: "board", projectId: board[1] };
+  const floor = normalized.match(/^\/projects\/([^/]+)\/floor$/);
+  if (floor) return { view: "floor", projectId: decodeURIComponent(floor[1]) };
 
-  const workspace = normalized.match(/^\/(?:app\/)?projects\/([^/]+)$/);
-  if (workspace) return { view: "workspace", projectId: workspace[1] };
+  const pipeline = normalized.match(/^\/projects\/([^/]+)$/);
+  if (pipeline) return { view: "pipeline", projectId: decodeURIComponent(pipeline[1]) };
 
   const taskHistory = normalized.match(/^\/projects\/([^/]+)\/task-history$/);
   if (taskHistory) return { view: "taskHistory", projectId: decodeURIComponent(taskHistory[1]) };

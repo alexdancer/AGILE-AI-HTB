@@ -103,6 +103,9 @@ uv run --extra test pytest -q
 uv run foremanctl --help
 ```
 
+The full run includes the `tests/e2e` browser tests, which need Node and a
+one-time `uv run --extra test playwright install chromium`.
+
 `uv run foremanctl ...` is a contributor convenience. It is not the normal public operator install path.
 
 ## Disposable pipx smoke

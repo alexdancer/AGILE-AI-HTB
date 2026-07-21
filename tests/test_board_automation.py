@@ -59,8 +59,9 @@ def test_run_automation_state_is_persisted_with_policy(tmp_path):
     assert state["status"] == QUEUE_STATUS_RUNNING
     assert state["project_id"] == project["id"]
     assert state["source"] == RUN_QUEUE_SOURCE
-    assert state["active_task_id"] == "task_123"
-    assert state["active_worker_run_id"] == "run_123"
+    assert state["active_runs"] == [{"task_id": "task_123", "worker_run_id": "run_123"}]
+    assert "active_task_id" not in state
+    assert "active_worker_run_id" not in state
     assert state["auto_agent_review"] is True
     assert state["policy"]["concurrency"] == 1
     assert state["policy"]["human_disposition_required"] is True
@@ -68,6 +69,25 @@ def test_run_automation_state_is_persisted_with_policy(tmp_path):
     loaded = get_run_automation_state(db_path, project["id"])
     assert loaded["status"] == QUEUE_STATUS_RUNNING
     assert loaded["policy"]["auto_agent_review"] is True
+
+
+def test_legacy_active_run_state_migrates_to_collection(tmp_path):
+    db_path = _init_db(tmp_path)
+    project = _project(db_path, tmp_path / "repo", "repo")
+    db.set_portal_setting(
+        db_path,
+        f"project_run_automation:{project['id']}",
+        {
+            "project_id": project["id"],
+            "active_task_id": "task_legacy",
+            "active_worker_run_id": "run_legacy",
+        },
+    )
+
+    state = get_run_automation_state(db_path, project["id"])
+
+    assert state["active_runs"] == [{"task_id": "task_legacy", "worker_run_id": "run_legacy"}]
+    assert "active_task_id" not in state
 
 
 def test_eligible_estimated_tasks_are_project_scoped_and_deterministic(tmp_path):

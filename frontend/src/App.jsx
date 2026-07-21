@@ -5,7 +5,6 @@ import { parseRoute } from "./routes.js";
 import Shell from "./components/Shell.jsx";
 import Dashboard from "./views/Dashboard.jsx";
 import Projects from "./views/Projects.jsx";
-import Workspace from "./views/Workspace.jsx";
 import Board from "./views/Board.jsx";
 import Sessions from "./views/Sessions.jsx";
 import SessionReport from "./views/SessionReport.jsx";
@@ -49,23 +48,20 @@ export default function App() {
   const navigate = React.useCallback((to) => {
     if (navigationGuardRef.current && !navigationGuardRef.current()) return false;
     window.history.pushState(null, "", to);
-    setPath(to);
+    setPath(new URL(to, window.location.origin).pathname);
     return true;
   }, []);
 
   const route = parseRoute(path);
   const activeProjectId = route.projectId || (route.view === "taskBreakdownReview" ? reviewProjectId : null);
   let content;
-  if (route.view === "workspace") {
-    content = (
-      <Workspace
-        key={route.projectId}
-        projectId={route.projectId}
-        onProjectRestored={() => setNavRefreshKey((current) => current + 1)}
-      />
-    );
-  } else if (route.view === "board") {
-    content = <Board projectId={route.projectId} />;
+  if (route.view === "pipeline" || route.view === "floor") {
+    content = <Board
+      key={`${route.view}:${route.projectId}`}
+      projectId={route.projectId}
+      surface={route.view}
+      onStateChanged={() => setNavRefreshKey((current) => current + 1)}
+    />;
   } else if (route.view === "dashboard") {
     content = <Dashboard />;
   } else if (route.view === "projects") {

@@ -199,11 +199,10 @@ def test_create_and_update_task_lifecycle(tmp_path):
         )
 
     assert created.status_code == 200
-    assert created.json()["status"] == "Blocked"
-    assert created.json()["metadata"] == {
-        "blocked_reason": "Estimate task before launch.",
-        "requires_manual_estimate": True,
-    }
+    assert created.json()["status"] == "Estimated"
+    assert created.json()["metadata"]["blocked_reason"] == "Estimate task before launch."
+    assert created.json()["metadata"]["requires_manual_estimate"] is True
+    assert created.json()["metadata"]["blocked_condition"]["origin"] == "task_create"
     assert updated.status_code == 200
     assert updated.json()["id"] == task_id
     assert updated.json()["status"] == "Estimated"
@@ -219,11 +218,10 @@ def test_create_task_rejects_noncanonical_status_as_blocked(tmp_path):
         )
 
     assert created.status_code == 200
-    assert created.json()["status"] == "Blocked"
-    assert created.json()["metadata"] == {
-        "blocked_reason": "Unsupported task status: Backlog",
-        "original_status": "Backlog",
-    }
+    assert created.json()["status"] == "Estimated"
+    assert created.json()["metadata"]["blocked_reason"] == "Unsupported task status: Backlog"
+    assert created.json()["metadata"]["original_status"] == "Backlog"
+    assert created.json()["metadata"]["blocked_condition"]["origin"] == "task_create"
 
 def test_update_task_rejects_noncanonical_status_as_blocked(tmp_path):
     with _client(tmp_path) as client:
@@ -238,7 +236,7 @@ def test_update_task_rejects_noncanonical_status_as_blocked(tmp_path):
         updated = client.put(f"/tasks/{created['id']}", json={"status": "Backlog"})
 
     assert updated.status_code == 200
-    assert updated.json()["status"] == "Blocked"
+    assert updated.json()["status"] == "Estimated"
     metadata = updated.json()["metadata"]
     assert metadata["blocked_reason"] == "Unsupported task status: Backlog"
     assert metadata["original_status"] == "Backlog"
@@ -256,7 +254,7 @@ def test_direct_update_done_requires_completed_session(tmp_path):
         updated = client.put(f"/tasks/{created['id']}", json={"status": "Done"})
 
     assert updated.status_code == 200
-    assert updated.json()["status"] == "Blocked"
+    assert updated.json()["status"] == "Estimated"
     assert updated.json()["metadata"]["blocked_reason"] == "Use refresh endpoint to finalize completed sessions."
 
 def test_direct_update_done_allows_completed_session_backing(tmp_path):

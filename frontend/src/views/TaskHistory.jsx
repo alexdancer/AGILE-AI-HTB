@@ -114,8 +114,8 @@ export function TaskHistoryState({
           ))}
         </div>
         <div className="status-group">
-          <AppLink className="btn ghost" to={`/projects/${projectId}/board`}>
-            Back to board
+          <AppLink className="btn ghost" to={`/projects/${projectId}`}>
+            Back to Pipeline
           </AppLink>
         </div>
       </section>

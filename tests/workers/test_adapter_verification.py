@@ -126,13 +126,13 @@ def test_verify_worker_adapter_fails_when_token_row_missing_even_if_sentinel_mat
         "codex",
         workdir=str(tmp_path),
         config={"verification_template": ["codex", "--prompt", "{prompt}"]},
-        supported_models=["gpt-5.4"],
+        supported_models=["gpt-5.6-terra"],
     )
 
     result = verify_worker_adapter(
         db_path,
         "codex",
-        model="gpt-5.4",
+        model="gpt-5.6-terra",
         proxy_url="http://127.0.0.1:8000/v1",
         runner=FakeRunner(),
     )
@@ -251,7 +251,7 @@ def test_verify_worker_adapter_fails_fast_without_runner_when_model_unsupported(
         "codex",
         workdir=str(tmp_path),
         config={"verification_template": ["codex", "--prompt", "{prompt}"]},
-        supported_models=["gpt-5.4"],
+        supported_models=["gpt-5.6-terra"],
     )
     runner = FakeRunner()
 
@@ -281,7 +281,7 @@ def test_verify_worker_adapter_marks_failed_evidence_when_cli_is_missing(tmp_pat
         "codex",
         workdir=str(tmp_path),
         config={"verification_template": ["missing-codex", "--api-key", "abc123", "--prompt", "{prompt}"]},
-        supported_models=["gpt-5.4"],
+        supported_models=["gpt-5.6-terra"],
     )
 
     def fake_run(*args, **kwargs):
@@ -292,7 +292,7 @@ def test_verify_worker_adapter_marks_failed_evidence_when_cli_is_missing(tmp_pat
     result = verify_worker_adapter(
         db_path,
         "codex",
-        model="gpt-5.4",
+        model="gpt-5.6-terra",
         proxy_url="http://127.0.0.1:8000/v1",
     )
 
@@ -458,10 +458,10 @@ def test_parse_codex_turn_completed_usage_accepts_costless_run_bound_tokens():
 
 
 def test_parse_codex_turn_completed_usage_accepts_gpt_prefixed_chatgpt_models():
-    evidence = parse_native_usage_evidence(_codex_native_stdout(), model="gpt-5.4", returncode=0)
+    evidence = parse_native_usage_evidence(_codex_native_stdout(), model="gpt-5.6-terra", returncode=0)
 
     assert evidence is not None
-    assert evidence.raw_usage["model"] == "gpt-5.4"
+    assert evidence.raw_usage["model"] == "gpt-5.6-terra"
 
 
 def test_parse_codex_turn_completed_usage_accepts_gpt_5_5_model():
@@ -675,14 +675,14 @@ def test_verify_codex_native_usage_records_authoritative_costless_token_row(tmp_
         "codex",
         workdir=str(tmp_path),
         config={"command": "codex"},
-        supported_models=["gpt-5.4"],
+        supported_models=["gpt-5.6-terra"],
     )
     runner = FakeRunner(stdout=_codex_native_stdout())
 
     result = verify_worker_adapter(
         db_path,
         "codex",
-        model="gpt-5.4",
+        model="gpt-5.6-terra",
         proxy_url="http://127.0.0.1:8000/v1",
         tracking_mode="native_usage",
         runner=runner,
@@ -697,7 +697,7 @@ def test_verify_codex_native_usage_records_authoritative_costless_token_row(tmp_
     assert adapter["verification_evidence"]["tracking_authoritative"] is True
     assert adapter["verification_evidence"]["native_usage"]["cost_unavailable"] is True
     assert turn["usage_kind"] == "adapter_verification"
-    assert turn["model"] == "gpt-5.4"
+    assert turn["model"] == "gpt-5.6-terra"
     assert turn["prompt_tokens"] == 25
     assert turn["completion_tokens"] == 7
     assert turn["total_tokens"] == 35
@@ -710,7 +710,7 @@ def test_verify_codex_native_usage_records_authoritative_costless_token_row(tmp_
         "--json",
         "--skip-git-repo-check",
         "-m",
-        "gpt-5.4",
+        "gpt-5.6-terra",
         "Verification only. Do not read files, write files, run tools, or inspect the repository. Reply exactly FOREMAN_AI_HQ_ADAPTER_OK",
     ]
     assert runner.calls[0].metadata["project_root"] == str(tmp_path)
@@ -771,11 +771,11 @@ def test_verify_native_usage_surfaces_stderr_cli_error_after_stdout_event(tmp_pa
 def test_verify_codex_native_usage_fails_without_usage_evidence(tmp_path):
     db_path = tmp_path / "harness.db"
     db.init_db(db_path)
-    db.update_worker_adapter(db_path, "codex", workdir=str(tmp_path), config={"command": "codex"}, supported_models=["gpt-5.4"])
+    db.update_worker_adapter(db_path, "codex", workdir=str(tmp_path), config={"command": "codex"}, supported_models=["gpt-5.6-terra"])
     result = verify_worker_adapter(
         db_path,
         "codex",
-        model="gpt-5.4",
+        model="gpt-5.6-terra",
         proxy_url="http://127.0.0.1:8000/v1",
         tracking_mode="native_usage",
         runner=FakeRunner(stdout=json.dumps({"type": "item.completed", "item": {"text": SENTINEL_RESPONSE}})),
@@ -787,7 +787,7 @@ def test_verify_codex_native_usage_fails_without_usage_evidence(tmp_path):
     assert adapter["verification_status"] == "failed"
     assert adapter["verification_evidence"]["tracking_mode"] == "observed_only"
     assert adapter["verification_evidence"]["tracking_authoritative"] is False
-    assert not db.has_adapter_verification_token(db_path, session_id=result.session_id, model="gpt-5.4")
+    assert not db.has_adapter_verification_token(db_path, session_id=result.session_id, model="gpt-5.6-terra")
 
 
 def test_verify_worker_adapter_native_usage_accepts_opencode_step_finish_tokens(tmp_path):
@@ -968,7 +968,7 @@ def test_worker_adapter_verify_route_requires_auth_uses_injected_runner_and_toke
             tmp_path / "harness.db",
             session_id=session_id,
             usage_kind="adapter_verification",
-            model="gpt-5.4",
+            model="gpt-5.6-terra",
             prompt_tokens=5,
             completion_tokens=1,
             cost=0,
@@ -993,17 +993,17 @@ def test_worker_adapter_verify_route_requires_auth_uses_injected_runner_and_toke
                     "{session_api_key}",
                 ]
             },
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
         )
 
         unauthorized = client.post(
             "/settings/workers/codex/verify",
-            json={"model": "gpt-5.4", "proxy_url": "http://127.0.0.1:8000/v1"},
+            json={"model": "gpt-5.6-terra", "proxy_url": "http://127.0.0.1:8000/v1"},
         )
         response = client.post(
             "/settings/workers/codex/verify",
             headers=_auth_headers(),
-            json={"model": "gpt-5.4", "proxy_url": "http://127.0.0.1:8000/v1"},
+            json={"model": "gpt-5.6-terra", "proxy_url": "http://127.0.0.1:8000/v1"},
         )
 
     body = response.json()
@@ -1128,7 +1128,7 @@ def test_workers_page_offers_codex_native_usage_mode(tmp_path, monkeypatch):
             "codex",
             workdir=str(tmp_path),
             config={"command": "codex"},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
         )
 
         response = client.get("/api/settings/workers?adapter_id=codex", headers=_auth_headers())
@@ -1145,8 +1145,8 @@ def test_workers_page_offers_codex_native_usage_mode(tmp_path, monkeypatch):
         option["mode"] == "native_usage" and option["label"] == "CLI: Track native usage after run"
         for option in adapter["tracking_mode_options"]
     )
-    assert "gpt-5.4" in adapter["discovered_models"]
-    assert adapter["supported_models"] == ["gpt-5.4"]
+    assert "gpt-5.6-terra" in adapter["discovered_models"]
+    assert adapter["supported_models"] == ["gpt-5.6-terra"]
     assert adapter["launchable"] is False
 
 

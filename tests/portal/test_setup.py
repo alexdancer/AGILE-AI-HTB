@@ -25,7 +25,7 @@ def _prepare_ready_setup(database_path, workdir, monkeypatch):
         "codex",
         workdir=str(workdir),
         config={"command": "codex"},
-        supported_models=["gpt-5.4"],
+        supported_models=["gpt-5.6-terra"],
         is_default=True,
     )
     db.mark_worker_adapter_verification(
@@ -125,7 +125,7 @@ def test_setup_links_exact_launch_ready_project_board(tmp_path, monkeypatch):
         _connect_invalid_project(database_path, tmp_path / "newer-blocked-project")
         setup = client.get("/api/setup", headers=_portal_headers())
 
-    expected_href = f'/projects/{launch_ready["id"]}/board'
+    expected_href = f'/projects/{launch_ready["id"]}'
     assert setup.status_code == 200
     payload = setup.json()
     assert payload["ready_to_launch"] is True
@@ -258,7 +258,7 @@ def test_budget_reset_allows_launch_after_pre_reset_daily_spend(tmp_path, monkey
             description="Within reset daily window",
             status="Estimated",
             estimate_tokens=500,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=_project_metadata(database_path, tmp_path / "connected-project"),
         )
         db.update_worker_adapter(
@@ -266,7 +266,7 @@ def test_budget_reset_allows_launch_after_pre_reset_daily_spend(tmp_path, monkey
             "codex",
             workdir=str(tmp_path),
             config={"command": "codex"},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(database_path, "codex", verified=True, evidence={"ok": True})
@@ -278,7 +278,7 @@ def test_budget_reset_allows_launch_after_pre_reset_daily_spend(tmp_path, monkey
         launched = client.post(
             f"/tasks/{task['id']}/launch",
             headers=_portal_headers(),
-            json={"adapter_id": "codex", "model": "gpt-5.4"},
+            json={"adapter_id": "codex", "model": "gpt-5.6-terra"},
         )
 
     assert reset.status_code == 200
@@ -299,7 +299,7 @@ def test_saved_budget_gates_launch_and_is_carried_to_session(tmp_path, monkeypat
             "codex",
             workdir=str(tmp_path),
             config={"command": "codex"},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
             is_default=True,
         )
         db.mark_worker_adapter_verification(database_path, "codex", verified=True, evidence={"ok": True})
@@ -309,7 +309,7 @@ def test_saved_budget_gates_launch_and_is_carried_to_session(tmp_path, monkeypat
             description="Too large for saved budget",
             status="Estimated",
             estimate_tokens=1200,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_metadata,
         )
         ok = db.create_task(
@@ -317,13 +317,13 @@ def test_saved_budget_gates_launch_and_is_carried_to_session(tmp_path, monkeypat
             description="Within saved budget",
             status="Estimated",
             estimate_tokens=500,
-            recommended_model="gpt-5.4",
+            recommended_model="gpt-5.6-terra",
             metadata=project_metadata,
         )
         blocked_response = client.post(
             f"/tasks/{blocked['id']}/launch",
             headers=_portal_headers(),
-            json={"adapter_id": "codex", "model": "gpt-5.4"},
+            json={"adapter_id": "codex", "model": "gpt-5.6-terra"},
         )
 
         def fake_runner(plan):
@@ -333,7 +333,7 @@ def test_saved_budget_gates_launch_and_is_carried_to_session(tmp_path, monkeypat
         launched = client.post(
             f"/tasks/{ok['id']}/launch",
             headers=_portal_headers(),
-            json={"adapter_id": "codex", "model": "gpt-5.4"},
+            json={"adapter_id": "codex", "model": "gpt-5.6-terra"},
         )
 
     assert blocked_response.status_code == 409

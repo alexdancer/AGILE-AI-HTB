@@ -1,9 +1,15 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-import { AppLink, NavContext } from "../nav.jsx";
+import { AppLink, isReactOwnedPath, NavContext } from "../nav.jsx";
 import { getJSON } from "../api.js";
+import { drainLiveEvents, runSingleFlight } from "../live-events.js";
+import { LiveRunDock, liveRunsFromTasks } from "../components/LiveRunDock.jsx";
+import { LiveEventFeed, liveEventText, liveEventTime } from "../components/LiveEventFeed.jsx";
+import { AgentReview, EvidenceItem, EvidenceSection, RepoContext, TokenRow } from "./SessionReport.jsx";
+import { Button, Pill, Notice, EmptyState, Loading, Panel, PanelHeader, PanelBody } from "../components/ui/index.js";
+import "../board-floor.css";
 
-const COLUMNS = ["Estimated", "Running", "Review", "Done", "Blocked"];
+const COLUMNS = ["Estimated", "Running", "Review", "Done"];
 const TASK_NAME_WORD_LIMIT = 7;
 
 export function taskDisplayName(task) {
@@ -40,7 +46,12 @@ export function taskDisplayName(task) {
 const safeError = (error) =>
   error?.status === 401
     ? "Board requires sign-in."
-    : "Could not load board. Retry.";
+    : "Could not load board.";
+
+export function boardNoticeFromSearch(search = "") {
+  const message = new URLSearchParams(search).get("error");
+  return message ? { message: message.slice(0, 1000), setupHref: null } : null;
+}
 
 export async function submitBoardAction({ url, body, fetchImpl, navigate, reload, onNotice }) {
   onNotice(null);
@@ -99,24 +110,62 @@ export async function pollBoardStatus({ getStatus, reload, update }) {
   }
 }
 
-export default function Board({ projectId }) {
+export function mergeBoardLiveEvents(current, sessionId, events) {
+  if (!current.data || !events.length) return current;
+  let changed = false;
+  const tasksByStatus = Object.fromEntries(Object.entries(current.data.tasks_by_status).map(([status, tasks]) => [status, tasks.map((task) => {
+    if (task.status !== "Running" || task.session_href !== `/sessions/${sessionId}`) return task;
+    const timeline = task.timeline || [];
+    const known = new Set(timeline.map((event) => event.id).filter((id) => Number.isInteger(id)));
+    const appended = events.filter((event) => Number.isInteger(event.id) && !known.has(event.id)).map((event) => ({
+      ...event,
+      detail_summary: { text: event.detail_summary || "", truncated: false },
+    }));
+    if (!appended.length) return task;
+    changed = true;
+    return { ...task, timeline: [...timeline, ...appended].slice(-50) };
+  })]));
+  return changed ? { ...current, data: { ...current.data, tasks_by_status: tasksByStatus } } : current;
+}
+
+export default function Board({ projectId, surface = "pipeline", onStateChanged = () => {} }) {
   const navigate = React.useContext(NavContext);
   const [state, setState] = useState({ data: null, error: null, loading: true });
   const [query, setQuery] = useState("");
-  const [notice, setNotice] = useState(null);
+  const [notice, setNotice] = useState(() => boardNoticeFromSearch(window.location.search));
   const [estimating, setEstimating] = useState(false);
+  const [selectedTask, setSelectedTask] = useState(null);
+  const eventCursors = React.useRef(new Map());
+  const eventPollInFlight = React.useRef(false);
+  const runningSessionKey = useMemo(() => (state.data?.tasks_by_status?.Running || [])
+    .map((task) => task.session_href || "")
+    .filter(Boolean)
+    .sort()
+    .join(","), [state.data?.tasks_by_status?.Running]);
 
   const load = async () => {
     setState((current) => ({ ...current, loading: true, error: null }));
     try {
-      const data = await getJSON(`/api/projects/${projectId}/board`);
-      setState({ data, error: null, loading: false });
+      const workspace = await getJSON(`/api/projects/${projectId}/workspace`);
+      if (workspace.project.archived_at) {
+        setState({ data: { project: workspace.project, workspace }, error: null, loading: false });
+        onStateChanged();
+        return;
+      }
+      const [board, needsYou] = await Promise.all([
+        getJSON(`/api/projects/${projectId}/board`),
+        surface === "pipeline"
+          ? getJSON(`/api/projects/${projectId}/needs-you`)
+          : Promise.resolve({ project_id: projectId, count: 0, items: [] }),
+      ]);
+      setState({ data: { ...board, workspace, needs_you: needsYou }, error: null, loading: false });
+      onStateChanged();
     } catch (error) {
       setState({ data: null, error, loading: false });
     }
   };
 
-  useEffect(() => { load(); }, [projectId]);
+  useEffect(() => { load(); }, [projectId, surface]);
   useEffect(() => {
     if (!state.data?.automation?.live_refresh_enabled) return undefined;
     const timer = window.setInterval(async () => {
@@ -128,6 +177,42 @@ export default function Board({ projectId }) {
     }, 2500);
     return () => window.clearInterval(timer);
   }, [projectId, state.data?.automation?.live_refresh_enabled]);
+  useEffect(() => {
+    if (!state.data?.automation?.live_refresh_enabled) return undefined;
+    const running = state.data.tasks_by_status.Running || [];
+    const sessionIds = running
+      .map((task) => task.session_href?.replace(/^\/sessions\//, ""))
+      .filter(Boolean);
+    if (!sessionIds.length) return undefined;
+    for (const task of running) {
+      const sessionId = task.session_href?.replace(/^\/sessions\//, "");
+      if (!sessionId || eventCursors.current.has(sessionId)) continue;
+      const ids = (task.timeline || []).map((event) => event.id).filter(Number.isInteger);
+      eventCursors.current.set(sessionId, ids.length ? Math.max(...ids) : null);
+    }
+    let stopped = false;
+    const poll = () => runSingleFlight(eventPollInFlight, async () => {
+      for (const sessionId of sessionIds) {
+        const sinceId = eventCursors.current.get(sessionId);
+        try {
+          const next = await drainLiveEvents({
+            sessionId,
+            sinceId,
+            getEvents: getJSON,
+            stopped: () => stopped,
+            append: (events) => setState((current) => mergeBoardLiveEvents(current, sessionId, events)),
+          });
+          if (stopped) return;
+          if (Number.isInteger(next)) eventCursors.current.set(sessionId, next);
+        } catch {
+          // Board status polling remains authoritative if the lightweight feed is unavailable.
+        }
+      }
+    });
+    poll();
+    const timer = window.setInterval(poll, 5000);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [state.data?.automation?.live_refresh_enabled, projectId, runningSessionKey]);
 
   const action = async (url, body = new FormData()) => {
     await submitBoardAction({
@@ -135,7 +220,11 @@ export default function Board({ projectId }) {
       body,
       fetchImpl: fetch,
       navigate: (href) => {
-        if (/^\/task-breakdowns\/[^/]+\/review$/.test(href)) navigate(href);
+        if (url.endsWith("/restore")) {
+          load();
+          return;
+        }
+        if (isReactOwnedPath(href) && navigate?.(href)) return;
         else window.location.assign(href);
       },
       reload: load,
@@ -152,22 +241,34 @@ export default function Board({ projectId }) {
     }
   };
 
-  return <BoardState
-    projectId={projectId}
-    data={state.data}
-    error={state.error}
-    loading={state.loading}
-    query={query}
-    setQuery={setQuery}
-    notice={notice}
-    action={action}
-    estimateTask={estimateTask}
-    estimating={estimating}
-  />;
+  return <>
+    <BoardState
+      projectId={projectId}
+      surface={surface}
+      data={state.data}
+      error={state.error}
+      loading={state.loading}
+      query={query}
+      setQuery={setQuery}
+      notice={notice}
+      action={action}
+      estimateTask={estimateTask}
+      estimating={estimating}
+      openEvidence={setSelectedTask}
+      onRetry={load}
+    />
+    <EvidenceDrawer
+      task={selectedTask}
+      projectId={projectId}
+      action={action}
+      onClose={() => setSelectedTask(null)}
+    />
+  </>;
 }
 
 export function BoardState({
   projectId,
+  surface = "pipeline",
   data,
   error,
   loading,
@@ -177,43 +278,133 @@ export function BoardState({
   action = () => {},
   estimateTask = () => {},
   estimating = false,
+  openEvidence = () => {},
+  onRetry = () => {},
 }) {
-  if (loading) return <p className="spinner">Loading board…</p>;
+  if (loading) return <Loading>Loading {surface === "floor" ? "Execution Floor" : "Pipeline"}…</Loading>;
   if (isArchivedBoardError(error)) return <>
-    <div className="notice warning">
+    <Notice variant="warning">
       <strong>Archived project</strong>
       <p className="muted">Restore this project before opening its active board.</p>
-    </div>
+    </Notice>
     <p><AppLink to={`/projects/${projectId}`}>Open workspace to Restore</AppLink></p>
   </>;
-  if (error) return <><div className="notice danger">{safeError(error)}</div></>;
-  if (!data) return <div className="empty-state">No board state available.</div>;
+  if (error) return <Notice variant="danger" role="alert">
+    {safeError(error)}
+    {error?.status !== 401 && <div className="notice-actions"><Button size="small" variant="secondary" type="button" onClick={onRetry}>Retry</Button></div>}
+  </Notice>;
+  if (!data) return <EmptyState>No project orchestration state available.</EmptyState>;
+  const workspace = data.workspace || {
+    project: data.project,
+    summary: { launch_ready: data.board_summary?.launch_ready },
+    controls: { can_restore: false },
+    links: {},
+  };
+  if (workspace.project?.archived_at) return <>
+    <ProjectHeader projectId={projectId} workspace={workspace} action={action} />
+    <Notice variant="warning">Archived project. Restore it before resuming Pipeline work.</Notice>
+  </>;
 
-  const cards = Object.values(data.tasks_by_status).flat();
+  const tasksByStatus = data.tasks_by_status || Object.fromEntries(COLUMNS.map((column) => [column, []]));
+  const cards = Object.values(tasksByStatus).flat();
   const visible = (task) => JSON.stringify(task).toLowerCase().includes(query.toLowerCase());
-  const queueRunning = data.automation.queue.status === "running";
+  const common = { projectId, data, tasksByStatus, visible, action, openEvidence };
 
   return <>
-    <h1 className="page-title">{data.project.name} · Board</h1>
-    <p className="page-sub">Governed project task loop. FastAPI owns lifecycle and guardrails.</p>
-    {notice && <div className="notice danger">{notice.message}{notice.setupHref && <> · <a href={notice.setupHref}>Open setup</a></>}</div>}
-    <div className="board-command-bar">
-      <div className="board-command-status">
-        <span className={`pill ${queueRunning ? "running" : "idle"}`}>Queue {data.automation.queue.status}</span>
-        <span className="column-count">{data.board_summary.total_tasks} tasks · {data.automation.eligible_count} eligible</span>
+    <h1 className="page-title">{data.project.name} · {surface === "floor" ? "Execution Floor" : "Pipeline"}</h1>
+    <p className="page-sub">Governed project task loop · FastAPI owns lifecycle and guardrails.</p>
+    <ProjectHeader projectId={projectId} workspace={workspace} action={action} />
+    {notice && <Notice variant="danger">{notice.message}{notice.setupHref && <> · <a href={notice.setupHref}>Open setup</a></>}</Notice>}
+    {surface === "floor"
+      ? <FloorSurface {...common} query={query} setQuery={setQuery} />
+      : <PipelineSurface
+          {...common}
+          query={query}
+          setQuery={setQuery}
+          estimateTask={estimateTask}
+          estimating={estimating}
+          cards={cards}
+        />}
+  </>;
+}
+
+function ProjectHeader({ projectId, workspace, action }) {
+  const { project = {}, summary = {}, controls = {}, links = {} } = workspace;
+  const capability = project.capability || {};
+  const profile = project.profile || {};
+  const profileHints = [
+    ...(profile.language_hints || []),
+    ...(profile.framework_hints || []),
+    ...(profile.package_manager_hints || []),
+  ];
+  const stackValue = profileHints.length > 0
+    ? profileHints.join(" · ")
+    : "No language, framework, or package hints detected";
+  const docsValue = (profile.relevant_docs || []).length > 0
+    ? profile.relevant_docs.join(", ")
+    : "No relevant docs detected";
+  // Identity (name + path) and readiness stay always-on; the reference detail an
+  // operator only occasionally needs — branch, stack, commands, docs — collapses
+  // behind a disclosure so the header leads with what matters. The summary keeps
+  // the single most launch-relevant fact (the branch) glanceable when collapsed.
+  const repoSynopsis = profile.git_branch || profileHints[0] || null;
+  return <Panel as="header" className="pipeline-header">
+    <PanelBody className="pipeline-header-grid">
+      <div className="pipeline-repo">
+        <span className="section-label">Connected repo</span>
+        <h2>{project.name || projectId}</h2>
+        <p className="mono muted pipeline-repo-path">{project.root_path || "Repo path unavailable"}</p>
+        <details className="pipeline-repo-profile">
+          <summary><span>Repo profile</span>{repoSynopsis && <span className="pipeline-repo-synopsis mono muted">{repoSynopsis}</span>}</summary>
+          <dl className="pipeline-repo-details">
+            <RepoProfileRow label="Branch" value={profile.git_branch || "unavailable"} />
+            <RepoProfileRow label="Stack" value={stackValue} />
+            <RepoProfileRow label="Test" value={profile.test_command || "unavailable"} />
+            <RepoProfileRow label="Run" value={profile.run_command || "unavailable"} />
+            <RepoProfileRow label="Docs" value={docsValue} />
+          </dl>
+        </details>
       </div>
-      <div className="board-command-actions">
-        <button className="btn small" onClick={() => action(`/projects/${projectId}/run-next`)}>Run next</button>
-        {queueRunning ? <button className="btn small secondary" onClick={() => action(`/projects/${projectId}/queue/stop`)}>Stop queue</button> : <QueueStart projectId={projectId} queue={data.automation.queue} action={action} />}
-        {data.board_summary.counts.Done > 0 && <button className="btn small secondary" onClick={() => action(`/projects/${projectId}/tasks/archive-done`)}>Archive all Done</button>}
-        <AppLink className="btn small secondary" to={`/projects/${projectId}`}>Workspace</AppLink>
-        <AppLink className="btn small secondary" to={data.history_href}>History</AppLink>
-        <a className="btn small secondary" href={`/projects/${projectId}/board`}>Server board</a>
+      <div className="pipeline-readiness">
+        <Pill tone={summary.launch_ready ? "green" : "yellow"}>
+          {summary.launch_ready ? "launch ready" : capability.label || capability.state || "setup needed"}
+        </Pill>
+        {capability.reasons?.map((reason) => <span className="muted" key={reason}>{reason}</span>)}
       </div>
-    </div>
-    <section className="panel board-intake-panel" aria-busy={estimating}>
-      <div className="panel-header"><h3>Short task intake</h3></div>
-      <div className="panel-body">
+      <nav className="toolbar" aria-label="Project orchestration surfaces">
+        {!project.archived_at && <Button as={AppLink} size="small" variant="secondary" to={`/projects/${projectId}`}>Pipeline</Button>}
+        {!project.archived_at && <Button as={AppLink} size="small" variant="secondary" to={`/projects/${projectId}/floor`}>Execution Floor</Button>}
+        {links.task_history_href && <Button as={AppLink} size="small" variant="secondary" to={links.task_history_href}>History</Button>}
+        {links.sessions_href && <Button as={AppLink} size="small" variant="secondary" to={links.sessions_href}>Sessions</Button>}
+        {links.worker_setup_href && <Button as={AppLink} size="small" variant="secondary" to={links.worker_setup_href}>Worker Setup</Button>}
+        {links.project_settings_href && <Button as={AppLink} size="small" variant="secondary" to={links.project_settings_href}>Project Settings</Button>}
+        {controls.can_restore && links.restore_href && <Button size="small" type="button" onClick={() => action(links.restore_href)}>Restore project</Button>}
+      </nav>
+    </PanelBody>
+  </Panel>;
+}
+
+function PipelineSurface({
+  projectId,
+  data,
+  tasksByStatus,
+  visible,
+  action,
+  openEvidence,
+  query,
+  setQuery,
+  estimateTask,
+  estimating,
+  cards,
+}) {
+  const needsYou = data.needs_you || { count: 0, items: [] };
+  const planning = needsYou.items.filter((item) => item.kind === "breakdown_review");
+  const estimated = tasksByStatus.Estimated.filter(visible);
+  return <>
+    <NeedsYou items={needsYou.items} count={needsYou.count} />
+    <Panel className="board-intake-panel" aria-busy={estimating}>
+      <PanelHeader title="Short task intake" />
+      <PanelBody>
         <form className="board-intake" onSubmit={(event) => { event.preventDefault(); if (estimating) return; estimateTask(new FormData(event.currentTarget)); }}>
           <label className="board-intake-task-field" htmlFor="react-board-intake">
             <span>Task description</span>
@@ -223,7 +414,7 @@ export function BoardState({
             <span>Markdown file <em>(optional)</em></span>
             <input className="board-file" name="markdown_file" type="file" accept=".md,text/markdown,text/plain" disabled={estimating} />
           </label>
-          <button className="btn small" type="submit" disabled={estimating}>{estimating ? "Estimating…" : "Estimate task"}</button>
+          <Button size="small" type="submit" disabled={estimating}>{estimating ? "Estimating…" : "Estimate task"}</Button>
           {estimating && <div className="board-intake-progress" role="status" aria-live="polite">
             <div className="board-intake-progress-copy">
               <strong>Preparing Task Breakdown Review</strong>
@@ -235,21 +426,65 @@ export function BoardState({
           </div>}
         </form>
         <p className="board-intake-hint muted">Markdown paste or upload opens authoritative Task Breakdown Review.</p>
-      </div>
-    </section>
+      </PanelBody>
+    </Panel>
+    <Panel className="planning-inbox">
+      <PanelHeader title="Planning Inbox" count={planning.length} />
+      <PanelBody className="needs-you-list">
+        {planning.map((item) => <a className="needs-you-item" href={item.href} key={item.id}><strong>{item.title}</strong><span>{item.reason}</span><span className="mono muted">{item.source} · {item.candidate_count} candidate{item.candidate_count === 1 ? "" : "s"} · {item.status} · {item.created_at || "time unavailable"}</span><em>{item.action_label} →</em></a>)}
+        {planning.length === 0 && <EmptyState>No proposed Task Breakdowns await review.</EmptyState>}
+      </PanelBody>
+    </Panel>
     <div className="board-filter-toolbar"><input className="board-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter loaded tasks" /><span className="column-count">{cards.filter(visible).length} of {cards.length} visible</span></div>
-    <div className="board">
-      {COLUMNS.map((column) => <section className="column" key={column}><div className="panel-header"><h3>{column}</h3><span className="column-count">{data.tasks_by_status[column].filter(visible).length}</span></div>{data.tasks_by_status[column].filter(visible).map((task) => <TaskCard key={task.id} task={task} projectId={projectId} adapters={data.adapters} action={action} />)}{data.tasks_by_status[column].filter(visible).length === 0 && <div className="empty-state">{query ? "No matching tasks" : data.board_empty_states[column]}</div>}</section>)}
-    </div>
+    <section className="column pipeline-estimated">
+      <PanelHeader title="Estimated" count={estimated.length} />
+      {estimated.map((task) => <TaskCard key={task.id} task={task} projectId={projectId} adapters={data.adapters} action={action} openEvidence={openEvidence} />)}
+      {estimated.length === 0 && <EmptyState>{query ? "No matching tasks" : data.board_empty_states.Estimated}</EmptyState>}
+    </section>
   </>;
+}
+
+function NeedsYou({ items, count }) {
+  return <Panel className="needs-you" id="needs-you">
+    <PanelHeader title="Needs You" badge={<span className="nav-badge">{count}</span>} />
+    <PanelBody className="needs-you-list">
+      {items.map((item) => <a className="needs-you-item" href={item.href} key={item.id}><strong>{item.title}</strong><span>{item.reason}</span><em>{item.action_label} →</em></a>)}
+      {items.length === 0 && <EmptyState>No project decisions need operator action.</EmptyState>}
+    </PanelBody>
+  </Panel>;
+}
+
+function FloorSurface({ projectId, data, tasksByStatus, visible, action, openEvidence, query, setQuery }) {
+  const queueRunning = data.automation.queue.status === "running";
+  const running = tasksByStatus.Running.filter(visible);
+  const review = tasksByStatus.Review.filter(visible);
+  const done = tasksByStatus.Done.filter(visible);
+  return <div className="execution-floor">
+    <div className="board-command-bar">
+      <div className="board-command-status">
+        <Pill tone={queueRunning ? "running" : "idle"}>Queue {data.automation.queue.status}</Pill>
+        <span className="column-count">{running.length} active · {review.length} review</span>
+      </div>
+      <div className="board-command-actions">
+        <Button size="small" onClick={() => action(`/projects/${projectId}/run-next`)}>Run next</Button>
+        {queueRunning ? <Button size="small" onClick={() => action(`/projects/${projectId}/queue/stop`)}>Stop queue</Button> : <QueueStart projectId={projectId} queue={data.automation.queue} action={action} />}
+        {done.length > 0 && <Button size="small" onClick={() => action(`/projects/${projectId}/tasks/archive-done`)}>Archive all Done</Button>}
+      </div>
+    </div>
+    <div className="board-filter-toolbar"><input className="board-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter Floor tasks" /></div>
+    <LiveRunDock runs={liveRunsFromTasks(tasksByStatus.Running)} />
+    <section className="floor-section"><PanelHeader title="Active Worker Runs" count={running.length} /><div className="floor-active-grid">{running.map((task) => <TaskCard key={task.id} task={task} projectId={projectId} adapters={data.adapters} action={action} openEvidence={openEvidence} actionVariant="primary" />)}{running.length === 0 && <EmptyState>No Worker Runs are active.</EmptyState>}</div></section>
+    <section className="floor-section"><PanelHeader title="Review queue" count={review.length} /><div className="floor-review-grid">{review.map((task) => <TaskCard key={task.id} task={task} projectId={projectId} adapters={data.adapters} action={action} openEvidence={openEvidence} actionVariant="primary" />)}{review.length === 0 && <EmptyState>No completed runs await review.</EmptyState>}</div></section>
+    <section className="floor-section"><PanelHeader title="Recently finished" count={done.length} /><div className="floor-finished-trail">{done.map((task) => <TaskCard key={task.id} task={task} projectId={projectId} adapters={data.adapters} action={action} openEvidence={openEvidence} recentlyFinished actionVariant="primary" />)}{done.length === 0 && <EmptyState>No unarchived finished runs.</EmptyState>}</div></section>
+  </div>;
+}
+
+function RepoProfileRow({ label, value }) {
+  return <><dt>{label}</dt><dd>{value}</dd></>;
 }
 
 function isArchivedBoardError(error) {
   return error?.status === 409 && String(error.message || "").includes("restore archived project");
-}
-
-function boundedError(value, fallback) {
-  return typeof value === "string" && value ? value.slice(0, 1000) : fallback;
 }
 
 function QueueStart({ projectId, queue, action }) {
@@ -258,12 +493,33 @@ function QueueStart({ projectId, queue, action }) {
     action(`/projects/${projectId}/queue/start`, new FormData(event.currentTarget));
   }}>
     <label className="check-row"><input name="auto_agent_review" type="checkbox" defaultChecked={queue.auto_agent_review} /> Auto Agent Review</label>
-    <button className="btn small secondary" type="submit">Start queue</button>
+    <Button size="small" type="submit">Start queue</Button>
   </form>;
 }
 
-function TaskCard({ task, projectId, adapters, action }) {
-  const { controls, details } = task;
+function FinishedTokenComparison({ estimate, actual }) {
+  const savings =
+    Number.isFinite(estimate) && Number.isFinite(actual) && estimate > 0 && actual <= estimate
+      ? Math.round((1 - actual / estimate) * 100)
+      : null;
+
+  return (
+    <div className="finished-token-comparison" aria-label="Estimate versus actual tokens">
+      <div className="token-stat token-stat-estimate">
+        <small>Estimate</small>
+        <strong>{estimate?.toLocaleString() ?? "Unavailable"}</strong>
+      </div>
+      <div className="token-stat-divider" aria-hidden="true" />
+      <div className="token-stat token-stat-actual">
+        <small>{savings != null && savings > 0 ? `Actual · −${savings}%` : "Actual"}</small>
+        <strong>{actual?.toLocaleString() ?? "Unavailable"}</strong>
+      </div>
+    </div>
+  );
+}
+
+function TaskCard({ task, projectId, adapters = [], action, openEvidence = () => {}, recentlyFinished = false, actionVariant = "secondary" }) {
+  const { controls } = task;
   const fullSummary = task.summary.text || task.id;
   const displayName = taskDisplayName(task);
   const defaultAdapter = adapters.find((adapter) => adapter.is_default) || adapters[0];
@@ -275,8 +531,16 @@ function TaskCard({ task, projectId, adapters, action }) {
   const [model, setModel] = useState(initialModel);
   const [budgetOverride, setBudgetOverride] = useState(false);
   const [nativeAcknowledged, setNativeAcknowledged] = useState(false);
-  const [reviewPrompt, setReviewPrompt] = useState(details.review.prompt.text);
-  const [blockedReason, setBlockedReason] = useState("");
+  const [manualEstimate, setManualEstimate] = useState("");
+  // The routine launch is just adapter + model + Launch; guardrail fields only
+  // surface when a control actually demands one, grouped in an auto-opened
+  // disclosure so the exception path never crowds the common path.
+  const launchGuardrails = Boolean(
+    controls.requires_manual_estimate ||
+    controls.budget_override_available ||
+    controls.native_usage_override_ack_required,
+  );
+
 
   const launch = () => {
     const form = new FormData();
@@ -285,78 +549,222 @@ function TaskCard({ task, projectId, adapters, action }) {
     if (model) form.set("model", model);
     if (budgetOverride) form.set("budget_override", "on");
     if (nativeAcknowledged) form.set("native_budget_acknowledged", "on");
+    if (controls.requires_manual_estimate && Number(manualEstimate) > 0) {
+      form.set("estimate_tokens", manualEstimate);
+    }
     action(`/tasks/${task.id}/launch`, form);
   };
-  const review = (actionName, extra = {}) => {
-    action(`/tasks/${task.id}/review`, reviewForm(projectId, actionName, extra));
-  };
-
-  return <article className="task">
+  return <article className="task" id={`task-${task.id}`}>
+    {recentlyFinished && <FinishedTokenComparison estimate={task.estimate_tokens} actual={task.actual_tokens} />}
     <header className="task-heading">
       <span className="task-id">{task.id}</span>
       <h4 className="task-title" title={fullSummary}>{displayName}</h4>
+      {task.status === "Running" && <span className="live-pulse-dot" aria-label="Running live" title="Running live" />}
     </header>
-    <div className="task-meta">{task.estimate_tokens != null && <span>Estimate {task.estimate_tokens.toLocaleString()}</span>}{task.actual_tokens != null && <span>Actual {task.actual_tokens.toLocaleString()}</span>}{task.launch_model && <span>Run {task.launch_model}</span>}{task.launch_model && task.recommended_model && task.launch_model !== task.recommended_model && <span>Recommended {task.recommended_model}</span>}</div>
+    {task.blocked_condition && <div className="blocked-condition" role="status"><strong>Blocked</strong><span>{task.blocked_condition.reason}</span></div>}
+    {task.launch_failure && <LaunchFailureNotice failure={task.launch_failure} />}
+    {task.status === "Running" && <LatestEventLine timeline={task.timeline} />}
+    <div className="task-meta">{!recentlyFinished && task.estimate_tokens != null && <span>Estimate {task.estimate_tokens.toLocaleString()}</span>}{!recentlyFinished && task.actual_tokens != null && <span>Actual {task.actual_tokens.toLocaleString()}</span>}{task.launch_model && <span>Run {task.launch_model}</span>}{task.launch_model && task.recommended_model && task.launch_model !== task.recommended_model && <span>Recommended {task.recommended_model}</span>}</div>
     {controls.can_launch && <div className="card-controls">
-      <label>Worker Adapter<select className="board-input" value={adapterId} onChange={(event) => {
+      <label>Worker Adapter<select className="board-input" aria-describedby={selectedAdapter?.tracking?.label ? `adapter-tracking-${task.id}` : undefined} value={adapterId} onChange={(event) => {
         const nextId = event.target.value;
         const nextAdapter = adapters.find((adapter) => adapter.id === nextId);
         setAdapterId(nextId);
         setModel(nextAdapter?.allowed_models.includes(task.recommended_model) ? task.recommended_model : nextAdapter?.allowed_models[0] || "");
-      }}>{adapters.map((adapter) => <option key={adapter.id} value={adapter.id}>{adapter.name}{adapter.is_default ? " · Default" : ""}</option>)}</select></label>
+      }}>{adapters.map((adapter) => <option key={adapter.id} value={adapter.id}>{adapter.name}{adapter.is_default ? " · Default" : ""}</option>)}</select>{selectedAdapter?.tracking?.label && <small className="card-hint" id={`adapter-tracking-${task.id}`}>Spend tracking · {selectedAdapter.tracking.label}</small>}</label>
       <label>Worker model<select className="board-input" value={model} onChange={(event) => setModel(event.target.value)}>{(selectedAdapter?.allowed_models || []).map((modelId) => <option key={modelId} value={modelId}>{modelId}</option>)}</select></label>
-      {controls.budget_override_available && <label className="check-row"><input type="checkbox" checked={budgetOverride} onChange={(event) => setBudgetOverride(event.target.checked)} /> Approve budget override</label>}
-      {controls.native_usage_override_ack_required && <label className="check-row"><input type="checkbox" checked={nativeAcknowledged} onChange={(event) => setNativeAcknowledged(event.target.checked)} /> {controls.native_usage_override_ack_text}</label>}
-      <button className="btn small" type="button" onClick={launch}>Launch</button>
+      {launchGuardrails && <details className="card-guardrails" open>
+        <summary>Launch guardrails</summary>
+        <div className="card-guardrails-fields">
+          {controls.requires_manual_estimate && <label>Manual token estimate<input className="board-input" type="number" min="1" step="1" aria-describedby={`manual-estimate-${task.id}`} value={manualEstimate} onChange={(event) => setManualEstimate(event.target.value)} required /><small className="card-hint" id={`manual-estimate-${task.id}`}>No automatic estimate is available. Enter the token budget to reserve for this run.</small></label>}
+          {controls.budget_override_available && <>
+            <label className="check-row"><input type="checkbox" aria-describedby={`budget-override-${task.id}`} checked={budgetOverride} onChange={(event) => setBudgetOverride(event.target.checked)} /> Approve budget override</label>
+            <small className="card-hint" id={`budget-override-${task.id}`}>This estimate is over your remaining budget. Approving launches it anyway and records an audited budget override.</small>
+          </>}
+          {controls.native_usage_override_ack_required && <>
+            <label className="check-row"><input type="checkbox" aria-describedby={`native-ack-${task.id}`} checked={nativeAcknowledged} onChange={(event) => setNativeAcknowledged(event.target.checked)} /> {controls.native_usage_override_ack_text}</label>
+            <small className="card-hint" id={`native-ack-${task.id}`}>Native usage can't be throttled mid-run — it may reconcile as an overrun after the run finishes.</small>
+          </>}
+        </div>
+      </details>}
+      <Button size="small" type="button" onClick={launch} disabled={controls.requires_manual_estimate && !(Number(manualEstimate) > 0)}>Launch</Button>
       {!selectedAdapter?.launchable && controls.setup_href && <a href={controls.setup_href}>Open Worker Setup</a>}
     </div>}
-    {controls.can_refresh && <button className="btn small" type="button" onClick={() => action(`/tasks/${task.id}/refresh`, reviewForm(projectId))}>Refresh</button>}
-    {controls.can_archive && <button className="btn small secondary" onClick={() => action(`/projects/${projectId}/tasks/${task.id}/archive`)}>Archive</button>}
-    {controls.can_dismiss && <button className="btn small secondary" onClick={() => action(`/projects/${projectId}/tasks/${task.id}/archive`)}>Dismiss</button>}
-    {(controls.can_save_review_prompt || controls.can_agent_review || controls.can_mark_done || controls.can_block) && <div className="card-controls">
-      <label>Review prompt<textarea className="board-input" rows="2" value={reviewPrompt} onChange={(event) => setReviewPrompt(event.target.value)} /></label>
-      <div className="toolbar">
-        {controls.can_save_review_prompt && <button className="btn small secondary" type="button" onClick={() => review("save_prompt", { review_prompt: reviewPrompt })}>Save review prompt</button>}
-        {controls.can_agent_review && <button className="btn small secondary" type="button" onClick={() => review("agent_review", { review_prompt: reviewPrompt })}>Agent Review</button>}
-        {controls.can_mark_done && <button className="btn small" type="button" onClick={() => review("mark_done")}>Mark Done</button>}
-      </div>
-      {controls.can_block && <div className="toolbar"><input className="board-input" value={blockedReason} onChange={(event) => setBlockedReason(event.target.value)} placeholder="Reason required to block" /><button className="btn small danger" type="button" onClick={() => review("block", { blocked_reason: blockedReason })}>Block</button></div>}
+    {(controls.can_refresh || controls.can_archive || controls.can_dismiss || task.session_href) && <div className="task-actions">
+      {controls.can_refresh && <Button size="small" type="button" onClick={() => action(`/tasks/${task.id}/refresh`, reviewForm(projectId))}>Refresh</Button>}
+      {controls.can_archive && <Button size="small" variant={actionVariant} onClick={() => action(`/projects/${projectId}/tasks/${task.id}/archive`)}>Archive</Button>}
+      {controls.can_dismiss && <Button size="small" variant={actionVariant} onClick={() => action(`/projects/${projectId}/tasks/${task.id}/archive`)}>Dismiss</Button>}
+      {task.session_href && <Button size="small" variant={actionVariant} type="button" onClick={() => openEvidence(task)}>View evidence</Button>}
     </div>}
-    <TaskDetails task={task} />
   </article>;
 }
 
-function TaskDetails({ task }) {
-  const { details } = task;
-  const review = details.review.agent_review;
-  return <details className="task-details">
-    <summary>Task details</summary>
-    {task.session_href && <p><a href={task.session_href}>Session report</a></p>}
-    <TextEvidence label="Task body" value={details.task_body} />
-    {details.token_components.available && <section><h4>Worker token components</h4><ul>{details.token_components.items.map((item) => <li key={item.key}>{item.label}: {item.value}</li>)}</ul>{details.token_components.turn_count != null && <p>Turns: {details.token_components.turn_count}</p>}{details.token_components.cost != null && <p>Cost: {details.token_components.cost}</p>}</section>}
-    <section><h4>Launch</h4><dl className="detail-grid">{Object.entries(details.launch).filter(([, value]) => value != null && typeof value !== "object").map(([key, value]) => <React.Fragment key={key}><dt>{key}</dt><dd>{String(value)}</dd></React.Fragment>)}</dl><TextEvidence label="Launch error" value={details.launch.error} /><TextEvidence label="Blocked reason" value={details.launch.blocked_reason} /><TextEvidence label="Retryable failure" value={details.launch.retryable_failure.summary} /><TextEvidence label="Diagnostic" value={details.launch.diagnostic.summary} /><TextEvidence label="Next action" value={details.launch.diagnostic.next_action} /></section>
-    {details.timeline.length > 0 && <section><h4>Timeline</h4><ul>{details.timeline.map((event, index) => <li key={`${event.created_at}-${index}`}><span className="muted">{event.created_at} · {event.kind}</span><br /><strong>{event.title || event.kind}</strong> · {event.detail_summary.text}</li>)}</ul></section>}
-    <TextEvidence label="Worker stdout" value={details.logs.stdout} />
-    <TextEvidence label="Worker stderr" value={details.logs.stderr} />
-    <TextEvidence label="Saved review prompt" value={details.review.prompt} />
-    <dl className="detail-grid">
-      {review.status != null && <><dt>Review status</dt><dd>{review.status}</dd></>}
-      {review.recommendation != null && <><dt>Recommendation</dt><dd>{review.recommendation}</dd></>}
-      {review.model != null && <><dt>Review model</dt><dd>{review.model}</dd></>}
-      {review.token_total != null && <><dt>Review tokens</dt><dd>{review.token_total}</dd></>}
-    </dl>
-    <TextEvidence label="Agent Review" value={review.summary} />
-    <TextEvidence label="Agent Review failure" value={review.failure} />
-    {review.findings.length > 0 && <section><h4>Review findings</h4><ul>{review.findings.map((finding, index) => <li key={`${finding.path || "finding"}-${index}`}><strong>{finding.severity || "finding"}</strong>: {finding.message.text}{finding.path && <> · {finding.path}{finding.line != null ? `:${finding.line}` : ""}</>}</li>)}</ul></section>}
-    {review.review_session_href && <p><a href={review.review_session_href}>Agent Review session</a></p>}
-    <TextEvidence label="Blocked" value={details.blocked.reason} />
-    {details.blocked.requires_manual_estimate && <p className="notice warning">Manual estimate required</p>}
-  </details>;
+/**
+ * Persistent annotation for a task whose last launch failed but stays retryable.
+ *
+ * The task remains Estimated and launchable, so without this the operator would
+ * see a pristine card with no trace of the failure. The headline reason favors
+ * the actionable setup diagnostic; the raw runner detail (and exit code) sits
+ * below it, with any next action last.
+ */
+function LaunchFailureNotice({ failure }) {
+  const reason = (failure.diagnostic?.text || failure.error?.text || "").trim() || "The Worker could not start.";
+  const detail = (failure.summary?.text || "").trim();
+  const nextAction = (failure.next_action?.text || "").trim();
+  return (
+    <div className="launch-failure" role="status">
+      <strong>Last launch failed{failure.retryable ? " · retryable" : ""}</strong>
+      <span>{reason}</span>
+      {detail && <span className="launch-failure-detail">{detail}{Number.isInteger(failure.returncode) ? ` (exit ${failure.returncode})` : ""}</span>}
+      {nextAction && <span className="launch-failure-action">{nextAction}</span>}
+    </div>
+  );
 }
 
-function TextEvidence({ label, value }) {
-  if (!value?.text) return null;
-  return <section><h4>{label}</h4><pre className="raw-evidence">{value.text}</pre>{value.truncated && <p className="muted">Truncated for board display.</p>}</section>;
+/**
+ * Newest streamed event, shown on a Running card.
+ *
+ * The card is a ~130px-wide glance surface, so it carries one line and defers
+ * the readable feed to the Live runs dock above the columns.
+ */
+function LatestEventLine({ timeline }) {
+  const latest = (timeline || [])[timeline.length - 1];
+  if (!latest) return null;
+  const text = liveEventText(latest.detail_summary) || latest.title || latest.kind;
+  return (
+    <p className="task-latest-event" title={text}>
+      <span className="live-event-time">{liveEventTime(latest.created_at)}</span>
+      <span className="live-event-kind">{latest.kind}</span>
+      <span className="task-latest-event-text">{text}</span>
+    </p>
+  );
+}
+
+export async function loadEvidenceDrawer(task, getJSONImpl = getJSON) {
+  if (!task?.session_href || !/^\/sessions\/[^/]+$/.test(task.session_href)) return null;
+  return getJSONImpl(`/api${task.session_href}/report`);
+}
+
+export function EvidenceDrawer({ task, projectId, action, onClose, getJSONImpl = getJSON }) {
+  const [state, setState] = useState({ data: null, error: null, loading: false });
+  useEffect(() => {
+    let current = true;
+    if (!task) return undefined;
+    setState({ data: null, error: null, loading: true });
+    loadEvidenceDrawer(task, getJSONImpl)
+      .then((data) => { if (current) setState({ data, error: null, loading: false }); })
+      .catch(() => { if (current) setState({ data: null, error: "Could not load session evidence. Retry.", loading: false }); });
+    return () => { current = false; };
+  }, [task, getJSONImpl]);
+  useEffect(() => {
+    if (!task || !state.data?.freshness?.active) return undefined;
+    let current = true;
+    const timer = window.setInterval(() => {
+      loadEvidenceDrawer(task, getJSONImpl)
+        .then((data) => { if (current) setState({ data, error: null, loading: false }); })
+        .catch(() => { if (current) setState((existing) => ({ ...existing, error: "Could not refresh live session evidence." })); });
+    }, 5000);
+    return () => {
+      current = false;
+      window.clearInterval(timer);
+    };
+  }, [task, state.data?.freshness?.active, getJSONImpl]);
+  if (!task) return null;
+  return <EvidenceDrawerState
+    task={task}
+    projectId={projectId}
+    action={action}
+    onClose={onClose}
+    {...state}
+  />;
+}
+
+export function EvidenceDrawerState({ task, projectId, action = () => {}, onClose = () => {}, data, error, loading }) {
+  const [reviewPrompt, setReviewPrompt] = useState(task.review_prompt?.text || "");
+  const [blockedReason, setBlockedReason] = useState("");
+  const controls = task.controls || {};
+  const review = (actionName, extra = {}) => action(
+    `/tasks/${task.id}/review`,
+    reviewForm(projectId, actionName, extra),
+  );
+  const drawerRef = React.useRef(null);
+  // The drawer declares itself an aria-modal dialog, so it has to behave like
+  // one: move focus in on open, keep Tab inside it, close on Escape, and hand
+  // focus back to whatever opened it. Without this the modal contract is a lie —
+  // a keyboard or screen-reader operator can tab into the board behind it and
+  // cannot dismiss it without a pointer.
+  useEffect(() => {
+    const opener = document.activeElement;
+    drawerRef.current?.focus();
+    return () => { if (opener instanceof HTMLElement) opener.focus(); };
+  }, []);
+  useEffect(() => {
+    const drawer = drawerRef.current;
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab" || !drawer) return;
+      const focusable = drawer.querySelectorAll(
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || active === drawer)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+  return <div className="evidence-drawer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <aside ref={drawerRef} tabIndex={-1} className="evidence-drawer" role="dialog" aria-modal="true" aria-label={`Evidence for ${taskDisplayName(task)}`}>
+      <header className="evidence-drawer-header"><div><span className="section-label">Task evidence</span><h2>{taskDisplayName(task)}</h2></div><Button size="small" variant="secondary" type="button" onClick={onClose}>Close</Button></header>
+      <div className="evidence-drawer-body">
+        <div className="task-meta"><span>Estimate {task.estimate_tokens ?? "unavailable"}</span><span>Actual {task.actual_tokens ?? "unavailable"}</span></div>
+        {task.blocked_condition && <div className="blocked-condition"><strong>Blocked</strong><span>{task.blocked_condition.reason}</span></div>}
+        {loading && <Loading>Loading session evidence…</Loading>}
+        {error && <Notice variant="danger" role="alert">{error}</Notice>}
+        {!loading && !error && !data && <EmptyState>No session evidence is available.</EmptyState>}
+        {data && <>
+          <EvidenceSection key={`${task.id}:tokens`} title="Token log" page={safeEvidencePage(data.tokens?.log)} renderItem={(item, index) => <TokenRow key={index} item={item} />} />
+          <EvidenceSection key={`${task.id}:zones`} title="Budget-zone timeline" page={safeEvidencePage(data.zone_timeline)} renderItem={(item, index) => <EvidenceItem key={index} title={`${item.zone || "unknown"} zone`} meta={`${item.created_at || "time unavailable"} · max tokens ${item.max_tokens ?? "unavailable"}`} />} />
+          {(data.worker_timeline?.items?.length > 0 || data.freshness?.active) && <Panel className="evidence-section live-feed-panel"><PanelHeader title="Live Worker Run feed" badge={<span>system evidence</span>} /><PanelBody aria-live="polite"><LiveEventFeed events={(data.worker_timeline?.items || []).map((item, index) => ({ ...item, id: item.id ?? index }))} active={Boolean(data.freshness?.active)} /></PanelBody></Panel>}
+          <EvidenceSection key={`${task.id}:timeline`} title="Worker Run timeline" page={safeEvidencePage(data.worker_timeline)} renderItem={(item, index) => <EvidenceItem key={item.id ?? index} title={`${item.level || "event"} · ${item.layer || "worker"} · ${item.kind || "event"} · ${item.title || "Worker output"}`} meta={`${item.created_at || "time unavailable"} · ${item.detail_summary || ""}`} detail={item.detail} />} />
+          <RepoContext key={`${task.id}:repo`} page={safeEvidencePage(data.repo_context_briefs)} />
+          <EvidenceSection key={`${task.id}:alarms`} title="Alarms" page={safeEvidencePage(data.alarms)} renderItem={(item, index) => <EvidenceItem key={item.id ?? index} title={`${item.severity || "unknown"} · ${item.type || "Alarm"}`} meta={`${item.id || "alarm"} · ${item.created_at || "time unavailable"}`} body={item.recommended_action || "No recommended action."} />} />
+          <EvidenceSection key={`${task.id}:checkpoints`} title="Checkpoint results" page={safeEvidencePage(data.checkpoints)} renderItem={(item, index) => <EvidenceItem key={index} title={`${item.passed ? "PASS" : "FAIL"} · ${item.name || "Checkpoint"}`} detail={item.details} />} />
+          {data.related_agent_review && <AgentReview review={data.related_agent_review} />}
+        </>}
+      </div>
+      <footer className="evidence-drawer-footer">
+        {task.session_href && <Button size="small" variant="secondary" as="a" href={task.session_href}>Full Session Report</Button>}
+        {(controls.can_save_review_prompt || controls.can_agent_review || controls.can_mark_done || controls.can_block) && <div className="drawer-review-actions">
+          <label>Review prompt<textarea className="board-input" rows="2" value={reviewPrompt} onChange={(event) => setReviewPrompt(event.target.value)} /></label>
+          <div className="toolbar">
+            {controls.can_save_review_prompt && <Button size="small" variant="secondary" type="button" onClick={() => review("save_prompt", { review_prompt: reviewPrompt })}>Save review prompt</Button>}
+            {controls.can_agent_review && <Button size="small" variant="secondary" type="button" onClick={() => review("agent_review", { review_prompt: reviewPrompt })}>Agent Review</Button>}
+            {controls.can_mark_done && <Button size="small" type="button" onClick={() => review("mark_done")}>Mark Done</Button>}
+          </div>
+          {controls.can_block && <div className="toolbar"><input className="board-input" value={blockedReason} onChange={(event) => setBlockedReason(event.target.value)} placeholder="Reason required to block" /><Button size="small" variant="danger" type="button" onClick={() => review("block", { blocked_reason: blockedReason })}>Block</Button></div>}
+        </div>}
+      </footer>
+    </aside>
+  </div>;
+}
+
+function safeEvidencePage(page) {
+  return page?.items && page?.pagination
+    ? page
+    : { items: [], pagination: { total: 0, has_more: false, next_href: null } };
 }
 
 function reviewForm(projectId, actionName, values = {}) {

@@ -333,13 +333,12 @@ def test_control_plane_settings_json_handoff_shows_presets_and_needs_test(tmp_pa
     body = response.json()
     curated = {(model["provider"], model["model"]): model["label"] for model in body["curated_models"]}
     assert set(curated) == {
-        ("openai", "gpt-5.4"),
-        ("openai", "gpt-5.4-mini"),
-        ("openai", "gpt-5.5"),
+        ("openai", "gpt-5.6-sol"),
+        ("openai", "gpt-5.6-terra"),
+        ("openai", "gpt-5.6-luna"),
         ("anthropic", "claude-fable-5"),
         ("anthropic", "claude-sonnet-5"),
         ("anthropic", "claude-opus-4-8"),
-        ("anthropic", "claude-sonnet-4-6"),
         ("anthropic", "claude-haiku-4-5"),
         ("openrouter", "anthropic/claude-sonnet-5"),
         ("openrouter", "openai/gpt-5.6-terra"),
@@ -375,13 +374,12 @@ def test_control_plane_json_handoff_separates_control_model_from_worker_auth(tmp
     assert body["api_key_env"] == "TEST_CONTROL_PLANE_KEY"
     assert body["api_key_present"] is True
     curated_by_model = {model["model"]: model["provider"] for model in body["curated_models"]}
-    assert curated_by_model["gpt-5.4"] == "openai"
-    assert curated_by_model["gpt-5.4-mini"] == "openai"
-    assert curated_by_model["gpt-5.5"] == "openai"
+    assert curated_by_model["gpt-5.6-sol"] == "openai"
+    assert curated_by_model["gpt-5.6-terra"] == "openai"
+    assert curated_by_model["gpt-5.6-luna"] == "openai"
     assert curated_by_model["claude-fable-5"] == "anthropic"
     assert curated_by_model["claude-sonnet-5"] == "anthropic"
     assert curated_by_model["claude-opus-4-8"] == "anthropic"
-    assert curated_by_model["claude-sonnet-4-6"] == "anthropic"
     assert curated_by_model["claude-haiku-4-5"] == "anthropic"
     assert "sk_should_not_render" not in response.text
     assert "sk_sho...nder" not in response.text

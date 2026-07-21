@@ -328,7 +328,7 @@ def test_default_adapter_selection_skips_observed_only_adapter(tmp_path):
         "codex",
         workdir=str(tmp_path),
         config={"launch_template": ["codex", "--model", "{model}"]},
-        supported_models=["gpt-5.4"],
+        supported_models=["gpt-5.6-terra"],
     )
     db.mark_worker_adapter_verification(db_path, "codex", verified=True, evidence={"ok": True})
     task = db.create_task(
@@ -336,7 +336,7 @@ def test_default_adapter_selection_skips_observed_only_adapter(tmp_path):
         description="Use launchable default fallback",
         status="Estimated",
         estimate_tokens=50,
-        recommended_model="gpt-5.4",
+        recommended_model="gpt-5.6-terra",
         metadata={**project_task_metadata(project), "budget": {"daily_used_tokens": 0, "daily_cap_tokens": 100}},
     )
 
@@ -999,7 +999,7 @@ def test_manual_abort_preserves_task_metadata_and_marks_session_aborted(tmp_path
     artifact = db.build_session_artifact(db_path, session["id"])
 
     assert aborted["session"]["status"] == "aborted"
-    assert refreshed["status"] == "Blocked"
+    assert refreshed["status"] == "Review"
     assert refreshed["metadata"]["abort_reason"] == "operator stopped runaway task"
     assert refreshed["metadata"]["task_branch"] == "foremanctl/task-demo-2099"
     assert artifact["token_log"][0]["total_tokens"] == 2

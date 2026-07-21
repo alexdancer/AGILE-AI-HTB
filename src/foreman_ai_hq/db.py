@@ -418,6 +418,27 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     conn.execute("create index if not exists idx_task_breakdowns_status on task_breakdowns(status, created_at)")
     # "Ready" was renamed to "Estimated"; normalize old rows at startup instead of branching everywhere.
     conn.execute("update tasks set status = 'Estimated' where status = 'Ready'")
+    # Blocked is a condition on a lifecycle state, not a lifecycle state itself.
+    for row in conn.execute(
+        "select id, estimate_tokens, metadata_json from tasks where status = 'Blocked'"
+    ).fetchall():
+        metadata = _from_json(row["metadata_json"])
+        reason = (
+            "manual estimate required"
+            if row["estimate_tokens"] is None
+            else metadata.get("blocked_reason")
+            or metadata.get("launch_blocked_reason")
+            or "Task requires operator attention."
+        )
+        metadata = _with_blocked_condition(metadata, reason=reason, origin="migration")
+        if row["estimate_tokens"] is None:
+            metadata["requires_manual_estimate"] = True
+        conn.execute(
+            "update tasks set status = 'Estimated', metadata_json = ? where id = ?",
+            (_to_json(metadata), row["id"]),
+        )
+    if conn.execute("select 1 from tasks where status = 'Blocked' limit 1").fetchone():
+        raise RuntimeError("Blocked task status migration failed")
 
 
 def _seed_worker_adapters(conn: sqlite3.Connection) -> None:
@@ -629,8 +650,20 @@ def create_task(
 ) -> dict[str, Any]:
     idempotent = task_id is not None
     task_id = task_id or f"task_{uuid.uuid4().hex}"
+    metadata = dict(metadata or {})
     if status == "Ready":
         status = "Estimated"
+    if status == "Blocked":
+        status = "Estimated"
+        metadata = _with_blocked_condition(
+            metadata,
+            reason=metadata.get("blocked_reason")
+            or metadata.get("launch_blocked_reason")
+            or "manual estimate required",
+            origin="task_create",
+        )
+        if estimate_tokens is None:
+            metadata.setdefault("requires_manual_estimate", True)
     with connect(path) as conn:
         statement = """
             insert into tasks (
@@ -650,7 +683,7 @@ def create_task(
                 recommended_model,
                 actual_tokens,
                 session_id,
-                _to_json(metadata or {}),
+                _to_json(metadata),
                 _now_iso(),
             ),
         )
@@ -727,6 +760,27 @@ def get_task_breakdown(path: Path | str, breakdown_id: str) -> dict[str, Any]:
     if row is None:
         raise KeyError(f"task breakdown not found: {breakdown_id}")
     return _task_breakdown_from_row(row)
+
+
+def list_task_breakdowns_for_project(
+    path: Path | str, project_id: str
+) -> list[dict[str, Any]]:
+    with connect(path) as conn:
+        rows = conn.execute(
+            """
+            select * from task_breakdowns
+            where status in ('proposed', 'pending_review', 'failed')
+            order by created_at desc, id desc
+            """
+        ).fetchall()
+    return [
+        breakdown
+        for row in rows
+        if (breakdown := _task_breakdown_from_row(row)).get("intake_metadata", {}).get(
+            "connected_project_id"
+        )
+        == project_id
+    ]
 
 
 def update_task_breakdown(
@@ -815,6 +869,20 @@ def get_task(path: Path | str, task_id: str) -> dict[str, Any]:
 
 
 def update_task(path: Path | str, task_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    updates = dict(updates)
+    if updates.get("status") == "Blocked":
+        current = get_task(path, task_id)
+        metadata = {**current.get("metadata", {}), **dict(updates.get("metadata") or {})}
+        updates["status"] = (
+            "Review" if current.get("status") in {"Running", "Review"} else "Estimated"
+        )
+        updates["metadata"] = _with_blocked_condition(
+            metadata,
+            reason=metadata.get("blocked_reason")
+            or metadata.get("launch_blocked_reason")
+            or "Task requires operator attention.",
+            origin="task_update",
+        )
     allowed = {
         "description": "description",
         "status": "status",
@@ -846,6 +914,27 @@ def update_task(path: Path | str, task_id: str, updates: dict[str, Any]) -> dict
     return get_task(path, task_id)
 
 
+def _with_blocked_condition(
+    metadata: dict[str, Any],
+    *,
+    reason: str,
+    origin: str,
+    timestamp: str | None = None,
+) -> dict[str, Any]:
+    updated = dict(metadata)
+    existing = updated.get("blocked_condition")
+    condition = dict(existing) if isinstance(existing, dict) else {}
+    condition.update(
+        {
+            "reason": str(reason),
+            "origin": str(condition.get("origin") or origin),
+            "timestamp": str(condition.get("timestamp") or timestamp or _now_iso()),
+        }
+    )
+    updated["blocked_condition"] = condition
+    return updated
+
+
 def update_task_metadata(
     path: Path | str,
     task_id: str,
@@ -871,10 +960,27 @@ def task_is_archived(task: dict[str, Any]) -> bool:
     return bool((task.get("metadata") or {}).get("archived_at"))
 
 
+def _task_is_dismissible(task: dict[str, Any]) -> bool:
+    """Whether a task can be archived/dismissed off the board.
+
+    Done and Estimated tasks are terminal or pre-launch and always dismissible.
+    A failed/aborted/guardrail-blocked run now lands in Review carrying a
+    ``blocked_condition`` (Blocked is a condition, not a lifecycle state); that
+    condition has no other disposition path, so it must be dismissible too —
+    otherwise the task is stranded in Review with no controls.
+    """
+    status = task.get("status")
+    if status in {"Done", "Estimated"}:
+        return True
+    return status == "Review" and bool((task.get("metadata") or {}).get("blocked_condition"))
+
+
 def archive_task(path: Path | str, task_id: str) -> dict[str, Any]:
     task = get_task(path, task_id)
-    if task.get("status") not in {"Done", "Blocked", "Estimated"}:
-        raise ValueError("Only Done, Blocked, or Estimated tasks can be archived or dismissed.")
+    if not _task_is_dismissible(task):
+        raise ValueError(
+            "Only Done, Estimated, or blocked Review tasks can be archived or dismissed."
+        )
     metadata = {**task.get("metadata", {})}
     if metadata.get("archived_at"):
         return task
@@ -1131,6 +1237,8 @@ def list_worker_run_events(
     worker_run_id: str | None = None,
     session_id: str | None = None,
     task_id: str | None = None,
+    since_id: int | None = None,
+    limit: int | None = None,
 ) -> list[dict[str, Any]]:
     clauses: list[str] = []
     params: list[Any] = []
@@ -1143,9 +1251,16 @@ def list_worker_run_events(
     if task_id is not None:
         clauses.append("task_id = ?")
         params.append(task_id)
+    if since_id is not None:
+        clauses.append("id > ?")
+        params.append(since_id)
     where = f" where {' and '.join(clauses)}" if clauses else ""
+    query = "select * from worker_run_events" + where + " order by id"
+    if limit is not None:
+        query += " limit ?"
+        params.append(limit)
     with connect(path) as conn:
-        rows = conn.execute("select * from worker_run_events" + where + " order by created_at, id", params).fetchall()
+        rows = conn.execute(query, params).fetchall()
     return [_worker_run_event_from_row(row) for row in rows]
 
 
@@ -2249,18 +2364,61 @@ def _worker_run_event_detail_summary(detail: Any) -> str:
     if not isinstance(detail, dict):
         return ""
     parts: list[str] = []
-    for key in ("error_type", "returncode", "retryable", "status", "total_tokens", "usage_source"):
+
+    # Streamed Worker Run events (worker_harness layer)
+    text = detail.get("text")
+    if text:
+        parts.append(str(text)[:400])
+
+    arguments = detail.get("arguments")
+    if arguments:
+        parts.append(f"arguments={str(arguments)[:200]}")
+
+    token_parts = []
+    for key in ("input_tokens", "output_tokens", "prompt_tokens", "completion_tokens", "total_tokens"):
+        value = detail.get(key)
+        if value not in (None, ""):
+            token_parts.append(f"{key}={value}")
+    if token_parts:
+        parts.append("; ".join(token_parts))
+
+    # Existing control-plane / status fields
+    for key in ("error_type", "returncode", "retryable", "status", "usage_source"):
         if key in detail and detail[key] not in (None, ""):
             parts.append(f"{key}={detail[key]}")
+
     workdir = detail.get("workdir_evidence")
     if isinstance(workdir, dict):
         if workdir.get("configured_workdir"):
             parts.append(f"workdir={workdir['configured_workdir']}")
         if workdir.get("expected_marker"):
             parts.append(f"marker={workdir['expected_marker']}")
+
+    if not parts:
+        parts = _scalar_detail_parts(detail)
+
     if not parts:
         return ""
     return "; ".join(str(part) for part in parts)[:500]
+
+
+def _scalar_detail_parts(detail: dict[str, Any]) -> list[str]:
+    """Summarize an unrecognized detail shape as compact `key=value` pairs.
+
+    Control-plane events (launch, guardrail, adapter, command) carry shapes this
+    function does not model field by field. Rendering their scalars keeps the feed
+    readable and consistent, while skipping nested dicts/lists deliberately drops
+    the large blobs — a `command_plan` belongs in the Session Report's full detail
+    view, not inlined into a one-line feed row.
+    """
+    parts: list[str] = []
+    for key, value in detail.items():
+        if isinstance(value, (dict, list, tuple, set)) or value in (None, ""):
+            continue
+        parts.append(f"{key}={str(value)[:120]}")
+        if len(parts) >= 6:
+            break
+    return parts
 
 
 def _token_turn_from_row(row: sqlite3.Row) -> dict[str, Any]:

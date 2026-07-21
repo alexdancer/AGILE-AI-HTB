@@ -72,6 +72,7 @@ def test_react_shell_served_when_built(tmp_path, monkeypatch):
                 "/projects",
                 f"/projects/{project['id']}",
                 f"/projects/{project['id']}/board",
+                f"/projects/{project['id']}/floor",
             )
         ]
         asset = client.get("/static/react/assets/main.js")
@@ -80,6 +81,103 @@ def test_react_shell_served_when_built(tmp_path, monkeypatch):
     assert all('id="root"' in shell.text for shell in shells)
     assert asset.status_code == 200
     assert "react shell" in asset.text
+
+
+def test_project_board_redirects_to_pipeline_and_floor_checks_project(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    build_dir = _build_react_assets(tmp_path)
+    monkeypatch.setattr(react_shell, "react_build_dir", lambda: build_dir)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "two-surface-repo")
+        legacy = client.get(
+            f"/projects/{project['id']}/board",
+            headers=_portal_headers(),
+            follow_redirects=False,
+        )
+        floor = client.get(f"/projects/{project['id']}/floor", headers=_portal_headers())
+        missing = client.get(
+            "/projects/does-not-exist/floor",
+            headers=_portal_headers(),
+            follow_redirects=False,
+        )
+
+    assert legacy.status_code == 301
+    assert legacy.headers["location"] == f"/projects/{project['id']}"
+    assert floor.status_code == 200
+    assert missing.status_code == 404
+
+
+def test_needs_you_aggregates_project_decisions_and_drives_nav_badge(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    database_path = tmp_path / "harness.db"
+    with _client(tmp_path) as client:
+        project = _connect_project(database_path, tmp_path / "needs-you-repo")
+        metadata = project_task_metadata(project)
+        db.create_task_breakdown(
+            database_path,
+            source_text="DEMO proposed breakdown 2099",
+            source_sha256="9" * 64,
+            intake_metadata={
+                "connected_project_id": project["id"],
+                "source_name": "DEMO_INTAKE_2099_999.md",
+            },
+            status="pending_review",
+            decision="multi_task",
+            model="demo-model",
+            candidates=[{"summary": "DEMO candidate 2099"}],
+        )
+        task_specs = [
+            ("manual estimate", "Estimated", {"requires_manual_estimate": True, "blocked_condition": {"reason": "Estimate required", "origin": "estimation", "timestamp": "2099-01-01T00:00:00Z"}}),
+            ("launch guardrail", "Estimated", {"blocked_condition": {"reason": "Worker setup required", "origin": "launch_guardrail", "timestamp": "2099-01-01T00:00:00Z"}}),
+            ("review disposition", "Review", {}),
+            ("budget approval", "Estimated", {"budget_override_available": True, "blocked_condition": {"reason": "Budget approval required", "origin": "budget_guardrail", "timestamp": "2099-01-01T00:00:00Z"}}),
+        ]
+        for description, status_value, extra in task_specs:
+            db.create_task(
+                database_path,
+                description=f"DEMO {description} 2099",
+                status=status_value,
+                estimate_tokens=999,
+                recommended_model="demo-model",
+                metadata={**metadata, **extra},
+            )
+        other = _connect_project(database_path, tmp_path / "other-needs-you-repo")
+        db.create_task(
+            database_path,
+            description="DEMO other project review 2099",
+            status="Review",
+            estimate_tokens=999,
+            recommended_model="demo-model",
+            metadata=project_task_metadata(other),
+        )
+
+        response = client.get(
+            f"/api/projects/{project['id']}/needs-you", headers=_portal_headers()
+        )
+        nav = client.get("/api/portal/nav", headers=_portal_headers()).json()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 5
+    assert [item["kind"] for item in payload["items"]] == [
+        "breakdown_review",
+        "manual_estimate",
+        "launch_guardrail",
+        "review_disposition",
+        "budget_override",
+    ]
+    assert {
+        key: payload["items"][0][key]
+        for key in ("source", "candidate_count", "status")
+    } == {
+        "source": "DEMO_INTAKE_2099_999.md",
+        "candidate_count": 1,
+        "status": "pending_review",
+    }
+    assert payload["items"][0]["created_at"]
+    nav_project = next(item for item in nav["sidebar_projects"] if item["id"] == project["id"])
+    assert nav_project["needs_you_count"] == payload["count"]
 
 
 @pytest.mark.parametrize(
@@ -439,7 +537,7 @@ def test_canonical_routing_matrix(
         assert "not built" in projects.text
 
 
-def test_board_redirect_unchanged(tmp_path, monkeypatch):
+def test_global_board_redirects_to_pipeline(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
 
@@ -451,7 +549,7 @@ def test_board_redirect_unchanged(tmp_path, monkeypatch):
     assert no_project.status_code in (302, 303, 307)
     assert no_project.headers["location"] == "/projects"
     assert with_project.status_code in (302, 303, 307)
-    assert with_project.headers["location"] == f"/projects/{project['id']}/board"
+    assert with_project.headers["location"] == f"/projects/{project['id']}"
 
 
 @pytest.mark.parametrize(
@@ -506,17 +604,10 @@ def test_unknown_project_returns_404_at_canonical_routes_in_both_build_states(
     assert 'id="root"' not in board.text
 
 
-def test_archived_project_board_serves_react_or_recovery_by_build_state(
+def test_archived_legacy_board_redirects_to_pipeline_in_every_build_state(
     tmp_path, monkeypatch
 ):
-    """React owns the archived board; a missing build owns nothing.
-
-    This route used to redirect an archived board to the workspace carrying a
-    restore-first message, but only when the build was missing — the redirect sat
-    behind the index check, so a built shell never reached it. With the Jinja
-    workspace retired there is nowhere to carry that message to, and React
-    already identifies the archived state and routes to Restore itself.
-    """
+    """Legacy board redirects; canonical Pipeline owns build recovery and Restore."""
 
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
@@ -537,8 +628,8 @@ def test_archived_project_board_serves_react_or_recovery_by_build_state(
 
     assert built.status_code == 200
     assert 'id="root"' in built.text
-    assert missing.status_code == 503
-    assert "not built" in missing.text
+    assert missing.status_code == 301
+    assert missing.headers["location"] == f"/projects/{project['id']}"
 
 
 def test_every_canonical_route_serves_the_shell_when_built(tmp_path, monkeypatch):
@@ -628,7 +719,6 @@ def test_react_projects_endpoint_lists_connected_projects(tmp_path, monkeypatch)
         "Running",
         "Review",
         "Done",
-        "Blocked",
     }
     assert listed["total_tasks"] == sum(listed["counts"].values())
 
@@ -691,7 +781,7 @@ def test_react_projects_endpoint_active_array_fields_unchanged(tmp_path, monkeyp
         "archived_at", "archived_by", "created_at", "updated_at", "counts", "total_tasks",
     }
     assert set(payload["projects"][0]["counts"]) == {
-        "Estimated", "Running", "Review", "Done", "Blocked",
+        "Estimated", "Running", "Review", "Done",
     }
     assert payload["projects"][0]["total_tasks"] == sum(payload["projects"][0]["counts"].values())
 
@@ -985,7 +1075,6 @@ def test_react_workspace_state_reuses_project_helpers(tmp_path, monkeypatch):
         "Running",
         "Review",
         "Done",
-        "Blocked",
     }
     assert "launch_ready" in payload["summary"]
 
@@ -1020,16 +1109,18 @@ def test_react_workspace_state_uses_exact_contract_and_route_ownership(tmp_path,
         "counts", "total_tasks", "launch_ready", "capability_state", "attention_actions",
     }
     assert set(payload["summary"]["counts"]) == {
-        "Estimated", "Running", "Review", "Done", "Blocked",
+        "Estimated", "Running", "Review", "Done",
     }
     assert set(payload["controls"]) == {"can_open_board", "can_restore"}
     assert set(payload["links"]) == {
-        "board_href", "task_history_href", "sessions_href", "worker_setup_href",
+        "board_href", "floor_href", "task_history_href", "sessions_href", "worker_setup_href",
         "project_settings_href", "restore_href",
     }
-    assert payload["controls"] == {"can_open_board": True, "can_restore": False}
+    assert payload["links"]["board_href"] == f"/projects/{project['id']}"
+    assert payload["links"]["floor_href"] == f"/projects/{project['id']}/floor"
     assert payload["links"] == {
-        "board_href": f"/projects/{project['id']}/board",
+        "board_href": f"/projects/{project['id']}",
+        "floor_href": f"/projects/{project['id']}/floor",
         "task_history_href": f"/projects/{project['id']}/task-history",
         "sessions_href": "/sessions",
         "worker_setup_href": "/settings/workers",
@@ -1040,7 +1131,7 @@ def test_react_workspace_state_uses_exact_contract_and_route_ownership(tmp_path,
         action for action in payload["summary"]["attention_actions"]
         if action["label"] == "Running work"
     )
-    assert running["href"] == f"/projects/{project['id']}/board"
+    assert running["href"] == f"/projects/{project['id']}/floor"
     assert set(running) == {"label", "detail", "href", "tone"}
     serialized = json.dumps(payload)
     for excluded in (
@@ -1121,16 +1212,16 @@ def test_react_workspace_projection_applies_every_bound_and_redacts():
     assert len(profile["relevant_docs"]) == 50
     assert all(len(item) == 1000 for item in profile["relevant_docs"])
     assert summary["counts"] == {
-        "Estimated": 1, "Running": 0, "Review": 0, "Done": 0, "Blocked": 5,
+        "Estimated": 1, "Running": 0, "Review": 0, "Done": 0,
     }
-    assert summary["total_tasks"] == 6
+    assert summary["total_tasks"] == 1
     assert len(summary["capability_state"]) == 64
     assert len(summary["attention_actions"]) == 20
     assert all(len(item["label"]) == 200 for item in summary["attention_actions"])
     assert all(len(item["detail"]) == 1000 for item in summary["attention_actions"])
     assert all(len(item["tone"]) == 32 for item in summary["attention_actions"])
     assert all(
-        item["href"] == f"/projects/{bounded_id}/board"
+        item["href"] == f"/projects/{bounded_id}"
         for item in summary["attention_actions"]
     )
     serialized = json.dumps(payload)
@@ -1177,7 +1268,7 @@ def test_react_workspace_projection_uses_typed_defaults_for_malformed_values():
     }
     assert payload["summary"] == {
         "counts": {column: 0 for column in (
-            "Estimated", "Running", "Review", "Done", "Blocked"
+            "Estimated", "Running", "Review", "Done"
         )},
         "total_tasks": 0,
         "launch_ready": False,
@@ -1406,7 +1497,6 @@ def test_react_board_state_reuses_board_context(tmp_path, monkeypatch):
         "Running",
         "Review",
         "Done",
-        "Blocked",
     ]
     assert set(payload["tasks_by_status"]) == set(payload["columns"])
     assert "board_empty_states" in payload
@@ -1499,8 +1589,8 @@ def test_react_board_projection_tolerates_malformed_nested_metadata(
 
     assert response.status_code == 200
     card = response.json()["tasks_by_status"]["Estimated"][0]
-    assert card["details"]["launch"]["workdir"] is None
-    assert card["details"]["timeline"] == []
+    assert "details" not in card
+    assert card["timeline"] == []
 
 
 def test_react_board_projection_sanitizes_and_bounds_timeline_labels(
@@ -1533,7 +1623,7 @@ def test_react_board_projection_sanitizes_and_bounds_timeline_labels(
         )
 
     assert response.status_code == 200
-    event = response.json()["tasks_by_status"]["Estimated"][0]["details"]["timeline"][0]
+    event = response.json()["tasks_by_status"]["Estimated"][0]["timeline"][0]
     serialized = json.dumps(event)
     assert "DEMO_SECRET_999" not in serialized
     assert "DEMO_DETAIL_SECRET_999" not in serialized
@@ -1542,7 +1632,7 @@ def test_react_board_projection_sanitizes_and_bounds_timeline_labels(
 
 
 def test_react_board_projection_uses_exact_nested_allowlists_and_safe_evidence():
-    columns = ["Estimated", "Running", "Review", "Done", "Blocked"]
+    columns = ["Estimated", "Running", "Review", "Done"]
     metadata = {
         "review_actions_available": True,
         "budget_override_available": True,
@@ -1550,13 +1640,18 @@ def test_react_board_projection_uses_exact_nested_allowlists_and_safe_evidence()
         "native_usage_override_ack_text": "Acknowledge DEMO native usage",
         "active_worker_run_id": "wr_DEMO_999",
         "launch_adapter_id": "codex",
-        "launch_model": "gpt-5.4",
+        "launch_model": "gpt-5.6-terra",
         "tracking_mode": "native_usage",
         "usage_source": "worker",
         "worker_run_status": "completed",
         "launch_returncode": 0,
         "launch_error": "password=DEMO_LAUNCH_SECRET_999",
         "workdir_evidence": {"configured_workdir": "/tmp/DEMO_2099_repo"},
+        "blocked_condition": {
+            "reason": "password=DEMO_BLOCKED_SECRET_999",
+            "origin": "review",
+            "timestamp": "2099-01-01T00:00:00Z",
+        },
         "last_launch_failure": {
             "returncode": 1,
             "error": "Bearer DEMO_FAILURE_SECRET_999",
@@ -1616,7 +1711,7 @@ def test_react_board_projection_uses_exact_nested_allowlists_and_safe_evidence()
         "board_empty_states": {column: f"No {column}" for column in columns},
         "adapters": [{
             "id": "codex", "name": "Codex", "is_default": True, "launchable": True,
-            "supported_models": ["gpt-5.4"], "tracking_label": "Native",
+            "supported_models": ["gpt-5.6-terra"], "tracking_label": "Native",
             "tracking": {
                 "mode": "native_usage", "runtime_request_guardrails": True,
                 "accounting": "authoritative", "budget_authoritative": True,
@@ -1627,7 +1722,7 @@ def test_react_board_projection_uses_exact_nested_allowlists_and_safe_evidence()
             column: ([{
                 "id": "task_DEMO_999", "status": "Review", "description": "Review DEMO task",
                 "estimate_tokens": 9000, "actual_tokens": 4000,
-                "recommended_model": "gpt-5.4", "session_id": "sess_DEMO_999",
+                "recommended_model": "gpt-5.6-terra", "session_id": "sess_DEMO_999",
                 "metadata": metadata,
             }] if column == "Review" else [])
             for column in columns
@@ -1657,30 +1752,18 @@ def test_react_board_projection_uses_exact_nested_allowlists_and_safe_evidence()
     }
     assert set(card) == {
         "id", "status", "summary", "estimate_tokens", "actual_tokens",
-        "recommended_model", "launch_model", "session_href", "controls", "details",
+        "recommended_model", "launch_model", "session_href", "blocked_condition",
+        "launch_failure", "review_prompt", "timeline", "controls",
     }
     assert set(card["controls"]) == {
         "can_launch", "can_refresh", "can_save_review_prompt", "can_agent_review",
         "can_mark_done", "can_block", "can_archive", "can_dismiss",
+        "requires_manual_estimate",
         "budget_override_available", "native_usage_override_ack_required",
         "native_usage_override_ack_text", "setup_href",
     }
-    assert set(card["details"]) == {
-        "task_body", "token_components", "launch", "timeline", "logs", "review", "blocked",
-    }
-    assert set(card["details"]["token_components"]) == {
-        "available", "items", "cost", "turn_count",
-    }
-    assert set(card["details"]["launch"]) == {
-        "worker_run_id", "adapter_id", "model", "tracking_mode", "usage_source", "status",
-        "returncode", "workdir", "error", "blocked_reason", "retryable_failure", "diagnostic",
-    }
-    assert set(card["details"]["review"]) == {"prompt", "agent_review"}
-    assert set(card["details"]["review"]["agent_review"]) == {
-        "status", "recommendation", "summary", "failure", "findings",
-        "review_session_href", "model", "token_total",
-    }
-    assert [event["title"] for event in card["details"]["timeline"]] == [
+    assert card["review_prompt"] == {"text": "Review DEMO evidence", "truncated": False}
+    assert [event["title"] for event in card["timeline"]] == [
         f"event {index}" for index in range(2, 8)
     ]
     serialized = json.dumps(card)
@@ -1688,26 +1771,20 @@ def test_react_board_projection_uses_exact_nested_allowlists_and_safe_evidence()
         "DEMO_LAUNCH_SECRET_999", "DEMO_FAILURE_SECRET_999", "DEMO_STDERR_SECRET_999",
         "DEMO_TOKEN_KEY_999", "DEMO_TOKEN_LABEL_999", "DEMO_TOKEN_VALUE_999",
         "DEMO_SEVERITY_SECRET_999", "DEMO_FINDING_SECRET_999", "DEMO_PATH_SECRET_999",
-        "DEMO_MODEL_SECRET_999",
+        "DEMO_MODEL_SECRET_999", "DEMO_BLOCKED_SECRET_999",
     ):
         assert secret not in serialized
-    token_item = card["details"]["token_components"]["items"][0]
-    finding = card["details"]["review"]["agent_review"]["findings"][0]
-    assert len(token_item["key"]) <= 100
-    assert len(token_item["label"]) <= 200
-    assert len(token_item["value"]) <= 400
-    assert len(finding["severity"]) <= 40
-    assert len(finding["path"]) <= 400
-    assert len(card["details"]["review"]["agent_review"]["model"]) <= 200
-    assert card["details"]["launch"]["returncode"] == 0
-    assert card["details"]["launch"]["retryable_failure"]["returncode"] == 1
-    assert card["details"]["token_components"]["cost"] == 0.25
-    assert card["details"]["token_components"]["turn_count"] == 2
-    assert finding["line"] == 99
-    assert card["details"]["review"]["agent_review"]["token_total"] == 42
+    assert card["blocked_condition"] == {
+        "reason": "***REDACTED***",
+        "origin": "review",
+        "timestamp": "2099-01-01T00:00:00Z",
+    }
+    assert "details" not in card
+    assert "safe stdout" not in serialized
+    assert "safe review" not in serialized
 
 
-def test_react_task_projection_rejects_non_numeric_persisted_scalars():
+def test_react_task_projection_omits_non_card_evidence():
     secret = "password=DEMO_NUMERIC_SECRET_999"
     card = react_shell._react_task({
         "id": "task_DEMO_999",
@@ -1726,18 +1803,14 @@ def test_react_task_projection_rejects_non_numeric_persisted_scalars():
         },
     })
 
-    assert card["details"]["launch"]["returncode"] is None
-    assert card["details"]["launch"]["retryable_failure"]["returncode"] is None
-    assert card["details"]["token_components"]["cost"] is None
-    assert card["details"]["token_components"]["turn_count"] is None
-    assert card["details"]["review"]["agent_review"]["findings"][0]["line"] is None
-    assert card["details"]["review"]["agent_review"]["token_total"] is None
+    assert "details" not in card
+    assert card["timeline"] == []
     assert "DEMO_NUMERIC_SECRET_999" not in json.dumps(card)
 
 
 def test_react_task_projection_has_stable_null_and_empty_defaults():
     card = react_shell._react_task(
-        {"id": "task_DEMO_999", "status": "Blocked", "description": "", "metadata": {}}
+        {"id": "task_DEMO_999", "status": "Review", "description": "", "metadata": {}}
     )
 
     assert card["summary"] == {"text": "", "truncated": False}
@@ -1746,19 +1819,10 @@ def test_react_task_projection_has_stable_null_and_empty_defaults():
     assert card["recommended_model"] is None
     assert card["launch_model"] is None
     assert card["session_href"] is None
-    assert card["details"]["token_components"] == {
-        "available": False,
-        "items": [],
-        "cost": None,
-        "turn_count": None,
-    }
-    assert card["details"]["timeline"] == []
-    assert card["details"]["review"]["agent_review"]["findings"] == []
-    assert card["details"]["review"]["agent_review"]["review_session_href"] is None
-    assert card["details"]["blocked"] == {
-        "reason": {"text": "", "truncated": False},
-        "requires_manual_estimate": False,
-    }
+    assert card["blocked_condition"] is None
+    assert card["review_prompt"] == {"text": "", "truncated": False}
+    assert card["timeline"] == []
+    assert "details" not in card
 
 
 def test_react_task_title_preserves_safe_secret_word_and_redacts_embedded_value():
@@ -2914,7 +2978,7 @@ def test_react_worker_settings_mutation_json_allowed_models_success_and_rejectio
         success = client.post(
             "/settings/workers/codex/allowed-models",
             headers=headers,
-            json={"allowed_models": ["gpt-5.4"]},
+            json={"allowed_models": ["gpt-5.6-terra"]},
         )
         reject = client.post(
             "/settings/workers/codex/allowed-models",
@@ -2925,7 +2989,7 @@ def test_react_worker_settings_mutation_json_allowed_models_success_and_rejectio
     assert success.json()["ok"] is True
     assert success.json()["error"] is None
     adapter = db.get_worker_adapter(database_path, "codex")
-    assert adapter["supported_models"] == ["gpt-5.4"]
+    assert adapter["supported_models"] == ["gpt-5.6-terra"]
 
     assert reject.status_code == 200
     assert reject.json()["ok"] is False
@@ -2941,7 +3005,7 @@ def test_react_worker_settings_mutation_html_allowed_models_redirect_preserved(
         success = client.post(
             "/settings/workers/codex/allowed-models",
             headers=_portal_headers(),
-            data={"allowed_models": "gpt-5.4"},
+            data={"allowed_models": "gpt-5.6-terra"},
             follow_redirects=False,
         )
         reject = client.post(
@@ -3055,12 +3119,12 @@ def test_react_worker_settings_verify_json_shape_unchanged(
             database_path,
             "codex",
             config={"allowed_models_configured": True},
-            supported_models=["gpt-5.4"],
+            supported_models=["gpt-5.6-terra"],
         )
         response = client.post(
             "/settings/workers/codex/verify",
             headers=headers,
-            json={"model": "gpt-5.4", "tracking_mode": "native_usage"},
+            json={"model": "gpt-5.6-terra", "tracking_mode": "native_usage"},
         )
     assert response.status_code == 200
     payload = response.json()

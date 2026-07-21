@@ -192,17 +192,16 @@ def test_project_workspace_displays_profile_capability_and_workflow_links(tmp_pa
     assert payload["project"]["name"] == "portal-project"
     assert payload["project"]["root_path"] == str(root.resolve())
     assert payload["summary"]["total_tasks"] == 3
-    assert payload["summary"]["counts"]["Estimated"] == 0
+    assert payload["summary"]["counts"]["Estimated"] == 1
     assert payload["project"]["capability"]["label"] == "Analysis-ready"
     action_labels = {a["label"] for a in payload["summary"]["attention_actions"]}
     assert "Worker setup" in action_labels
     assert "Running work" in action_labels
     assert "Review needed" in action_labels
-    assert "Blocked work" in action_labels
     assert payload["project"]["profile"]["test_command"] == "pytest"
     assert "fastapi" in payload["project"]["profile"]["framework_hints"]
     assert "README.md" in payload["project"]["profile"]["relevant_docs"]
-    for href in [f"/projects/{project['id']}/board", "/sessions", "/settings/workers", "/settings/project"]:
+    for href in [f"/projects/{project['id']}", f"/projects/{project['id']}/floor", "/sessions", "/settings/workers", "/settings/project"]:
         assert href in payload["links"].values()
     assert missing.status_code == 404
 

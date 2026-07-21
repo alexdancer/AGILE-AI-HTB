@@ -60,7 +60,7 @@ def test_sidebar_and_global_board_ignore_archived_projects(tmp_path, monkeypatch
     assert active["name"] in active_names
     assert archived["name"] not in active_names
     assert board.status_code == 303
-    assert board.headers["location"] == f"/projects/{active['id']}/board"
+    assert board.headers["location"] == f"/projects/{active['id']}"
 
 
 def test_global_board_redirects_to_projects_when_only_archived_projects_exist(tmp_path, monkeypatch):

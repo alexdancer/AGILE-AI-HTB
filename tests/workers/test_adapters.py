@@ -17,20 +17,18 @@ from foreman_ai_hq.worker_model_allowlist import allowed_worker_model_ids
 
 CLAUDE_CODE_CURATED_MODELS = [
     "claude-opus-4-8",
-    "claude-opus-4-7",
-    "claude-opus-4-6",
     "claude-sonnet-5",
-    "claude-sonnet-4-6",
     "claude-haiku-4-5",
 ]
 PREVIOUS_CLAUDE_CODE_CURATED_MODELS = [
     "claude-opus-4-8",
     "claude-opus-4-7",
     "claude-opus-4-6",
+    "claude-sonnet-5",
     "claude-sonnet-4-6",
     "claude-haiku-4-5",
 ]
-CODEX_CURATED_MODELS = ["gpt-5.4", "gpt-5.4-mini", "5.3-codex-spark", "gpt-5.5"]
+CODEX_CURATED_MODELS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
 
 
 def test_init_db_seeds_worker_adapter_presets_idempotently_and_preserves_updates(tmp_path):
@@ -100,22 +98,22 @@ def test_worker_adapter_builders_create_safe_configurable_command_plans(tmp_path
         "name": "Codex CLI",
         "workdir": str(tmp_path),
         "config": {"verification_template": ["codex", "--model", "{model}", "--prompt", "{prompt}"]},
-        "supported_models": ["gpt-5.4"],
+        "supported_models": ["gpt-5.6-terra"],
     }
     builder = get_adapter_builder(adapter)
 
     session_api_key = "test-session-key"
     plan = builder.build_verification_command(
-        model="gpt-5.4",
+        model="gpt-5.6-terra",
         prompt="Return sentinel",
         proxy_url="http://127.0.0.1:8000/v1",
         session_api_key=session_api_key,
     )
     safe = redact_command_plan(plan)
 
-    assert builder.supports_model("gpt-5.4") is True
+    assert builder.supports_model("gpt-5.6-terra") is True
     assert builder.supports_model("claude-3-haiku") is False
-    assert plan.command == ["codex", "--model", "gpt-5.4", "--prompt", "Return sentinel"]
+    assert plan.command == ["codex", "--model", "gpt-5.6-terra", "--prompt", "Return sentinel"]
     assert plan.cwd == Path(tmp_path)
     assert plan.env["OPENAI_BASE_URL"] == "http://127.0.0.1:8000/v1"
     assert plan.env["OPENAI_API_KEY"] == session_api_key
@@ -616,13 +614,13 @@ def test_discover_claude_code_models_preserves_allowed_subset(tmp_path):
         db_path,
         "claude_code",
         config={"allowed_models_configured": True},
-        supported_models=["claude-sonnet-4-6"],
+        supported_models=["claude-sonnet-5"],
     )
 
     result = discover_worker_models(db_path, "claude_code", runner=lambda plan: None)
 
     assert result.models == CLAUDE_CODE_CURATED_MODELS
-    assert db.get_worker_adapter(db_path, "claude_code")["supported_models"] == ["claude-sonnet-4-6"]
+    assert db.get_worker_adapter(db_path, "claude_code")["supported_models"] == ["claude-sonnet-5"]
 
 
 def test_discover_codex_models_uses_curated_inventory_without_subprocess(tmp_path):

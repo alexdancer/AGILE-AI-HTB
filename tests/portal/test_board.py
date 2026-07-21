@@ -21,7 +21,7 @@ def _task_from_history(history: dict, task_id: str) -> dict:
     raise AssertionError(f"task {task_id} not found in history")
 
 
-def test_board_shows_blocked_manual_estimate_state(tmp_path, monkeypatch):
+def test_board_shows_manual_estimate_blocked_condition(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     db.init_db(tmp_path / "harness.db")
     project = _connect_project(tmp_path / "harness.db", tmp_path / "project")
@@ -44,12 +44,13 @@ def test_board_shows_blocked_manual_estimate_state(tmp_path, monkeypatch):
     assert response.status_code == 200
     board = response.json()
     task_json = _task_from_board(board, task["id"])
-    assert task_json["status"] == "Blocked"
+    assert task_json["status"] == "Estimated"
     assert "Needs operator sizing" in task_json["summary"]["text"]
-    # UI summary/details labels are React-shell concerns; backend exposes the underlying evidence.
-    assert task_json["details"]["launch"]["blocked_reason"]["text"] == "Daily budget exhausted"
-    assert task_json["details"]["blocked"]["reason"]["text"] == "Estimator unavailable: timeout"
-    assert task_json["details"]["blocked"]["requires_manual_estimate"] is True
+    assert task_json["blocked_condition"]["reason"] == "Estimate task before launch."
+    assert task_json["blocked_condition"]["origin"] == "task_create"
+    assert task_json["blocked_condition"]["timestamp"]
+    assert task_json["controls"]["requires_manual_estimate"] is True
+    assert "details" not in task_json
 
 
 def test_project_board_filters_tasks_and_global_board_redirects_to_recent_project(tmp_path, monkeypatch):
@@ -87,7 +88,15 @@ def test_project_board_filters_tasks_and_global_board_redirects_to_recent_projec
     assert "Second project task" not in descriptions
     assert "Legacy global task" not in descriptions
     assert global_board.status_code == 303
-    assert global_board.headers["location"] == f"/projects/{second['id']}/board"
+    assert global_board.headers["location"] == f"/projects/{second['id']}"
+
+    with _client(tmp_path) as client:
+        preserved = client.get(
+            "/board?error=DEMO%202099%20blocked",
+            headers=_portal_headers(),
+            follow_redirects=False,
+        )
+    assert preserved.headers["location"] == f"/projects/{second['id']}?error=DEMO%202099%20blocked"
 
 
 def test_global_board_redirects_to_projects_when_none_connected(tmp_path, monkeypatch):
@@ -119,7 +128,7 @@ def test_board_renders_columns_and_task_cards(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     board = response.json()
-    for column in ["Estimated", "Running", "Review", "Done", "Blocked"]:
+    for column in ["Estimated", "Running", "Review", "Done"]:
         assert column in board["columns"]
     assert "Backlog" not in board["columns"]
     assert "Other" not in board["columns"]
@@ -127,7 +136,7 @@ def test_board_renders_columns_and_task_cards(tmp_path, monkeypatch):
     assert board["board_empty_states"]["Running"].startswith("No Running tasks.")
     assert board["board_empty_states"]["Review"].startswith("No Review tasks.")
     assert board["board_empty_states"]["Done"].startswith("No Done tasks.")
-    assert board["board_empty_states"]["Blocked"].startswith("No Blocked tasks.")
+
     task = _task_from_board(board, created["id"])
     assert task["summary"]["text"] == "Add streaming proxy tests"
     assert task["estimate_tokens"] == 25000
@@ -167,7 +176,7 @@ def test_board_shows_launched_model_before_recommendation(tmp_path, monkeypatch)
     # Refresh form/label and on-card ordering are React-shell rendering concerns.
 
 
-def test_board_uses_bounded_details_for_verbose_evidence(tmp_path, monkeypatch):
+def test_board_defers_verbose_evidence_to_the_session_report(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
     long_task_tail = "BOARD_FULL_TASK_TAIL_2099"
@@ -212,24 +221,21 @@ def test_board_uses_bounded_details_for_verbose_evidence(tmp_path, monkeypatch):
     assert response.status_code == 200
     board = response.json()
     task_json = _task_from_board(board, task["id"])
-    # Card classes and <details>/<summary> markup are React-shell UI concerns.
     assert task_json["summary"]["truncated"] is True
     assert "Compact board task" in task_json["summary"]["text"]
-    assert long_task_tail in task_json["details"]["task_body"]["text"]
-    assert task_json["details"]["task_body"]["truncated"] is False
-    assert task_json["details"]["launch"]["error"]["text"] == "Adapter failed before review"
-    assert task_json["details"]["launch"]["retryable_failure"]["returncode"] == 2
-    assert stderr_tail in task_json["details"]["launch"]["retryable_failure"]["summary"]["text"]
-    assert stdout_tail in task_json["details"]["logs"]["stdout"]["text"]
-    assert stderr_tail in task_json["details"]["logs"]["stderr"]["text"]
-    assert len(task_json["details"]["timeline"]) == 1
-    assert timeline_tail in task_json["details"]["timeline"][0]["detail_summary"]["text"]
-    assert review_prompt_tail in task_json["details"]["review"]["prompt"]["text"]
-    assert review_summary_tail in task_json["details"]["review"]["agent_review"]["summary"]["text"]
-    assert review_finding_tail in task_json["details"]["review"]["agent_review"]["findings"][0]["message"]["text"]
+    assert review_prompt_tail in task_json["review_prompt"]["text"]
+    assert len(task_json["timeline"]) == 1
+    assert timeline_tail in task_json["timeline"][0]["detail_summary"]["text"]
+    serialized = str(task_json)
+    assert "details" not in task_json
+    assert long_task_tail not in serialized
+    assert stderr_tail not in serialized
+    assert stdout_tail not in serialized
+    assert review_summary_tail not in serialized
+    assert review_finding_tail not in serialized
 
 
-def test_board_launch_details_show_successful_worker_run_evidence(tmp_path, monkeypatch):
+def test_board_card_omits_successful_worker_run_evidence(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
     with _client(tmp_path) as client:
@@ -260,18 +266,15 @@ def test_board_launch_details_show_successful_worker_run_evidence(tmp_path, monk
     board = response.json()
     task_json = _task_from_board(board, task["id"])
     assert task_json["actual_tokens"] == 1234
-    launch = task_json["details"]["launch"]
-    assert launch["worker_run_id"] == "wr_DEMO_999"
-    assert launch["adapter_id"] == "opencode"
-    assert launch["model"] == "openai/gpt-5.5 --variant high"
-    assert launch["tracking_mode"] == "proxy_governed"
-    assert launch["usage_source"] == "harness_proxy"
-    assert launch["status"] == "completed"
-    assert launch["returncode"] == 0
-    assert launch["workdir"] == "/tmp/DEMO_2099_project"
+    assert task_json["launch_model"] == "openai/gpt-5.5 --variant high"
+    assert "details" not in task_json
+    serialized = str(task_json)
+    assert "wr_DEMO_999" not in serialized
+    assert "/tmp/DEMO_2099_project" not in serialized
+    assert "proxy_governed" not in serialized
 
 
-def test_board_hides_launch_details_when_no_launch_evidence_exists(tmp_path, monkeypatch):
+def test_board_card_has_stable_empty_live_state_without_launch_evidence(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     database_path = tmp_path / "harness.db"
     with _client(tmp_path) as client:
@@ -290,20 +293,12 @@ def test_board_hides_launch_details_when_no_launch_evidence_exists(tmp_path, mon
     assert response.status_code == 200
     board = response.json()
     task_json = _task_from_board(board, task["id"])
-    launch = task_json["details"]["launch"]
-    assert launch["worker_run_id"] is None
-    assert launch["adapter_id"] is None
-    assert launch["model"] is None
-    assert launch["tracking_mode"] is None
-    assert launch["usage_source"] is None
-    assert launch["status"] is None
-    assert launch["returncode"] is None
-    assert launch["workdir"] is None
-    # With no launch evidence the bounded error text is empty; UI decides whether to render a Launch section.
-    assert launch["error"]["text"] == ""
+    assert task_json["launch_model"] is None
+    assert task_json["timeline"] == []
+    assert "details" not in task_json
 
 
-def test_board_renders_unexpected_statuses_as_blocked(tmp_path, monkeypatch):
+def test_board_renders_unexpected_statuses_as_estimated_with_blocked_condition(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     with _client(tmp_path) as client:
         project = _connect_project(tmp_path / "harness.db", tmp_path / "connected-project")
@@ -319,12 +314,12 @@ def test_board_renders_unexpected_statuses_as_blocked(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     board = response.json()
-    assert "Blocked" in board["columns"]
+    assert "Blocked" not in board["columns"]
     assert "Other" not in board["columns"]
     task_json = _task_from_board(board, created["id"])
-    assert task_json["status"] == "Blocked"
+    assert task_json["status"] == "Estimated"
     assert task_json["summary"]["text"] == "Odd status task"
-    assert task_json["details"]["blocked"]["reason"]["text"] == "Unsupported task status: Legacy Backlog"
+    assert task_json["blocked_condition"]["reason"] == "Unsupported task status: Legacy Backlog"
 
 
 def test_board_review_card_shows_disposition_actions_prompt_and_agent_review(tmp_path, monkeypatch):
@@ -369,15 +364,16 @@ def test_board_review_card_shows_disposition_actions_prompt_and_agent_review(tmp
 
     assert response.status_code == 200
     assert validation.status_code == 303
-    assert validation.headers["location"].startswith(f"/projects/{project['id']}/board?error=")
+    assert validation.headers["location"].startswith(f"/projects/{project['id']}/floor?error=")
     board = response.json()
     task_json = _task_from_board(board, task["id"])
     # Button labels and form action URLs are React-shell rendering concerns.
     assert task_json["controls"]["can_mark_done"] is True
     assert task_json["controls"]["can_block"] is True
-    assert task_json["details"]["review"]["prompt"]["text"] == "DEMO focus note 2099"
-    assert task_json["details"]["review"]["agent_review"]["summary"]["text"] == "DEMO agent review summary 2099"
-    assert task_json["details"]["review"]["agent_review"]["findings"][0]["message"]["text"] == "DEMO finding 2099"
+    assert task_json["review_prompt"]["text"] == "DEMO focus note 2099"
+    assert "DEMO agent review summary 2099" not in str(task_json)
+    assert "DEMO finding 2099" not in str(task_json)
+    assert "details" not in task_json
     assert task_json["session_href"] == f"/sessions/{session['id']}"
 
 
@@ -464,7 +460,7 @@ def test_mark_done_keeps_task_visible_until_archived(tmp_path, monkeypatch):
 
     updated = db.get_task(database_path, task["id"])
     assert response.status_code == 303
-    assert response.headers["location"] == f"/projects/{project['id']}/board"
+    assert response.headers["location"] == f"/projects/{project['id']}/floor"
     assert updated["status"] == "Done"
     assert "archived_at" not in updated["metadata"]
     assert board.status_code == 200
@@ -509,7 +505,7 @@ def test_archive_done_task_hides_from_board_and_preserves_history_evidence(tmp_p
 
     archived = db.get_task(database_path, task["id"])
     assert archive_response.status_code == 303
-    assert archive_response.headers["location"] == f"/projects/{project['id']}/board"
+    assert archive_response.headers["location"] == f"/projects/{project['id']}"
     assert archived["status"] == "Done"
     assert archived["actual_tokens"] == 4500
     assert archived["session_id"] == session["id"]
@@ -631,8 +627,8 @@ def test_archive_blocked_task_hides_from_board_and_preserves_history_evidence(tm
 
     archived = db.get_task(database_path, task["id"])
     assert archive_response.status_code == 303
-    assert archive_response.headers["location"] == f"/projects/{project['id']}/board"
-    assert archived["status"] == "Blocked"
+    assert archive_response.headers["location"] == f"/projects/{project['id']}"
+    assert archived["status"] == "Estimated"
     assert archived["actual_tokens"] == 2100
     assert archived["session_id"] == session["id"]
     assert archived["metadata"]["blocked_reason"] == "Needs product decision"
@@ -650,7 +646,7 @@ def test_archive_blocked_task_hides_from_board_and_preserves_history_evidence(tm
     assert history_json["selected_filter"] == "archived"
     history_task = _task_from_history(history_json, task["id"])
     assert history_task["description"] == "Archived blocked task"
-    assert history_task["status"] == "Blocked"
+    assert history_task["status"] == "Estimated"
     assert history_task["archived"] is True
     assert history_task["actual_tokens"] == 2100
     assert history_task["session_href"] == f"/sessions/{session['id']}"
@@ -702,7 +698,7 @@ def test_dismiss_estimated_task_hides_from_board_and_preserves_history_evidence(
     assert initial_task["summary"]["text"] == "Dismiss estimated task"
     assert initial_task["controls"]["can_dismiss"] is True
     assert dismiss_response.status_code == 303
-    assert dismiss_response.headers["location"] == f"/projects/{project['id']}/board"
+    assert dismiss_response.headers["location"] == f"/projects/{project['id']}"
     assert dismissed["status"] == "Estimated"
     assert dismissed["estimate_tokens"] == 9000
     assert dismissed["recommended_model"] == "5.4"
@@ -863,15 +859,16 @@ def test_unarchive_restores_blocked_task_to_project_board(tmp_path, monkeypatch)
     updated = db.get_task(database_path, task["id"])
     assert response.status_code == 303
     assert response.headers["location"] == f"/projects/{project['id']}/task-history"
-    assert updated["status"] == "Blocked"
+    assert updated["status"] == "Estimated"
     assert updated["metadata"]["blocked_reason"] == "Needs operator"
     assert "archived_at" not in updated["metadata"]
     assert board.status_code == 200
     board_json = board.json()
     task_json = _task_from_board(board_json, task["id"])
-    assert task_json["status"] == "Blocked"
-    assert task_json["details"]["blocked"]["reason"]["text"] == "Needs operator"
-    assert task_json["controls"]["can_archive"] is True
+    assert task_json["status"] == "Estimated"
+    assert task_json["blocked_condition"]["reason"] == "Needs operator"
+    assert task_json["controls"]["can_archive"] is False
+    assert task_json["controls"]["can_dismiss"] is True
 
 
 def test_archive_rejects_active_non_archivable_tasks(tmp_path, monkeypatch):
@@ -903,6 +900,6 @@ def test_archive_rejects_active_non_archivable_tasks(tmp_path, monkeypatch):
 
     for response, task_id in zip(responses, task_ids):
         assert response.status_code == 303
-        assert response.headers["location"].startswith(f"/projects/{project['id']}/board?error=")
-        assert "Only Done, Blocked, or Estimated tasks can be archived or dismissed." in unquote(response.headers["location"])
+        assert response.headers["location"].startswith(f"/projects/{project['id']}?error=")
+        assert "Only Done, Estimated, or blocked Review tasks can be archived or dismissed." in unquote(response.headers["location"])
         assert not db.get_task(database_path, task_id)["metadata"].get("archived_at")
