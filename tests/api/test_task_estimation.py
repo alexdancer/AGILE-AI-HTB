@@ -286,7 +286,7 @@ def test_project_estimate_form_stamps_connected_project_metadata(
         }
     else:
         assert response.status_code == 303
-        assert response.headers["location"] == f"/projects/{project['id']}/board"
+        assert response.headers["location"] == f"/projects/{project['id']}"
     assert len(tasks) == 1
     assert tasks[0]["metadata"]["connected_project_id"] == project["id"]
     assert tasks[0]["metadata"]["project_root_path"] == project_task_metadata(project)["project_root_path"]
@@ -545,12 +545,14 @@ def test_create_task_blocks_explicit_estimated_without_estimate(tmp_path):
         )
 
     assert created.status_code == 200
-    assert created.json()["status"] == "Blocked"
-    assert created.json()["metadata"] == {
-        "blocked_reason": "Estimate task before launch.",
-        "requires_manual_estimate": True,
-        "requested_status": "Estimated",
-    }
+    assert created.json()["status"] == "Estimated"
+    metadata = created.json()["metadata"]
+    assert metadata["blocked_reason"] == "Estimate task before launch."
+    assert metadata["requires_manual_estimate"] is True
+    assert metadata["requested_status"] == "Estimated"
+    assert metadata["blocked_condition"]["reason"] == "Estimate task before launch."
+    assert metadata["blocked_condition"]["origin"] == "task_create"
+    assert metadata["blocked_condition"]["timestamp"]
 
 def test_estimate_uses_llm_structured_json_creates_estimated_task_and_tracks_usage(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
@@ -765,7 +767,7 @@ def test_estimate_invalid_llm_result_creates_blocked_manual_task_without_heurist
 
     task = response.json()
     assert response.status_code == 200
-    assert task["status"] == "Blocked"
+    assert task["status"] == "Estimated"
     assert task["estimate_tokens"] is None
     assert task["recommended_model"] is None
     assert task["metadata"]["requires_manual_estimate"] is True
@@ -834,10 +836,9 @@ def test_estimate_form_accepts_pasted_markdown_task(tmp_path, monkeypatch):
     assert any("Add parser" in c["title"]["preview"] for c in review_json["candidates"]["items"])
     assert "constraint, not a task" in review_json["context"]["rejected_items"]["items"][0]["reason"]["preview"]
     # "Confidence" was a UI label assertion; dropped per final-jinja-retirement.
-    assert review_json["links"]["board_href"] == f"/projects/{breakdown['intake_metadata']['connected_project_id']}/board"
+    assert review_json["links"]["board_href"] == f"/projects/{breakdown['intake_metadata']['connected_project_id']}"
     assert accept.status_code == 303
-    assert accept.headers["location"].startswith("/projects/")
-    assert accept.headers["location"].endswith("/board")
+    assert accept.headers["location"] == f"/projects/{breakdown['intake_metadata']['connected_project_id']}"
     assert len(tasks) == 3
     assert len(llm.requests) == 4
     assert tasks[0]["metadata"]["task_breakdown_id"] == breakdown_id
@@ -1004,7 +1005,7 @@ def test_accepting_breakdown_blocks_incomplete_fenced_estimator_json(tmp_path, m
         tasks = db.list_tasks(tmp_path / "harness.db")
 
     assert accept.status_code == 303
-    assert [task["status"] for task in tasks] == ["Blocked"]
+    assert [task["status"] for task in tasks] == ["Estimated"]
     assert tasks[0]["metadata"]["requires_manual_estimate"] is True
     assert tasks[0]["metadata"]["estimator_failure_type"] == "EstimatorValidationError"
 
@@ -1054,7 +1055,7 @@ def test_manual_recovery_cannot_reopen_accepted_breakdown(tmp_path, monkeypatch)
     assert accepted["status"] == "accepted"
     assert stale_manual.status_code == 303
     assert stale_manual.headers["location"].startswith("/projects/")
-    assert stale_manual.headers["location"].endswith("/board")
+    assert stale_manual.headers["location"] == f"/projects/{accepted['intake_metadata']['connected_project_id']}"
     assert after_stale_manual["status"] == "accepted"
     assert after_stale_manual["candidates"] == accepted["candidates"]
     assert after_stale_manual["created_task_ids"] == accepted["created_task_ids"]
@@ -1292,7 +1293,7 @@ def test_project_intake_rejects_archived_project(tmp_path, monkeypatch, react_js
         assert body["ok"] is False
         assert body["error"] == "restore archived project before adding tasks"
     else:
-        assert response.headers["location"].startswith(f"/projects/{project['id']}/board?error=")
+        assert response.headers["location"].startswith(f"/projects/{project['id']}?error=")
     assert not any(
         task["description"] == "Estimate archived DEMO task 2099"
         for task in db.list_tasks(database_path)
@@ -1497,7 +1498,7 @@ def test_estimate_provider_exception_is_sanitized_and_creates_no_usage_session(t
 
     task = response.json()
     assert response.status_code == 200
-    assert task["status"] == "Blocked"
+    assert task["status"] == "Estimated"
     assert task["metadata"]["blocked_reason"] == "Estimator unavailable or invalid; manual estimate required."
     assert raw_error not in json.dumps(task)
     assert task["metadata"]["estimator_failure_type"] == "EstimatorUnavailableError"
@@ -1512,7 +1513,7 @@ def test_estimate_rejects_non_llm_source(tmp_path, monkeypatch):
 
     task = response.json()
     assert response.status_code == 200
-    assert task["status"] == "Blocked"
+    assert task["status"] == "Estimated"
     assert task["metadata"]["estimator_failure_type"] == "EstimatorValidationError"
 
 def test_estimate_rejects_worker_model_fields_from_estimator(tmp_path, monkeypatch):
@@ -1529,7 +1530,7 @@ def test_estimate_rejects_worker_model_fields_from_estimator(tmp_path, monkeypat
 
     task = response.json()
     assert response.status_code == 200
-    assert task["status"] == "Blocked"
+    assert task["status"] == "Estimated"
     assert task["recommended_model"] is None
     assert task["metadata"]["estimator_failure_type"] == "EstimatorValidationError"
 
@@ -1547,7 +1548,7 @@ def test_estimate_rejects_bool_numeric_fields(tmp_path, monkeypatch):
 
         task = response.json()
         assert response.status_code == 200
-        assert task["status"] == "Blocked"
+        assert task["status"] == "Estimated"
         assert task["metadata"]["estimator_failure_type"] == "EstimatorValidationError"
 
 @pytest.mark.parametrize(
@@ -1598,7 +1599,7 @@ def test_manual_update_after_estimator_failure_marks_estimation_source_manual(tm
         )
 
     assert created.status_code == 200
-    assert task["status"] == "Blocked"
+    assert task["status"] == "Estimated"
     assert task["metadata"]["estimation_source"] == "manual_required"
     assert updated.status_code == 200
     assert updated.json()["estimate_tokens"] == 9000

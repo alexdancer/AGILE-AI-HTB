@@ -999,7 +999,7 @@ def test_manual_abort_preserves_task_metadata_and_marks_session_aborted(tmp_path
     artifact = db.build_session_artifact(db_path, session["id"])
 
     assert aborted["session"]["status"] == "aborted"
-    assert refreshed["status"] == "Blocked"
+    assert refreshed["status"] == "Review"
     assert refreshed["metadata"]["abort_reason"] == "operator stopped runaway task"
     assert refreshed["metadata"]["task_branch"] == "foremanctl/task-demo-2099"
     assert artifact["token_log"][0]["total_tokens"] == 2

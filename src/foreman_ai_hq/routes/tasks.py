@@ -31,7 +31,7 @@ from foreman_ai_hq.task_breakdown import (
 from foreman_ai_hq.worker_model_allowlist import allowed_worker_model_ids
 
 router = APIRouter()
-CANONICAL_TASK_STATUSES = {"Estimated", "Running", "Review", "Done", "Blocked"}
+CANONICAL_TASK_STATUSES = {"Estimated", "Running", "Review", "Done"}
 PositiveStrictInt = Annotated[int, Field(strict=True, gt=0)]
 NonNegativeStrictInt = Annotated[int, Field(strict=True, ge=0)]
 
@@ -84,8 +84,7 @@ class TaskReviewActionRequest(BaseModel):
 def create_task(payload: TaskCreateRequest, request: Request) -> dict[str, Any]:
     database_path = request.app.state.settings.database_path
     status, metadata = _initial_task_status_and_metadata(payload, database_path)
-    if status != "Blocked":
-        metadata = _with_single_project_default(database_path, metadata)
+    metadata = _with_single_project_default(database_path, metadata)
     return db.create_task(
         database_path,
         description=payload.description,
@@ -310,9 +309,13 @@ async def _estimate_and_create_task(
             database_path,
             task_id=task_id,
             description=description,
-            status="Blocked",
+            status="Estimated",
             metadata={
                 "blocked_reason": "Estimator unavailable or invalid; manual estimate required.",
+                "blocked_condition": _blocked_condition(
+                    "Estimator unavailable or invalid; manual estimate required.",
+                    "task_estimation",
+                ),
                 "requires_manual_estimate": True,
                 "estimation_source": "manual_required",
                 "estimator_failure_type": type(exc).__name__,
@@ -421,7 +424,7 @@ async def _estimate_form_for_project(
     project_metadata: dict[str, Any] = {}
     board_path = "/board"
     if project_id:
-        board_path = f"/projects/{project_id}/board"
+        board_path = f"/projects/{project_id}"
         try:
             project = db.get_connected_project(request.app.state.settings.database_path, project_id)
         except KeyError as exc:
@@ -1448,12 +1451,21 @@ def _save_review_prompt(database_path: Path | str, task: dict[str, Any], prompt:
 
 
 def _mark_review_done(database_path: Path | str, task: dict[str, Any]) -> dict[str, Any]:
-    metadata = {
-        **task.get("metadata", {}),
+    metadata = dict(task.get("metadata", {}))
+    for key in (
+        "blocked_condition",
+        "blocked_reason",
+        "launch_blocked_reason",
+        "launch_guardrail_reasons",
+        "budget_override_available",
+        "budget_override_reason",
+    ):
+        metadata.pop(key, None)
+    metadata.update({
         "review_decision": "accepted",
         "reviewed_by": "operator",
         "reviewed_at": _now_iso(),
-    }
+    })
     return db.update_task(database_path, task["id"], {"status": "Done", "metadata": metadata})
 
 
@@ -1465,10 +1477,11 @@ def _block_review_task(database_path: Path | str, task: dict[str, Any], reason: 
         **task.get("metadata", {}),
         "review_decision": "blocked",
         "blocked_reason": blocked_reason,
+        "blocked_condition": _blocked_condition(blocked_reason, "review_disposition"),
         "reviewed_by": "operator",
         "reviewed_at": _now_iso(),
     }
-    return db.update_task(database_path, task["id"], {"status": "Blocked", "metadata": metadata})
+    return db.update_task(database_path, task["id"], {"status": "Review", "metadata": metadata})
 
 
 async def _run_agent_review(request: Request, task: dict[str, Any], prompt: str | None) -> dict[str, Any]:
@@ -1776,14 +1789,14 @@ def _ensure_task_project_binding(task: dict[str, Any], project_id: str | None) -
 
 def _project_board_path(project_id: str | None) -> str:
     if project_id:
-        return f"/projects/{project_id}/board"
+        return f"/projects/{project_id}"
     return "/board"
 
 
 def _board_redirect_for_task(task: dict[str, Any], project_id: str | None = None) -> str:
     task_board_path = task_project_board_path(task)
     if task_board_path != "/board":
-        return task_board_path
+        return f"{task_board_path}/floor" if task.get("status") in {"Running", "Review", "Done"} else task_board_path
     return _project_board_path(project_id)
 
 
@@ -1914,20 +1927,31 @@ def _initial_task_status_and_metadata(
             )
             if lifecycle_status is not None:
                 return lifecycle_status, metadata
-            if normalized_status != "Blocked" and not has_estimate:
+            if not has_estimate:
                 metadata.setdefault("blocked_reason", "Estimate task before launch.")
                 metadata.setdefault("requires_manual_estimate", True)
                 metadata.setdefault("requested_status", payload.status)
-                return "Blocked", metadata
+                metadata.setdefault(
+                    "blocked_condition",
+                    _blocked_condition("Estimate task before launch.", "task_create"),
+                )
+                return "Estimated", metadata
             return normalized_status, metadata
         metadata.setdefault("blocked_reason", f"Unsupported task status: {payload.status}")
         metadata.setdefault("original_status", payload.status)
-        return "Blocked", metadata
+        metadata.setdefault(
+            "blocked_condition",
+            _blocked_condition(f"Unsupported task status: {payload.status}", "task_create"),
+        )
+        return "Estimated", metadata
     if has_estimate:
         return "Estimated", metadata
     metadata.setdefault("blocked_reason", "Estimate task before launch.")
     metadata.setdefault("requires_manual_estimate", True)
-    return "Blocked", metadata
+    metadata.setdefault(
+        "blocked_condition", _blocked_condition("Estimate task before launch.", "task_create")
+    )
+    return "Estimated", metadata
 
 
 def _canonicalize_task_updates(
@@ -1949,9 +1973,15 @@ def _canonicalize_task_updates(
 
     requested_status = "Estimated" if updates["status"] == "Ready" else updates["status"]
     if requested_status not in CANONICAL_TASK_STATUSES:
-        updates["status"] = "Blocked"
+        updates["status"] = (
+            current.get("status") if current.get("status") in CANONICAL_TASK_STATUSES else "Estimated"
+        )
         metadata.setdefault("blocked_reason", f"Unsupported task status: {requested_status}")
         metadata.setdefault("original_status", requested_status)
+        metadata.setdefault(
+            "blocked_condition",
+            _blocked_condition(f"Unsupported task status: {requested_status}", "task_update"),
+        )
         updates["metadata"] = metadata
         return updates
 
@@ -1971,10 +2001,14 @@ def _canonicalize_task_updates(
     if requested_status == "Estimated" and (
         estimate_tokens is None or not recommended_model
     ):
-        updates["status"] = "Blocked"
+        updates["status"] = "Estimated"
         metadata.setdefault("blocked_reason", "Estimate task before launch.")
         metadata.setdefault("requires_manual_estimate", True)
         metadata.setdefault("requested_status", requested_status)
+        metadata.setdefault(
+            "blocked_condition",
+            _blocked_condition("Estimate task before launch.", "task_update"),
+        )
         updates["metadata"] = metadata
     return updates
 
@@ -1990,14 +2024,26 @@ def _constrain_direct_lifecycle_status(
         # Running has launch side effects, so callers must use the launch endpoint.
         metadata.setdefault("blocked_reason", "Use launch endpoint to start tasks.")
         metadata.setdefault("requested_status", requested_status)
-        return "Blocked"
+        metadata.setdefault(
+            "blocked_condition",
+            _blocked_condition("Use launch endpoint to start tasks.", "lifecycle_guard"),
+        )
+        return "Estimated"
     if requested_status in {"Done", "Review"}:
         if session_id and _session_status(database_path, session_id) == "completed":
             return None
         metadata.setdefault("blocked_reason", "Use refresh endpoint to finalize completed sessions.")
         metadata.setdefault("requested_status", requested_status)
-        return "Blocked"
+        metadata.setdefault(
+            "blocked_condition",
+            _blocked_condition("Use refresh endpoint to finalize completed sessions.", "lifecycle_guard"),
+        )
+        return "Estimated"
     return None
+
+
+def _blocked_condition(reason: str, origin: str) -> dict[str, str]:
+    return {"reason": reason, "origin": origin, "timestamp": _now_iso()}
 
 
 def _session_status(database_path: Path | str, session_id: str) -> str | None:

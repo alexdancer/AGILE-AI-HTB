@@ -479,6 +479,16 @@ def project_workspace(project_id: str, request: Request):
     return react_shell_or_missing_build()
 
 
+@router.get("/projects/{project_id}/floor", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
+def project_execution_floor(project_id: str, request: Request):
+    database_path = request.app.state.settings.database_path
+    try:
+        db.get_connected_project(database_path, project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="connected project not found") from exc
+    return react_shell_or_missing_build()
+
+
 def _setup_overview_state(request: Request) -> dict[str, Any]:
     """Readiness steps and next action for the Setup Overview surface.
 
@@ -610,10 +620,10 @@ async def reset_budget_counter(request: Request):
 @router.get("/board", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
 def board(request: Request):
     projects = db.list_connected_projects(request.app.state.settings.database_path)
+    query = f"?{request.url.query}" if request.url.query else ""
     if projects:
-        # The global board is a convenience shim onto the first connected project.
-        return RedirectResponse(f"/projects/{projects[0]['id']}/board", status_code=status.HTTP_303_SEE_OTHER)
-    return RedirectResponse("/projects", status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(f"/projects/{projects[0]['id']}{query}", status_code=303)
+    return RedirectResponse(f"/projects{query}", status_code=303)
 
 
 @router.get("/projects/{project_id}/board", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])
@@ -625,10 +635,10 @@ def project_board(project_id: str, request: Request):
         db.get_connected_project(database_path, project_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="connected project not found") from exc
-    # An archived project still serves the shell; React identifies the archived
-    # state and routes to Restore. The redirect this route used to perform was
-    # only ever reachable on the retired server-rendered path.
-    return react_shell_or_missing_build()
+    query = f"?{request.url.query}" if request.url.query else ""
+    return RedirectResponse(
+        f"/projects/{project_id}{query}", status_code=status.HTTP_301_MOVED_PERMANENTLY
+    )
 
 
 @router.post("/projects/{project_id}/archive", dependencies=[Depends(require_portal_auth)])
@@ -698,12 +708,12 @@ def project_archive_task(project_id: str, task_id: str, request: Request):
         if _wants_react_json(request):
             return _react_action_outcome(request, ok=False, error=str(exc), status_code=409)
         return RedirectResponse(
-            f"/projects/{project_id}/board?error={quote(str(exc))}",
+            f"/projects/{project_id}?error={quote(str(exc))}",
             status_code=status.HTTP_303_SEE_OTHER,
         )
     if _wants_react_json(request):
         return _react_action_outcome(request, ok=True, task=db.get_task(database_path, task_id))
-    return RedirectResponse(f"/projects/{project_id}/board", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(f"/projects/{project_id}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/projects/{project_id}/tasks/archive-done", dependencies=[Depends(require_portal_auth)])
@@ -715,7 +725,7 @@ def project_archive_done_tasks(project_id: str, request: Request):
     db.archive_done_tasks_for_project(database_path, project_id)
     if _wants_react_json(request):
         return _react_action_outcome(request, ok=True)
-    return RedirectResponse(f"/projects/{project_id}/board", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(f"/projects/{project_id}/floor", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/projects/{project_id}/tasks/{task_id}/unarchive", dependencies=[Depends(require_portal_auth)])
@@ -762,7 +772,7 @@ def project_run_next(project_id: str, request: Request):
                 automation=_react_automation_state(database_path, project_id),
                 status_code=409,
             )
-        return RedirectResponse(f"/projects/{project_id}/board?error=No%20eligible%20Estimated%20tasks", status_code=303)
+        return RedirectResponse(f"/projects/{project_id}/floor?error=No%20eligible%20Estimated%20tasks", status_code=303)
     try:
         result = _launch_project_automation_task(request, project_id=project_id, task=task, source=RUN_NEXT_SOURCE)
     except TaskLaunchBlocked as exc:
@@ -784,7 +794,7 @@ def project_run_next(project_id: str, request: Request):
                 automation=_react_automation_state(database_path, project_id),
                 status_code=exc.status_code,
             )
-        return RedirectResponse(f"/projects/{project_id}/board?error={';%20'.join(exc.reasons)}", status_code=303)
+        return RedirectResponse(f"/projects/{project_id}/floor?error={';%20'.join(exc.reasons)}", status_code=303)
     if _wants_react_json(request):
         return _react_action_outcome(
             request,
@@ -792,7 +802,7 @@ def project_run_next(project_id: str, request: Request):
             task=result.task,
             automation=_react_automation_state(database_path, project_id),
         )
-    return RedirectResponse(f"/projects/{project_id}/board", status_code=303)
+    return RedirectResponse(f"/projects/{project_id}/floor", status_code=303)
 
 
 @router.post("/projects/{project_id}/queue/start", dependencies=[Depends(require_portal_auth)])
@@ -829,7 +839,7 @@ async def project_queue_start(project_id: str, request: Request):
                 status_code=409,
             )
         return _react_action_outcome(request, ok=True, automation=automation)
-    return RedirectResponse(f"/projects/{project_id}/board", status_code=303)
+    return RedirectResponse(f"/projects/{project_id}/floor", status_code=303)
 
 
 @router.post("/projects/{project_id}/queue/stop", dependencies=[Depends(require_portal_auth)])
@@ -845,7 +855,7 @@ def project_queue_stop(project_id: str, request: Request):
             ok=True,
             automation=_react_automation_state(database_path, project_id),
         )
-    return RedirectResponse(f"/projects/{project_id}/board", status_code=303)
+    return RedirectResponse(f"/projects/{project_id}/floor", status_code=303)
 
 
 @router.get("/projects/{project_id}/board/status", dependencies=[Depends(require_portal_auth)])
@@ -881,7 +891,7 @@ def _next_setup_step(
     if launch_ready_project:
         return {
             "label": "Open task board",
-            "href": f"/projects/{launch_ready_project['id']}/board",
+            "href": f"/projects/{launch_ready_project['id']}",
             "detail": "Governed Worker launch is ready.",
         }
     next_step = next((step for step in steps if step["state"] != "ready"), steps[0])
@@ -995,7 +1005,8 @@ async def _advance_project_queue(request: Request, project_id: str) -> None:
     if queue_state.get("status") != "running":
         return
 
-    active_run_id = queue_state.get("active_worker_run_id")
+    active_automation_run = _active_automation_run(queue_state)
+    active_run_id = active_automation_run.get("worker_run_id")
     if active_run_id:
         try:
             active_run = db.get_worker_run(database_path, str(active_run_id))
@@ -1006,7 +1017,7 @@ async def _advance_project_queue(request: Request, project_id: str) -> None:
             # One active Worker run owns the queue slot until it leaves flight.
             return
 
-    active_task_id = queue_state.get("active_task_id")
+    active_task_id = active_automation_run.get("task_id")
     if active_task_id:
         try:
             active_task = db.get_task(database_path, str(active_task_id))
@@ -1024,7 +1035,7 @@ async def _advance_project_queue(request: Request, project_id: str) -> None:
                 worker_run_id=str(active_run_id) if active_run_id else None,
             )
             return
-        if active_task and active_task.get("status") == "Blocked":
+        if active_task and (active_task.get("metadata") or {}).get("blocked_condition"):
             stop_run_automation(
                 database_path,
                 project_id=project_id,
@@ -1091,6 +1102,7 @@ async def _advance_project_queue(request: Request, project_id: str) -> None:
 async def _maybe_run_auto_agent_review(request: Request, project_id: str, task: dict[str, Any]) -> dict[str, Any]:
     database_path = request.app.state.settings.database_path
     queue_state = get_run_automation_state(database_path, project_id)
+    worker_run_id = _active_automation_run(queue_state).get("worker_run_id")
     if not queue_state.get("auto_agent_review"):
         return task
     metadata = task.get("metadata") or {}
@@ -1105,7 +1117,7 @@ async def _maybe_run_auto_agent_review(request: Request, project_id: str, task: 
             kind="auto_agent_review_skipped",
             title="Auto Agent Review skipped",
             task_id=task["id"],
-            worker_run_id=queue_state.get("active_worker_run_id"),
+            worker_run_id=worker_run_id,
             detail={"review_status": "skipped", "reason": str(exc)},
             level="warning",
         )
@@ -1124,7 +1136,7 @@ async def _maybe_run_auto_agent_review(request: Request, project_id: str, task: 
         kind="auto_agent_review",
         title="Auto Agent Review completed",
         task_id=task["id"],
-        worker_run_id=queue_state.get("active_worker_run_id"),
+        worker_run_id=worker_run_id,
         detail={"review_status": reviewed.get("metadata", {}).get("agent_review", {}).get("status")},
     )
     return reviewed
@@ -1141,6 +1153,11 @@ def _automation_stop_reason(task: dict[str, Any], reasons: list[str]) -> str:
     if reasons:
         return "launch_guardrail_blocked"
     return "automation_blocked"
+
+
+def _active_automation_run(queue_state: dict[str, Any]) -> dict[str, Any]:
+    runs = queue_state.get("active_runs")
+    return runs[0] if isinstance(runs, list) and runs and isinstance(runs[0], dict) else {}
 
 
 @router.get("/settings/workers", response_class=HTMLResponse, dependencies=[Depends(require_portal_auth)])

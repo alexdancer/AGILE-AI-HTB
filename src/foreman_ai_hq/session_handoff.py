@@ -720,7 +720,10 @@ def api_session_events(
             "kind": _string(event.get("kind"), 64),
             "layer": _string(event.get("layer"), 64),
             "title": _string(event.get("title"), 200),
-            "detail_summary": _string(_json_text(event.get("detail")), 1_000),
+            # Bounded summary only. Falling back to the raw detail JSON would
+            # reinstate an unfiltered dump for exactly the shapes the summarizer
+            # chose not to model, and those blobs are unreadable in a feed row.
+            "detail_summary": _string(event.get("detail_summary"), 1_000),
         }
         for event in events
         if _is_non_negative_int(event.get("id"))

@@ -11,7 +11,7 @@ from foreman_ai_hq.task_launch import refresh_task_from_session
 from foreman_ai_hq.tracking_modes import OBSERVED_ONLY
 from foreman_ai_hq.worker_setup_view import worker_adapter_view_models
 
-BOARD_COLUMNS = ["Estimated", "Running", "Review", "Done", "Blocked"]
+BOARD_COLUMNS = ["Estimated", "Running", "Review", "Done"]
 
 
 def board_page_context(
@@ -32,14 +32,19 @@ def board_page_context(
     grouped = {column: [] for column in BOARD_COLUMNS}
     for task in active_tasks:
         task = task_view_model(database_path, task)
-        # Normalize legacy/unknown statuses before handing them to the fixed board columns.
-        status = "Estimated" if task["status"] == "Ready" else task["status"] if task["status"] in grouped else "Blocked"
-        if status == "Blocked" and task["status"] not in grouped:
+        # Keep unknown legacy states visible without inventing another lifecycle column.
+        status = "Estimated" if task["status"] == "Ready" else task["status"] if task["status"] in grouped else "Estimated"
+        if task["status"] not in grouped and task["status"] != "Ready":
             task["metadata"] = {
                 **task.get("metadata", {}),
                 "blocked_reason": f"Unsupported task status: {task['status']}",
+                "blocked_condition": {
+                    "reason": f"Unsupported task status: {task['status']}",
+                    "origin": "board_projection",
+                    "timestamp": task.get("created_at", ""),
+                },
             }
-            task["status"] = "Blocked"
+            task["status"] = "Estimated"
         grouped[status].append(task)
 
     adapters = [
@@ -111,7 +116,7 @@ def refresh_project_board_tasks(database_path: Path | str, project_id: str) -> l
         if task.get("status") != "Running":
             continue
         try:
-            # Refresh only running cards; terminal sessions may move them to Review/Done/Blocked.
+            # Refresh only running cards; terminal sessions may move them to Review or Done.
             refreshed = refresh_task_from_session(database_path, task["id"])
         except KeyError:
             continue
@@ -138,8 +143,8 @@ def project_has_running_work(database_path: Path | str, project_id: str) -> bool
 def board_counts(tasks: list[dict[str, Any]]) -> dict[str, int]:
     counts = {column: 0 for column in BOARD_COLUMNS}
     for task in tasks:
-        status_value = "Estimated" if task.get("status") == "Ready" else str(task.get("status") or "Blocked")
-        counts[status_value if status_value in counts else "Blocked"] += 1
+        status_value = "Estimated" if task.get("status") == "Ready" else str(task.get("status") or "Estimated")
+        counts[status_value if status_value in counts else "Estimated"] += 1
     return counts
 
 
@@ -160,7 +165,7 @@ def project_task_history_context(
         "active": lambda task: not db.task_is_archived(task),
         "archived": db.task_is_archived,
         "done": lambda task: task.get("status") == "Done",
-        "blocked": lambda task: task.get("status") == "Blocked",
+        "blocked": lambda task: bool((task.get("metadata") or {}).get("blocked_condition")),
     }
     selected = selected_filter if selected_filter in filters else "all"
     counts = {key: sum(1 for task in tasks if predicate(task)) for key, predicate in filters.items()}
@@ -190,13 +195,18 @@ def board_empty_states(active_project: dict[str, Any] | None, board_summary: dic
         "Running": "No Running tasks. Launched Worker slices appear here until their session finishes or is refreshed.",
         "Review": "No Review tasks. Completed Worker runs that need human disposition appear here before Done.",
         "Done": "No Done tasks. Accepted Review work lands here with session evidence preserved.",
-        "Blocked": "No Blocked tasks. Guardrail blocks, setup blockers, human Block dispositions, and manual-estimate requirements appear here.",
+
     }
 
 
 def project_workspace_summary(database_path: Path | str, project: dict[str, Any]) -> dict[str, Any]:
     project_id = str(project["id"])
     counts = project_board_counts(database_path, project_id)
+    blocked_count = sum(
+        1
+        for task in project_bound_tasks(db.list_tasks(database_path), project_id)
+        if (task.get("metadata") or {}).get("blocked_condition")
+    )
     adapters = worker_adapter_view_models(database_path)
     launch_ready = any(adapter.get("launchable") for adapter in adapters)
     capability = project.get("capability") or {}
@@ -230,7 +240,7 @@ def project_workspace_summary(database_path: Path | str, project: dict[str, Any]
         attention_actions.append(
             {
                 "label": "Running work",
-                "href": f"/projects/{project_id}/board",
+                "href": f"/projects/{project_id}/floor",
                 "tone": "blue",
                 "detail": f"{counts['Running']} running slices need refresh or completion evidence.",
             }
@@ -239,18 +249,18 @@ def project_workspace_summary(database_path: Path | str, project: dict[str, Any]
         attention_actions.append(
             {
                 "label": "Review needed",
-                "href": f"/projects/{project_id}/board",
+                "href": f"/projects/{project_id}/floor",
                 "tone": "yellow",
                 "detail": f"{counts['Review']} completed slices need human review disposition.",
             }
         )
-    if counts["Blocked"]:
+    if blocked_count:
         attention_actions.append(
             {
                 "label": "Blocked work",
-                "href": f"/projects/{project_id}/board",
+                "href": f"/projects/{project_id}#needs-you",
                 "tone": "yellow",
-                "detail": f"{counts['Blocked']} slices need guardrail, setup, or manual-estimate attention.",
+                "detail": f"{blocked_count} slices need guardrail, setup, or manual-estimate attention.",
             }
         )
     return {

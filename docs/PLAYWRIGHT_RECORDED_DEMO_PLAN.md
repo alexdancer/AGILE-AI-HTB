@@ -94,10 +94,9 @@ synthetic state and monkeypatches only its in-process app before uvicorn starts.
   effect mounts and runs on a 5000ms interval behind a 2500ms status poll
   (`Board.jsx:148`, `Board.jsx:190`). Streamed evidence can therefore take
   several seconds to appear; browser waits need explicit generous timeouts.
-- The timeline renders inside `<details className="task-details">`
-  (`Board.jsx:390`, timeline at `Board.jsx:400`), collapsed by default. Playwright
-  treats content in a closed `<details>` as not visible, so the test must open
-  the disclosure and reopen it after board reloads re-render the card.
+- Live evidence renders on the Execution Floor in the always-visible Live Run dock.
+  Full bounded evidence and Review Disposition controls render in the Evidence
+  Drawer, which fetches the shared Session Report handoff only when opened.
 - `react_shell.py:1156` slices the card timeline to `events[-6:]`. Do not pad the
   synthetic stream with filler lines ahead of the sentinel.
 - `_redact_stream_value` (`task_launch.py:676`) replaces every prompt-argument
@@ -208,16 +207,15 @@ Create `tests/e2e/test_recorded_demo.py` using `playwright.sync_api`.
 3. Click normal launch control; wait for `entered` rather than elapsed time.
    `entered` proves the runner reached the gate; it does not prove the browser
    has rendered anything yet.
-4. Open the task card's `Task details` disclosure — the timeline is inside a
-   collapsed `<details>` and is otherwise invisible to Playwright. Reopen it if a
-   board reload collapses it. Then wait on a locator for
+4. Open the project Execution Floor and wait on the Live Run dock for
    `DEMO streamed progress 2099` with an explicit timeout of at least 15s to
    cover the status-poll plus event-poll cadence. Assert task remains `Running`,
    feed is read-only evidence, and the token event renders
    `Provisional usage; final total recorded on completion.`
-5. Set `release`; wait for Board `Review` state and final actual token evidence.
-6. Open normal Session Report route; assert stable Worker Run timeline has final
-   evidence, not a fabricated provider claim.
+5. Set `release`; wait for Execution Floor `Review` state and final actual token evidence.
+6. Open `View evidence`, verify the Evidence Drawer loads the Token log, and use
+   its `Full Session Report` permalink to assert final evidence rather than a
+   fabricated provider claim.
 7. Invoke normal Mark Done control; assert Done. This assertion is labeled
    synthetic automated disposition in test text, never human approval.
 

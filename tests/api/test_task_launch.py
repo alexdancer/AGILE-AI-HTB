@@ -10,11 +10,28 @@ from foreman_ai_hq.app import create_app
 from foreman_ai_hq.project_context import project_task_metadata
 from foreman_ai_hq.routes import portal as portal_routes
 from foreman_ai_hq.settings import Settings
-from foreman_ai_hq.task_launch import refresh_task_from_session
+from foreman_ai_hq.task_launch import _clear_recoverable_launch_failure_metadata, refresh_task_from_session
 
 
 ROOT = Path(__file__).resolve().parents[2]
 PORTAL_TOKEN = "test-portal-token"
+
+
+def test_successful_launch_metadata_cleanup_removes_resolved_blocking_state():
+    cleaned = _clear_recoverable_launch_failure_metadata({
+        "blocked_reason": "Resolved DEMO launch blocker 2099",
+        "blocked_condition": {"reason": "Resolved", "origin": "launch_guardrail"},
+        "launch_blocked_reason": "Resolved DEMO launch blocker 2099",
+        "requires_manual_estimate": True,
+        "budget_override_available": True,
+        "budget_override_reason": "Resolved DEMO budget decision 2099",
+        "budget_override_tracking_mode": "native_usage",
+        "native_usage_override_ack_required": True,
+        "native_usage_override_ack_text": "Resolved DEMO acknowledgement 2099",
+        "connected_project_id": "DEMO_PROJECT_2099_999",
+    })
+
+    assert cleaned == {"connected_project_id": "DEMO_PROJECT_2099_999"}
 
 
 def _auth_headers():
@@ -235,7 +252,7 @@ def test_direct_create_running_is_blocked_and_points_to_launch(tmp_path):
         )
 
     assert created.status_code == 200
-    assert created.json()["status"] == "Blocked"
+    assert created.json()["status"] == "Estimated"
     assert created.json()["session_id"] is None
     assert created.json()["metadata"]["blocked_reason"] == "Use launch endpoint to start tasks."
 
@@ -296,7 +313,7 @@ def test_launch_blocks_unverified_adapter_without_session_or_runner(tmp_path, mo
     assert sessions == []
     board_payload = board.json()
     board_task = next(t for t in board_payload["tasks_by_status"]["Estimated"] if t["id"] == task["id"])
-    assert board_task["details"]["launch"]["blocked_reason"]["text"] == (
+    assert board_task["blocked_condition"]["reason"] == (
         "Token tracking has not been verified for this adapter."
     )
 
@@ -558,7 +575,7 @@ def test_board_form_launch_uses_default_proxy_for_verified_default_adapter(
         }
     else:
         assert response.status_code == 303
-        assert response.headers["location"] == f"/projects/{task['metadata']['connected_project_id']}/board"
+        assert response.headers["location"] == f"/projects/{task['metadata']['connected_project_id']}/floor"
     assert refreshed["status"] == "Review"
     assert len(runner_calls) == 1
     assert runner_calls[0].env["OPENAI_BASE_URL"] == "http://127.0.0.1:8000/v1"
@@ -691,8 +708,9 @@ def test_codex_native_read_only_non_git_mutation_blocks_task(tmp_path, monkeypat
         blocked = db.get_task(tmp_path / "harness.db", task["id"])
 
     assert response.status_code == 200
-    assert blocked["status"] == "Blocked"
+    assert blocked["status"] == "Review"
     assert blocked["metadata"]["launch_blocked_reason"] == "Read-only Worker session modified the connected project."
+    assert blocked["metadata"]["blocked_condition"]["origin"] == "read_only_mutation"
     assert "changed.txt" in blocked["metadata"]["readonly_diff_evidence"]["after"]
 
 
@@ -796,11 +814,11 @@ def test_board_shows_codex_trusted_directory_failure_as_retryable_setup_diagnost
     board_payload = board.json()
     board_task = next(t for t in board_payload["tasks_by_status"]["Estimated"] if t["id"] == task["id"])
     assert (
-        board_task["details"]["launch"]["diagnostic"]["summary"]["text"]
+        board_task["launch_failure"]["diagnostic"]["text"]
         == "Not inside a trusted directory and --skip-git-repo-check was not specified."
     )
     # Backend sanitization must strip leaked credentials from the runner output.
-    retry_summary = board_task["details"]["launch"]["retryable_failure"]["summary"]["text"]
+    retry_summary = board_task["launch_failure"]["summary"]["text"]
     assert "api_key=abc123" not in retry_summary
     assert "Bearer abc.def" not in retry_summary
     board_text = json.dumps(board_payload)
@@ -902,16 +920,16 @@ def test_board_form_recoverable_launch_error_stays_on_task_card_with_launch_form
         )
 
     assert response.status_code == 303
-    assert response.headers["location"] == f"/projects/{task['metadata']['connected_project_id']}/board"
+    assert response.headers["location"] == f"/projects/{task['metadata']['connected_project_id']}/floor"
     assert refreshed["status"] == "Estimated"
     assert refreshed["metadata"]["launch_retryable"] is True
     board_payload = board.json()
     board_task = next(t for t in board_payload["tasks_by_status"]["Estimated"] if t["id"] == task["id"])
-    assert board_task["details"]["launch"]["error"]["text"] == "Worker adapter launch failed."
-    assert "Command timed out after 60 seconds." in board_task["details"]["launch"]["retryable_failure"]["summary"]["text"]
-    assert board_task["details"]["launch"]["retryable_failure"]["returncode"] == 124
+    assert board_task["launch_failure"]["error"]["text"] == "Worker adapter launch failed."
+    assert "Command timed out after 60 seconds." in board_task["launch_failure"]["summary"]["text"]
+    assert board_task["launch_failure"]["returncode"] == 124
     # A recoverable timeout keeps the launch form available (Estimated, not a status gate).
-    assert "Only Estimated tasks can launch." not in board_task["details"]["launch"]["error"]["text"]
+    assert "Only Estimated tasks can launch." not in board_task["launch_failure"]["error"]["text"]
     assert board_task["controls"]["can_launch"] is True
 
 
@@ -1129,7 +1147,7 @@ def test_project_run_next_launches_one_project_task_with_automation_metadata(
         assert body["automation"]["status"] == "idle"
     else:
         assert response.status_code == 303
-        assert response.headers["location"] == f"/projects/{project['id']}/board"
+        assert response.headers["location"] == f"/projects/{project['id']}/floor"
     assert len(runner_calls) == 1
     assert db.get_task(tmp_path / "harness.db", first["id"])["metadata"]["automation_source"] == "run_next"
     assert db.get_task(tmp_path / "harness.db", second["id"])["status"] == "Estimated"
@@ -1652,7 +1670,7 @@ def test_duplicate_launch_rejects_mismatched_project_before_active_run_reuse(tmp
 
     assert first.status_code == 200
     assert second.status_code == 303
-    assert second.headers["location"].startswith(f"/projects/{project_a['id']}/board?error=")
+    assert second.headers["location"].startswith(f"/projects/{project_a['id']}/floor?error=")
     assert len(runner_calls) == 1
 
 @pytest.mark.parametrize("estimate_tokens", [True, 0, -1])
@@ -1669,7 +1687,7 @@ def test_launch_rejects_invalid_manual_estimate_tokens(tmp_path, monkeypatch, es
     assert response.status_code == 422
     assert "estimate_tokens" in response.text
 
-@pytest.mark.parametrize("status", ["Blocked", "Done", "Review", "Running"])
+@pytest.mark.parametrize("status", ["Done", "Review", "Running"])
 def test_launch_is_status_gated_without_session_or_runner(tmp_path, monkeypatch, status):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     runner_calls = []
@@ -1843,7 +1861,9 @@ def test_refresh_task_from_session_maps_completion_to_done_review_or_blocked(tmp
         recommended_model="claude-haiku",
         session_id=failed_session["id"],
     )
-    assert refresh_task_from_session(database_path, failed_task["id"])["status"] == "Blocked"
+    failed = refresh_task_from_session(database_path, failed_task["id"])
+    assert failed["status"] == "Review"
+    assert failed["metadata"]["blocked_condition"]["origin"] == "session_completion"
 
 
 
@@ -1997,7 +2017,7 @@ def test_project_run_queue_waits_when_manual_project_run_is_active(tmp_path, mon
     assert db.get_task(tmp_path / "harness.db", running["id"])["status"] == "Running"
     assert db.get_task(tmp_path / "harness.db", queued["id"])["status"] == "Estimated"
     assert status["queue"]["status"] == "running"
-    assert status["queue"]["active_task_id"] is None
+    assert status["queue"]["active_runs"] == []
 
 
 def test_auto_agent_review_claim_is_single_use(tmp_path):

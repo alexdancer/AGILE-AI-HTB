@@ -13,6 +13,9 @@ let server;
 let Sidebar;
 let DashboardState;
 let BoardState;
+let EvidenceDrawerState;
+let loadEvidenceDrawer;
+let boardNoticeFromSearch;
 let mergeBoardStatus;
 let taskDisplayName;
 let parseRoute;
@@ -27,6 +30,7 @@ let SessionReportState;
 let SetupState;
 let TaskBreakdownReviewState;
 let TaskBreakdownReview;
+let projectIdFromBoardHref;
 let submitBreakdownAction;
 let TaskHistoryState;
 let buildAcceptForm;
@@ -51,7 +55,16 @@ before(async () => {
   ({ Sidebar } = await server.ssrLoadModule("/src/components/Shell.jsx"));
   ({ DashboardState } = await server.ssrLoadModule("/src/views/Dashboard.jsx"));
   ({ ProjectsState } = await server.ssrLoadModule("/src/views/Projects.jsx"));
-  ({ BoardState, mergeBoardStatus, pollBoardStatus, submitBoardAction, taskDisplayName } = await server.ssrLoadModule("/src/views/Board.jsx"));
+  ({
+    BoardState,
+    boardNoticeFromSearch,
+    EvidenceDrawerState,
+    loadEvidenceDrawer,
+    mergeBoardStatus,
+    pollBoardStatus,
+    submitBoardAction,
+    taskDisplayName,
+  } = await server.ssrLoadModule("/src/views/Board.jsx"));
   ({ WorkspaceState, submitProjectRestore } = await server.ssrLoadModule("/src/views/Workspace.jsx"));
   ({ SessionsState } = await server.ssrLoadModule("/src/views/Sessions.jsx"));
   ({ AlarmsState } = await server.ssrLoadModule("/src/views/Alarms.jsx"));
@@ -64,6 +77,7 @@ before(async () => {
     buildAcceptForm,
     confirmReviewNavigation,
     preventReviewUnload,
+    projectIdFromBoardHref,
   } = await server.ssrLoadModule("/src/views/TaskBreakdownReview.jsx"));
   ({ NavContext, NavigationGuardContext, OwnedLink, isReactOwnedPath } = await server.ssrLoadModule("/src/nav.jsx"));
   ({ parseRoute } = await server.ssrLoadModule("/src/routes.js"));
@@ -222,7 +236,7 @@ function renderWorkspace(state) {
 
 function boardData() {
   const emptyStates = Object.fromEntries(
-    ["Estimated", "Running", "Review", "Done", "Blocked"].map((status) => [status, `No ${status} tasks`]),
+    ["Estimated", "Running", "Review", "Done"].map((status) => [status, `No ${status} tasks`]),
   );
   const detail = {
     task_body: { text: "Full DEMO task body", truncated: false },
@@ -280,10 +294,15 @@ function boardData() {
     status,
     summary: { text: `${status} DEMO task`, truncated: false },
     estimate_tokens: 100,
-    actual_tokens: status === "Review" ? 89 : null,
+    actual_tokens: ["Review", "Done"].includes(status) ? 89 : null,
     recommended_model: "gpt-5.3",
     launch_model: status === "Review" ? "gpt-5.4" : null,
     session_href: status === "Review" ? "/sessions/session-demo-999" : null,
+    blocked_condition: status === "Review"
+      ? { reason: "Needs operator disposition", origin: "review", timestamp: "2099-01-01T00:00:00Z" }
+      : null,
+    review_prompt: detail.review.prompt,
+    timeline: detail.timeline,
     controls: {
       can_launch: false,
       can_refresh: false,
@@ -293,28 +312,43 @@ function boardData() {
       can_block: false,
       can_archive: false,
       can_dismiss: false,
+      requires_manual_estimate: false,
       budget_override_available: false,
       native_usage_override_ack_required: false,
       native_usage_override_ack_text: null,
       setup_href: "/settings/workers",
       ...controls,
     },
-    details: detail,
   });
   return {
     project: { id: "demo-999", name: "DEMO 999" },
-    columns: ["Estimated", "Running", "Review", "Done", "Blocked"],
+    workspace: workspaceData({
+      links: {
+        ...workspaceData().links,
+        board_href: "/projects/demo-999",
+        floor_href: "/projects/demo-999/floor",
+      },
+    }),
+    needs_you: {
+      project_id: "demo-999",
+      count: 2,
+      items: [
+        { id: "breakdown:breakdown-demo-999", kind: "breakdown_review", title: "Review proposed Task Breakdown", reason: "Proposed Task Breakdown awaits review.", action_label: "Review breakdown", href: "/task-breakdowns/breakdown-demo-999/review", source: "DEMO_INTAKE_2099_999.md", candidate_count: 1, status: "proposed", created_at: "2099-01-01T00:00:00Z" },
+        { id: "task:task-estimated-999", kind: "manual_estimate", title: "Manual estimate required", reason: "Automatic estimation needs operator input.", action_label: "Open task", href: "/projects/demo-999#task-task-estimated-999" },
+      ],
+    },
+    columns: ["Estimated", "Running", "Review", "Done"],
     board_summary: {
       launch_ready: true,
-      total_tasks: 5,
-      counts: { Estimated: 1, Running: 1, Review: 1, Done: 1, Blocked: 1 },
+      total_tasks: 4,
+      counts: { Estimated: 1, Running: 1, Review: 1, Done: 1 },
       archived_count: 0,
-      history_total_tasks: 5,
+      history_total_tasks: 4,
     },
     history_href: "/projects/demo-999/task-history",
     board_empty_states: emptyStates,
     automation: {
-      counts: { Estimated: 1, Running: 1, Review: 1, Done: 1, Blocked: 1 },
+      counts: { Estimated: 1, Running: 1, Review: 1, Done: 1 },
       eligible_count: 1,
       queue: { status: "idle", auto_agent_review: false, latest_stop_reason: null },
       live_refresh_enabled: true,
@@ -331,6 +365,7 @@ function boardData() {
       Estimated: [card("Estimated", {
         can_launch: true,
         can_dismiss: true,
+        requires_manual_estimate: true,
         budget_override_available: true,
         native_usage_override_ack_required: true,
         native_usage_override_ack_text: "Acknowledge native usage overrun risk",
@@ -343,7 +378,6 @@ function boardData() {
         can_block: true,
       })],
       Done: [card("Done", { can_archive: true })],
-      Blocked: [card("Blocked", { can_archive: true })],
     },
   };
 }
@@ -394,19 +428,11 @@ test("only exact React routes are parsed as owned views", () => {
     sessionId: "sess-demo-999",
   });
   assert.deepEqual(parseRoute("/projects/demo-999"), {
-    view: "workspace",
+    view: "pipeline",
     projectId: "demo-999",
   });
-  assert.deepEqual(parseRoute("/projects/demo-999/board"), {
-    view: "board",
-    projectId: "demo-999",
-  });
-  assert.deepEqual(parseRoute("/app/projects/demo-999"), {
-    view: "workspace",
-    projectId: "demo-999",
-  });
-  assert.deepEqual(parseRoute("/app/projects/demo-999/board"), {
-    view: "board",
+  assert.deepEqual(parseRoute("/projects/demo-999/floor"), {
+    view: "floor",
     projectId: "demo-999",
   });
   assert.equal(parseRoute("/projects/demo-999/task-history").view, "taskHistory");
@@ -414,6 +440,10 @@ test("only exact React routes are parsed as owned views", () => {
   for (const path of [
     "/app/settings",
     "/app/not-a-migrated-route",
+    "/projects/demo-999/board",
+    "/app/projects/demo-999",
+    "/app/projects/demo-999/board",
+    "/app/projects/demo-999/floor",
     "/projects/demo-999/extra",
     "/projects/demo-999/board/extra",
     "/app/projects/demo-999/extra",
@@ -683,7 +713,7 @@ test("dashboard renders loading, error, populated, and empty states", () => {
   assert.match(populated, /href="\/board"/);
   assert.match(populated, /href="\/projects"/);
   assert.match(populated, /href="\/projects\/demo-999"/);
-  assert.match(populated, /href="\/projects\/demo-999\/board"/);
+  assert.match(populated, /href="\/projects\/demo-999\/floor"/);
   assert.match(populated, /href="\/sessions\/sess-demo-999"/);
 
   const empty = renderDashboard({
@@ -940,11 +970,24 @@ test("archived React board error routes to workspace Restore only", () => {
   assert.doesNotMatch(markup, /Run next|Start queue|Launch/);
 });
 
-test("React board renders every governed workflow state and bounded detail", () => {
+test("archived Pipeline is restore-first and does not expose active workflow controls", () => {
+  const data = boardData();
+  data.workspace.project.archived_at = "2099-01-01T00:00:00Z";
+  data.workspace.controls = { can_open_board: false, can_restore: true };
+  data.workspace.links.restore_href = "/projects/demo-999/restore";
+  const markup = renderToStaticMarkup(React.createElement(BoardState, {
+    projectId: "demo-999", surface: "pipeline", data, error: null, loading: false, action: () => {},
+  }));
+  assert.match(markup, /Restore project/);
+  assert.match(markup, /Archived project/);
+  assert.doesNotMatch(markup, /Short task intake|Active Worker Runs|Execution Floor<\/a>/);
+});
+
+test("Pipeline renders project readiness, Needs You, planning, intake, and Estimated work only", () => {
   const loading = renderToStaticMarkup(React.createElement(BoardState, {
     projectId: "demo-999", data: null, error: null, loading: true,
   }));
-  assert.match(loading, /Loading board…/);
+  assert.match(loading, /Loading Pipeline…/);
 
   const failed = renderToStaticMarkup(React.createElement(BoardState, {
     projectId: "demo-999", data: null, error: { message: "offline", status: 500 }, loading: false,
@@ -954,8 +997,9 @@ test("React board renders every governed workflow state and bounded detail", () 
   assert.doesNotMatch(failed, /server-rendered/);
   assert.doesNotMatch(failed, /href="\/projects\/demo-999\/board"/);
 
-  const populated = renderToStaticMarkup(React.createElement(BoardState, {
+  const pipeline = renderToStaticMarkup(React.createElement(BoardState, {
     projectId: "demo-999",
+    surface: "pipeline",
     data: boardData(),
     error: null,
     loading: false,
@@ -964,57 +1008,162 @@ test("React board renders every governed workflow state and bounded detail", () 
     action: () => {},
   }));
   for (const text of [
+    "Pipeline",
+    "Connected repo",
+    "/DEMO/2099/repo",
+    "Repo profile",
+    "Branch</dt><dd>implementation/demo-999",
+    "Stack</dt><dd>Python · JavaScript · FastAPI · React · uv · npm",
+    "Test</dt><dd>uv run pytest",
+    "Run</dt><dd>uv run foremanctl serve",
+    "Docs</dt><dd>README.md, CONTEXT.md",
+    "Sessions",
+    "Worker Setup",
+    "Project Settings",
+    "launch ready",
+    "Needs You",
+    "Review proposed Task Breakdown",
+    "DEMO_INTAKE_2099_999.md · 1 candidate · proposed · 2099-01-01T00:00:00Z",
+    "Planning Inbox",
     "Short task intake",
-    "Auto Agent Review",
-    "Run next",
-    "Start queue",
     "Filter loaded tasks",
     "Codex",
     "gpt-5.4",
     "Approve budget override",
     "Acknowledge native usage overrun risk",
-    "Refresh",
-    "Save review prompt",
-    "Agent Review",
-    "Mark Done",
-    "Block",
     "Dismiss",
-    "Archive",
     "Estimate 100",
-    "Actual 89",
-    "Run gpt-5.4",
-    "Recommended gpt-5.3",
-    "Output",
-    "DEMO timeline detail",
-    "2099-01-01T00:00:00Z",
-    "worker_completed",
-    "No defects",
-    "openai/gpt-4.1-mini",
     "Manual estimate required",
-    "Session report",
+    "Manual token estimate",
   ]) {
-    assert.match(populated, new RegExp(text));
+    assert.match(pipeline, new RegExp(text));
   }
-  assert.match(populated, /type="file"/);
-  assert.match(populated, /type="checkbox"/);
-  assert.match(populated, /href="\/sessions\/review-demo-999"/);
+  assert.match(pipeline, /type="file"/);
+  assert.match(pipeline, /type="number"/);
+  assert.match(pipeline, /type="checkbox"/);
+  assert.doesNotMatch(pipeline, /Active Worker Runs|Review queue|Recently finished|Server board/);
 
   const emptyData = boardData();
-  emptyData.board_summary.total_tasks = 0;
-  emptyData.tasks_by_status = Object.fromEntries(
-    emptyData.columns.map((status) => [status, []]),
-  );
+  emptyData.tasks_by_status.Estimated = [];
   const empty = renderToStaticMarkup(React.createElement(BoardState, {
     projectId: "demo-999", data: emptyData, error: null, loading: false, action: () => {},
   }));
-  for (const status of emptyData.columns) assert.match(empty, new RegExp(`No ${status} tasks`));
+  assert.match(empty, /No Estimated tasks/);
 
   const filtered = renderToStaticMarkup(React.createElement(BoardState, {
     projectId: "demo-999", data: boardData(), error: null, loading: false,
     query: "no-such-task", action: () => {},
   }));
-  assert.match(filtered, /0 of 5 visible/);
+  assert.match(filtered, /0 of 4 visible/);
   assert.match(filtered, /No matching tasks/);
+});
+
+test("Pipeline profile renders typed unavailable and empty states", () => {
+  const data = boardData();
+  data.workspace.project.root_path = "";
+  data.workspace.project.profile = {
+    git_branch: null,
+    language_hints: [],
+    framework_hints: [],
+    package_manager_hints: [],
+    test_command: null,
+    run_command: null,
+    relevant_docs: [],
+  };
+  const markup = renderToStaticMarkup(React.createElement(BoardState, {
+    projectId: "demo-999", surface: "pipeline", data, error: null, loading: false, action: () => {},
+  }));
+  for (const text of [
+    "Repo path unavailable",
+    "Branch</dt><dd>unavailable",
+    "No language, framework, or package hints detected",
+    "Test</dt><dd>unavailable",
+    "Run</dt><dd>unavailable",
+    "No relevant docs detected",
+  ]) assert.match(markup, new RegExp(text));
+  assert.doesNotMatch(markup, /undefined|\[object Object\]/);
+});
+
+test("Execution Floor renders active runs, Review queue, and recently-finished trail", () => {
+  const floor = renderToStaticMarkup(React.createElement(BoardState, {
+    projectId: "demo-999",
+    surface: "floor",
+    data: boardData(),
+    error: null,
+    loading: false,
+    action: () => {},
+  }));
+  for (const text of [
+    "Execution Floor",
+    "Run next",
+    "Start queue",
+    "Active Worker Runs",
+    "Running DEMO task",
+    "Refresh",
+    "Review queue",
+    "Review DEMO task",
+    "Needs operator disposition",
+    "View evidence",
+    "Recently finished",
+    "Done DEMO task",
+    "Archive",
+  ]) assert.match(floor, new RegExp(text));
+  assert.match(floor, /aria-label="Estimate versus actual tokens"[\s\S]*?token-stat-estimate[\s\S]*?<small>Estimate<\/small><strong>100<\/strong>[\s\S]*?token-stat-actual[\s\S]*?<small>Actual · −11%<\/small><strong>89<\/strong>/);
+  assert.ok(floor.indexOf("finished-token-comparison") < floor.indexOf("Done DEMO task"));
+  assert.doesNotMatch(floor, /Short task intake|Planning Inbox|Estimated DEMO task|Task details/);
+});
+
+test("Evidence Drawer fetches its Session Report handoff and reuses bounded evidence components", async () => {
+  const task = boardData().tasks_by_status.Review[0];
+  let requestedUrl = null;
+  const loaded = await loadEvidenceDrawer(task, async (url) => {
+    requestedUrl = url;
+    return reportData();
+  });
+  assert.equal(requestedUrl, "/api/sessions/session-demo-999/report");
+  assert.equal(loaded.session.id, "sess-demo-999");
+  assert.equal(await loadEvidenceDrawer({ session_href: "https://example.invalid/session" }), null);
+
+  const drawer = renderToStaticMarkup(React.createElement(EvidenceDrawerState, {
+    task,
+    projectId: "demo-999",
+    data: reportData(),
+    error: null,
+    loading: false,
+    action: () => {},
+  }));
+  for (const text of [
+    "Task evidence",
+    "Token log",
+    "provider raw usage",
+    "Budget-zone timeline",
+    "Worker Run timeline",
+    "Live Worker Run feed",
+    "timeline detail",
+    "Repo Context Brief",
+    "Alarms",
+    "BUDGET_YELLOW",
+    "Checkpoint results",
+    "checkpoint detail",
+    "Agent Review",
+    "Agent Review summary",
+    "Agent Review findings",
+    "Agent Review finding",
+    "Full Session Report",
+    "Save review prompt",
+    "Mark Done",
+    "Block",
+  ]) assert.match(drawer, new RegExp(text));
+  assert.match(drawer, /role="dialog"/);
+  assert.match(drawer, /Preview truncated/);
+});
+
+test("legacy form errors survive the canonical Pipeline redirect", () => {
+  assert.deepEqual(boardNoticeFromSearch("?error=DEMO%20launch%20blocked"), {
+    message: "DEMO launch blocked",
+    setupHref: null,
+  });
+  assert.equal(boardNoticeFromSearch(""), null);
 });
 
 test("board intake shows progress while task estimation is running", () => {
@@ -1044,7 +1193,7 @@ test("board cards derive short names from long task descriptions", () => {
   assert.equal(taskDisplayName({ id: "task-demo-999", summary: { text: "" } }), "Task-demo-999");
 });
 
-test("React task history sanitizes errors and links back to the canonical board", () => {
+test("React task history sanitizes errors and links back to the canonical Pipeline", () => {
   const loading = renderToStaticMarkup(React.createElement(TaskHistoryState, {
     projectId: "demo-999", data: null, error: null, loading: true, filter: "all",
     onSelectFilter: () => {}, onUnarchive: () => {}, notice: null,
@@ -1069,7 +1218,8 @@ test("React task history sanitizes errors and links back to the canonical board"
     onUnarchive: () => {},
     notice: null,
   }));
-  assert.match(populated, /href="\/projects\/demo-999\/board"/);
+  assert.match(populated, /href="\/projects\/demo-999"/);
+  assert.match(populated, /Back to Pipeline/);
   assert.doesNotMatch(populated, /href="\/app\/projects\/demo-999\/board"/);
 });
 
@@ -1199,42 +1349,43 @@ test("loaded empty navigation shows the empty state and Planning", () => {
   assert.match(markup, /href="\/board"/);
 });
 
-test("project and board active states follow the selected route", () => {
+test("project Pipeline and Floor active states follow the selected route", () => {
   const data = {
     portal_auth_required: false,
-    sidebar_projects: [{ id: "demo-999", name: "DEMO 999", task_count: 1 }],
+    sidebar_projects: [{ id: "demo-999", name: "DEMO 999", task_count: 1, needs_you_count: 3 }],
   };
   const workspace = renderSidebar({
     activeProjectId: "demo-999",
-    activeView: "workspace",
+    activeView: "pipeline",
     data,
   });
   assert.match(workspace, /class="project-item active"/);
-  assert.match(workspace, /class="project-board"/);
-  assert.doesNotMatch(workspace, /class="project-board active"/);
+  assert.match(workspace, /class="project-board active" href="\/projects\/demo-999#needs-you"/);
+  assert.match(workspace, /class="nav-badge">3<\/span>/);
   assert.match(workspace, /href="\/projects\/demo-999"/);
-  assert.match(workspace, /href="\/projects\/demo-999\/board"/);
+  assert.match(workspace, /href="\/projects\/demo-999\/floor"/);
   assert.doesNotMatch(workspace, /href="\/app\/projects\/demo-999"/);
 
-  const board = renderSidebar({
+  const floor = renderSidebar({
     activeProjectId: "demo-999",
-    activeView: "board",
+    activeView: "floor",
     data,
   });
-  assert.match(board, /class="project-item active"/);
-  assert.match(board, /class="project-board active"/);
+  assert.match(floor, /class="project-item active"/);
+  assert.match(floor, /class="project-board active" href="\/projects\/demo-999\/floor"/);
 });
 
-test("canonical and alias project routes both highlight the project in the sidebar", () => {
-  for (const path of ["/projects/demo-999", "/app/projects/demo-999"]) {
-    const route = parseRoute(path);
-    assert.equal(route.view, "workspace");
-    assert.equal(route.projectId, "demo-999");
-  }
-  for (const path of ["/projects/demo-999/board", "/app/projects/demo-999/board"]) {
-    const route = parseRoute(path);
-    assert.equal(route.view, "board");
-    assert.equal(route.projectId, "demo-999");
+test("canonical project routes highlight the project while aliases remain server-owned", () => {
+  const route = parseRoute("/projects/demo-999");
+  assert.equal(route.view, "pipeline");
+  assert.equal(route.projectId, "demo-999");
+  for (const path of [
+    "/projects/demo-999/board",
+    "/app/projects/demo-999",
+    "/app/projects/demo-999/board",
+    "/app/projects/demo-999/floor",
+  ]) {
+    assert.equal(parseRoute(path).view, "notFound");
   }
 });
 
@@ -1668,6 +1819,13 @@ test("Task Breakdown Review is exact-route owned without swallowing suffixes", (
   });
   assert.equal(parseRoute("/task-breakdowns/breakdown-demo-999/review/extra").view, "notFound");
   assert.equal(parseRoute("/app/task-breakdowns/breakdown-demo-999/review").view, "notFound");
+});
+
+test("Task Breakdown Review preserves project context for canonical and legacy Pipeline links", () => {
+  assert.equal(projectIdFromBoardHref("/projects/demo-999"), "demo-999");
+  assert.equal(projectIdFromBoardHref("/projects/demo-999/board"), "demo-999");
+  assert.equal(projectIdFromBoardHref("/projects/demo-999/floor"), null);
+  assert.equal(projectIdFromBoardHref("/projects/demo-999/board/extra"), null);
 });
 
 // A failed JSON handoff carries text nobody wrote for an operator: an exception

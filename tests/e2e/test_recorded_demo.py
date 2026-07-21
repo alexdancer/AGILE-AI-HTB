@@ -104,7 +104,7 @@ def test_recorded_demo_browser(request: pytest.FixtureRequest) -> None:
                 page.wait_for_url("**/dashboard", timeout=15000)
 
                 page.goto(
-                    f"{demo.base_url}/projects/{demo.project_id}/board",
+                    f"{demo.base_url}/projects/{demo.project_id}",
                     wait_until="networkidle",
                 )
                 page.locator("h1.page-title").wait_for(timeout=30000)
@@ -124,15 +124,23 @@ def test_recorded_demo_browser(request: pytest.FixtureRequest) -> None:
                     else None,
                 )
 
+                page.goto(
+                    f"{demo.base_url}/projects/{demo.project_id}/floor",
+                    wait_until="networkidle",
+                )
+
                 running_card = page.locator(
-                    "section.column:has(h3:has-text('Running')) article.task"
+                    "section.floor-section:has(h3:has-text('Active Worker Runs')) article.task"
                 ).filter(has_text=demo.task_id)
                 running_card.wait_for(timeout=30000)
 
-                details = running_card.locator("details.task-details")
-                details.evaluate("el => el.open = true")
+                # Live evidence lands in the always-visible Live runs dock above
+                # the columns, so no disclosure has to be opened to see it.
+                dock = page.locator("section.live-run-dock")
+                dock.wait_for(timeout=30000)
+                expect(dock).to_contain_text(demo.task_id)
 
-                page.get_by_text(DEMO_SENTINEL).wait_for(timeout=15000)
+                dock.get_by_text(DEMO_SENTINEL).wait_for(timeout=15000)
 
                 # Only now release the provisional usage line. No board reload
                 # happens in this window, so the incremental since_id feed is the
@@ -140,9 +148,10 @@ def test_recorded_demo_browser(request: pytest.FixtureRequest) -> None:
                 demo.stream_more.set()
                 assert demo.provisional_emitted.wait(timeout=15), "provisional line not emitted"
 
-                page.get_by_text(
-                    "Provisional usage; final total recorded on completion."
-                ).wait_for(timeout=30000)
+                dock.get_by_text("input_tokens=12; output_tokens=3").wait_for(timeout=30000)
+                dock.get_by_text(
+                    "provisional; final total recorded on completion."
+                ).first.wait_for(timeout=30000)
                 assert event_feed_requests, "live event feed was never polled with since_id"
 
                 # The task must still be Running while this evidence is on screen.
@@ -154,9 +163,9 @@ def test_recorded_demo_browser(request: pytest.FixtureRequest) -> None:
                 demo.release.set()
                 assert demo.outcome_done.wait(timeout=30), "worker run outcome was not applied"
 
-                # Reload the board so the completed task state is visible.
+                # Reload the Execution Floor so the completed task state is visible.
                 page.goto(
-                    f"{demo.base_url}/projects/{demo.project_id}/board",
+                    f"{demo.base_url}/projects/{demo.project_id}/floor",
                     wait_until="networkidle",
                 )
                 page.locator("h1.page-title").wait_for(timeout=30000)
@@ -164,10 +173,12 @@ def test_recorded_demo_browser(request: pytest.FixtureRequest) -> None:
                 card = page.locator("article.task").filter(has_text=demo.task_id)
                 page.get_by_text("Actual 15").wait_for(timeout=30000)
 
-                # Open the Session Report and confirm final native usage evidence.
-                details = card.locator("details.task-details")
-                details.evaluate("el => el.open = true")
-                card.locator("a:has-text('Session report')").click()
+                # Open the shared Evidence Drawer, then follow its full-report permalink.
+                card.locator("button:has-text('View evidence')").click()
+                drawer = page.locator("aside.evidence-drawer")
+                drawer.wait_for(timeout=15000)
+                drawer.get_by_text("Token log").wait_for(timeout=15000)
+                drawer.locator("a:has-text('Full Session Report')").click()
                 page.wait_for_url("**/sessions/**", timeout=15000)
                 page.get_by_text("Native usage evidence recorded").wait_for(timeout=15000)
                 page.get_by_text("native_usage").first.wait_for(timeout=15000)
@@ -178,13 +189,16 @@ def test_recorded_demo_browser(request: pytest.FixtureRequest) -> None:
                 # not human acceptance or review, and no backend auto-transition
                 # is involved.
                 page.goto(
-                    f"{demo.base_url}/projects/{demo.project_id}/board",
+                    f"{demo.base_url}/projects/{demo.project_id}/floor",
                     wait_until="networkidle",
                 )
                 card = page.locator("article.task").filter(has_text=demo.task_id)
-                card.locator("button:has-text('Mark Done')").click()
+                card.locator("button:has-text('View evidence')").click()
+                drawer = page.locator("aside.evidence-drawer")
+                drawer.locator("button:has-text('Mark Done')").click()
+                drawer.locator("button:has-text('Close')").click()
 
-                page.locator("section.column:has(h3:has-text('Done')) article.task").filter(
+                page.locator("div.floor-finished-trail article.task").filter(
                     has_text=demo.task_id
                 ).wait_for(timeout=15000)
 

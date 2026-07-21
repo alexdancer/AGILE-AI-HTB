@@ -59,10 +59,20 @@ def test_live_worker_event_endpoint_requires_auth_and_returns_bounded_incrementa
         "kind": "token",
         "layer": "worker_harness",
         "title": "Provisional usage",
-        "detail_summary": "{\n  \"total_tokens\": 9\n}",
+        "detail_summary": "total_tokens=9",
     }]
-    assert "DEMO_SECRET_999" not in str(payload)
     assert "detail" not in payload["events"][0]
+
+    # The since_id filter above excludes the secret-bearing event, so asserting on
+    # this payload would prove nothing. Fetch it directly instead.
+    with _client(tmp_path) as client:
+        full = client.get(f"/api/sessions/{session['id']}/events", headers=_portal_headers()).json()
+
+    streamed = [event for event in full["events"] if event["kind"] == "agent_message"]
+    assert streamed, "expected the streamed agent_message event in the unfiltered page"
+    assert "DEMO_SECRET_999" not in str(full), (
+        "streamed agent text reaches the browser verbatim; secrets must be redacted upstream"
+    )
 
 
 def test_live_worker_event_endpoint_reports_has_more_only_when_more_events_exist(tmp_path, monkeypatch):
@@ -92,3 +102,23 @@ def test_live_worker_event_endpoint_reports_has_more_only_when_more_events_exist
     assert first_page["has_more"] is True
     assert [event["id"] for event in final_page["events"]] == [overflow["id"]]
     assert final_page["has_more"] is False
+
+
+def test_worker_run_event_detail_summary_renders_unmodelled_shapes_without_dumping_blobs():
+    """Control-plane details must read as key=value, and nested blobs must stay out."""
+    summary = db._worker_run_event_detail_summary(
+        {"adapter_id": "demo_worker", "model": "claude-sonnet-5", "tracking_mode": "native_usage"}
+    )
+    assert summary == "adapter_id=demo_worker; model=claude-sonnet-5; tracking_mode=native_usage"
+
+    # A command plan is a nested blob: summarized away, never inlined into a feed row.
+    assert db._worker_run_event_detail_summary({"command_plan": {"command": ["foremanctl"], "env": {}}}) == ""
+    assert "{" not in db._worker_run_event_detail_summary({"documents": ["README.md"], "manifests": []})
+
+
+def test_worker_run_event_detail_summary_extracts_streamed_content():
+    assert db._worker_run_event_detail_summary({"text": "Hello world"}) == "Hello world"
+    assert db._worker_run_event_detail_summary({"arguments": '{"path": "src/main.py"}'}) == 'arguments={"path": "src/main.py"}'
+    assert db._worker_run_event_detail_summary({"input_tokens": 12, "output_tokens": 3}) == "input_tokens=12; output_tokens=3"
+    assert db._worker_run_event_detail_summary({"status": "started"}) == "status=started"
+    assert db._worker_run_event_detail_summary({}) == ""

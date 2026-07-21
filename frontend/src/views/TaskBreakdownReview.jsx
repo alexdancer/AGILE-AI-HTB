@@ -141,6 +141,11 @@ export function preventReviewUnload(event) {
   event.returnValue = "";
 }
 
+export function projectIdFromBoardHref(href) {
+  const match = String(href || "").match(/^\/projects\/([^/]+)(?:\/board)?$/);
+  return match ? match[1] : null;
+}
+
 export default function TaskBreakdownReview({ breakdownId, onProjectResolved = NOOP }) {
   const navigate = React.useContext(NavContext);
   const setNavigationGuard = React.useContext(NavigationGuardContext);
@@ -166,8 +171,7 @@ export default function TaskBreakdownReview({ breakdownId, onProjectResolved = N
     setState((current) => ({ ...current, loading: !current.data, error: null }));
     try {
       const data = await getJSON(`/api/task-breakdowns/${encodeURIComponent(breakdownId)}/review`);
-      const projectMatch = data.links.board_href.match(/^\/projects\/([^/]+)\/board$/);
-      onProjectResolved(projectMatch ? projectMatch[1] : null);
+      onProjectResolved(projectIdFromBoardHref(data.links.board_href));
       setState({ data, error: null, loading: false });
       setDraft(initialDraft(data));
       setManual({

@@ -717,7 +717,7 @@ def test_eval_estimator_failure_creates_blocked_task(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "Blocked"
+    assert body["status"] == "Estimated"
     assert "estimator_unavailable" in body.get("metadata", {}).get("blocked_reason", "") or "Estimator unavailable" in body.get("metadata", {}).get("blocked_reason", "")
 
 
@@ -791,7 +791,7 @@ def test_eval_complex_markdown_failure_has_specific_manual_estimate_reason(tmp_p
 
     task = response.json()
     assert response.status_code == 200
-    assert task["status"] == "Blocked"
+    assert task["status"] == "Estimated"
     assert task["metadata"]["blocked_reason"] == "Estimator unavailable or invalid; manual estimate required."
     assert task["metadata"]["estimator_failure_type"] == "EstimatorValidationError"
     assert task["metadata"]["requires_manual_estimate"] is True

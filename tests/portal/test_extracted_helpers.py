@@ -8,7 +8,7 @@ def test_extracted_portal_helpers_keep_board_worker_and_evidence_contracts():
         {"status": "Ready"},
         {"status": "Review"},
         {"status": "weird"},
-    ]) == {"Estimated": 1, "Running": 0, "Review": 1, "Done": 0, "Blocked": 1}
+    ]) == {"Estimated": 2, "Running": 0, "Review": 1, "Done": 0}
 
     adapters = [
         {"id": "first", "configured": False},

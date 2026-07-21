@@ -8,7 +8,7 @@ Use it when you want a coding agent workflow that is easier to inspect:
 
 - estimate work before launch
 - break larger plans into smaller governed slices
-- run coding agents from a project board
+- plan work in a project Pipeline and run coding agents from its Execution Floor
 - keep long-running agent work from turning into one polluted mega-thread: each slice gets its own scoped Worker run, while the Harness preserves the plan, budget, evidence, and review state
 - record Worker Run evidence, stdout/stderr, token usage, and review state
 - keep budget overrides and final acceptance in human hands
@@ -81,8 +81,8 @@ This updates the global `foremanctl` CLI and preserves repo-local `.foreman/` st
 4. Pick a control-plane provider/model, paste the provider API key, save, then test the connection.
 5. Connect a local repository from `/projects`.
 6. Open `/settings/workers`, choose a Worker Adapter, discover/allow Worker models, then verify token tracking.
-7. Launch a tiny task from the project board.
-8. Review the session report and token evidence before marking the task done.
+7. Open the project's Pipeline at `/projects/{project_id}`, estimate a tiny task, and launch it.
+8. Follow the run on `/projects/{project_id}/floor`; open its Evidence Drawer before marking the task done.
 
 Default loopback `foremanctl serve` opens the local Portal without a login token. If you bind the Portal to `0.0.0.0`, run it behind a proxy, or use Docker/shared access, keep the portal token from ignored `.foreman/secrets.env` and sign in through `/login`.
 
@@ -107,23 +107,24 @@ Representative local Portal screens using synthetic/public-safe data:
 
 ## How the workflow works
 
-1. **Create a task** on the project board.
+1. **Create a task** in the project Pipeline.
 2. **Estimate** with the control-plane model.
 3. **Launch** through a verified Worker Adapter.
-4. **Run async** while the Portal stays responsive.
-5. **Review evidence**: command plan, stdout/stderr, token usage, alarms, and session report.
+4. **Run async** on the Execution Floor while the Portal stays responsive.
+5. **Review evidence** in the card's side drawer: command plan, Worker events, token usage, checkpoints, and Agent Review; the Session Report remains the full permalink.
 6. **Accept or block** as the human operator.
 
-Board states are:
+Task lifecycle states are:
 
 ```text
 Estimated -> Running -> Review -> Done
-                         -> Blocked
 ```
+
+Blocked is a condition badge, not a fifth column: the Task stays in its lifecycle state while Needs You explains the reason and required operator action. Needs You also aggregates pending Task Breakdowns, manual estimates, review dispositions, launch guardrails, and budget overrides at the top of the Pipeline.
 
 ### With a Markdown file
 
-For a larger `.md` plan, paste the Markdown into the board or upload the file instead of turning every bullet into a task yourself:
+For a larger `.md` plan, paste the Markdown into the Pipeline or upload the file instead of turning every bullet into a task yourself:
 
 ```text
 .md plan

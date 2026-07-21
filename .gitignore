@@ -18,5 +18,9 @@ harness.db
 .codegraph/
 frontend/node_modules/
 src/foreman_ai_hq/static/react/
+# Runtime-generated synthetic demo repo (has its own .git; created by `foremanctl demo`)
+demo-project/
+# Local design-tooling working state (impeccable skill)
+.impeccable/
 # Obsidian per-machine pane/scroll state
 .obsidian/workspace.json

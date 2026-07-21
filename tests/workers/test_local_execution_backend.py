@@ -268,7 +268,7 @@ def test_read_only_proof_blocks_when_worker_modifies_files(tmp_path):
     _wait_for_worker_run(db_path, task["id"], "failed")
     blocked = db.get_task(db_path, task["id"])
 
-    assert blocked["status"] == "Blocked"
+    assert blocked["status"] == "Review"
     assert blocked["metadata"]["launch_blocked_reason"] == "Read-only Worker session modified the connected project."
     assert "src/" in blocked["metadata"]["readonly_diff_evidence"]["after"]
 

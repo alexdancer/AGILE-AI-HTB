@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from foreman_ai_hq import db
 from foreman_ai_hq.db import (
     build_session_artifact,
     connect,
@@ -12,6 +13,7 @@ from foreman_ai_hq.db import (
     effective_daily_budget_window_start,
     get_session,
     init_db,
+    list_task_breakdowns_for_project,
     record_alarm,
     record_checkpoint_result,
     record_guardrail_snapshot,
@@ -80,6 +82,111 @@ def test_create_and_get_session_round_trips_json_overrides(tmp_path):
     assert loaded["session_key_hash"] == "hash-123"
     assert loaded["guardrail_overrides"] == {"session_cap": {"tokens": 50_000}}
     assert loaded["started_at"]
+
+
+def test_list_task_breakdowns_for_project_returns_open_newest_first(tmp_path):
+    db_path = tmp_path / "harness.db"
+    init_db(db_path)
+    first = db.create_task_breakdown(
+        db_path,
+        source_text="DEMO first 2099",
+        source_sha256="first-999",
+        intake_metadata={"connected_project_id": "project-999"},
+        status="pending_review",
+        decision="multi_task",
+        model="demo-model",
+    )
+    second = db.create_task_breakdown(
+        db_path,
+        source_text="DEMO second 2099",
+        source_sha256="second-999",
+        intake_metadata={"connected_project_id": "project-999"},
+        status="failed",
+        decision="failed",
+        model="demo-model",
+    )
+    db.create_task_breakdown(
+        db_path,
+        source_text="DEMO other 2099",
+        source_sha256="other-999",
+        intake_metadata={"connected_project_id": "other-project-999"},
+        status="pending_review",
+        decision="multi_task",
+        model="demo-model",
+    )
+    db.update_task_breakdown(db_path, first["id"], {"status": "accepted"})
+
+    listed = list_task_breakdowns_for_project(db_path, "project-999")
+
+    assert [item["id"] for item in listed] == [second["id"]]
+
+
+def test_init_db_migrates_blocked_tasks_to_estimated_conditions(tmp_path):
+    db_path = tmp_path / "harness.db"
+    init_db(db_path)
+    estimated = create_task(
+        db_path,
+        description="DEMO blocked estimated 2099",
+        status="Estimated",
+        estimate_tokens=999,
+        metadata={},
+    )
+    manual = create_task(
+        db_path,
+        description="DEMO blocked manual 2099",
+        status="Estimated",
+        metadata={},
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "update tasks set status = 'Blocked', metadata_json = ? where id = ?",
+            ('{"blocked_reason":"DEMO review required 2099"}', estimated["id"]),
+        )
+        conn.execute("update tasks set status = 'Blocked' where id = ?", (manual["id"],))
+
+    init_db(db_path)
+
+    migrated = [db.get_task(db_path, task_id) for task_id in (estimated["id"], manual["id"])]
+    assert {task["status"] for task in migrated} == {"Estimated"}
+    assert migrated[0]["metadata"]["blocked_condition"]["reason"] == "DEMO review required 2099"
+    assert migrated[1]["metadata"]["blocked_condition"]["reason"] == "manual estimate required"
+    assert migrated[1]["metadata"]["requires_manual_estimate"] is True
+    with connect(db_path) as conn:
+        assert conn.execute("select count(*) from tasks where status = 'Blocked'").fetchone()[0] == 0
+
+
+def test_blocked_review_task_is_dismissible_but_plain_review_is_not(tmp_path):
+    db_path = tmp_path / "harness.db"
+    init_db(db_path)
+    blocked = create_task(
+        db_path,
+        description="DEMO failed run 2099",
+        status="Review",
+        estimate_tokens=9000,
+        recommended_model="5.4",
+        metadata={
+            "blocked_condition": {
+                "reason": "Session failed.",
+                "origin": "session_completion",
+                "timestamp": "2099-06-13T00:00:00+00:00",
+            }
+        },
+    )
+    plain = create_task(
+        db_path,
+        description="DEMO awaiting review 2099",
+        status="Review",
+        estimate_tokens=9000,
+        recommended_model="5.4",
+        metadata={},
+    )
+
+    archived = db.archive_task(db_path, blocked["id"])
+    assert archived["metadata"]["archived_at"]
+
+    with pytest.raises(ValueError, match="blocked Review tasks"):
+        db.archive_task(db_path, plain["id"])
+    assert not db.get_task(db_path, plain["id"])["metadata"].get("archived_at")
 
 
 def test_update_session_status_marks_final_state(tmp_path):

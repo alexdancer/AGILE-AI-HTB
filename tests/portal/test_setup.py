@@ -125,7 +125,7 @@ def test_setup_links_exact_launch_ready_project_board(tmp_path, monkeypatch):
         _connect_invalid_project(database_path, tmp_path / "newer-blocked-project")
         setup = client.get("/api/setup", headers=_portal_headers())
 
-    expected_href = f'/projects/{launch_ready["id"]}/board'
+    expected_href = f'/projects/{launch_ready["id"]}'
     assert setup.status_code == 200
     payload = setup.json()
     assert payload["ready_to_launch"] is True

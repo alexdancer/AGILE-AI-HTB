@@ -14,7 +14,7 @@ import { useResource } from "../useResource.js";
 // browser loads the server-rendered page.
 //
 // Props:
-//   activeView: "dashboard" | "workspace" | "board"
+//   activeView: "dashboard" | "pipeline" | "floor"
 //   activeProjectId: string | null
 export default function Shell({ children, activeView, activeProjectId, refreshKey = 0 }) {
   const { data, error, loading } = useResource("/api/portal/nav", refreshKey);
@@ -64,6 +64,7 @@ export function Sidebar({ activeView, activeProjectId, data, error, loading }) {
           {hasLoadedProjects && projects.map((project) => {
             const isActive = activeProjectId === project.id;
             const hasTasks = project.task_count > 0;
+            const needsYouCount = Number(project.needs_you_count) || 0;
             return (
               <React.Fragment key={project.id}>
                 <AppLink
@@ -75,12 +76,20 @@ export function Sidebar({ activeView, activeProjectId, data, error, loading }) {
                     {hasTasks ? "Task board" : "No tasks"}
                   </span>
                 </AppLink>
-                {hasTasks && (
+                {isActive && (
                   <AppLink
-                    to={`/projects/${project.id}/board`}
-                    className={`project-board${isActive && activeView === "board" ? " active" : ""}`}
+                    to={`/projects/${project.id}#needs-you`}
+                    className={`project-board${activeView === "pipeline" ? " active" : ""}`}
                   >
-                    └ Task board
+                    └ Pipeline {needsYouCount > 0 && <span className="nav-badge">{needsYouCount}</span>}
+                  </AppLink>
+                )}
+                {isActive && (
+                  <AppLink
+                    to={`/projects/${project.id}/floor`}
+                    className={`project-board${activeView === "floor" ? " active" : ""}`}
+                  >
+                    └ Execution Floor
                   </AppLink>
                 )}
               </React.Fragment>

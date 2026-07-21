@@ -260,10 +260,10 @@ export function DashboardContent({ data }) {
               </p>
               <div className="toolbar">
                 <AppLink className="btn" to={`/projects/${project.id}`}>
-                  Open workspace
+                  Open Pipeline
                 </AppLink>
-                <AppLink className="btn secondary" to={`/projects/${project.id}/board`}>
-                  Open board
+                <AppLink className="btn secondary" to={`/projects/${project.id}/floor`}>
+                  Open Floor
                 </AppLink>
               </div>
             </article>

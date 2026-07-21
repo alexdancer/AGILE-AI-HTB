@@ -215,6 +215,14 @@ def test_review_action_save_prompt_and_mark_done_preserve_completed_session_evid
             recommended_model="5.4",
             actual_tokens=321,
             session_id=session["id"],
+            metadata={
+                "blocked_reason": "Resolved DEMO review blocker 2099",
+                "blocked_condition": {
+                    "reason": "Resolved DEMO review blocker 2099",
+                    "origin": "review_disposition",
+                    "timestamp": "2099-01-01T00:00:00Z",
+                },
+            },
         )
 
         saved = client.post(
@@ -238,6 +246,8 @@ def test_review_action_save_prompt_and_mark_done_preserve_completed_session_evid
     assert body["actual_tokens"] == 321
     assert body["metadata"]["review_decision"] == "accepted"
     assert body["metadata"]["reviewed_by"] == "operator"
+    assert "blocked_condition" not in body["metadata"]
+    assert "blocked_reason" not in body["metadata"]
 
 
 @pytest.mark.parametrize(("accept", "react_json"), [(None, False), ("application/json", True)])
@@ -408,9 +418,10 @@ def test_review_action_block_requires_reason_and_records_operator_decision(tmp_p
     }
     assert blocked.status_code == 200
     body = blocked.json()
-    assert body["status"] == "Blocked"
+    assert body["status"] == "Review"
     assert body["metadata"]["review_decision"] == "blocked"
     assert body["metadata"]["blocked_reason"] == "DEMO blocker reason 2099."
+    assert body["metadata"]["blocked_condition"]["origin"] == "review_disposition"
     assert body["session_id"] == session["id"]
 
 def test_review_action_agent_review_uses_control_plane_and_stays_in_review(tmp_path, monkeypatch):
@@ -500,13 +511,10 @@ def test_review_action_agent_review_uses_control_plane_and_stays_in_review(tmp_p
     assert db.session_token_breakdown(database_path, session["id"])["by_category"]["worker_execution"] == body["actual_tokens"]
     board_task = _board_task(board, task["id"])
     assert board_task["status"] == "Review"
-    agent = board_task["details"]["review"]["agent_review"]
-    assert agent["status"] == "completed"
-    assert agent["recommendation"] == "approve"
-    assert agent["summary"]["text"] == "DEMO review says the task is acceptable."
-    assert agent["findings"][0]["message"]["text"] == "DEMO finding only."
-    assert agent["token_total"] == 49
-    assert agent["review_session_href"] == f"/sessions/{review['review_session_id']}"
+    # Agent-review detail now surfaces through the Evidence Drawer /report
+    # (related_agent_review, covered by tests/portal/test_sessions.py). The board card
+    # keeps the task in Review with its original session evidence reachable.
+    assert board_task["session_href"] == f"/sessions/{session['id']}"
 
 
 def test_review_action_agent_review_parses_fenced_json_without_raw_board_dump(tmp_path, monkeypatch):
@@ -548,12 +556,8 @@ def test_review_action_agent_review_parses_fenced_json_without_raw_board_dump(tm
     assert review["recommendation"] == "approve"
     assert review["findings"][0]["path"] == "README.md"
     board_task = _board_task(board, task["id"])
-    agent = board_task["details"]["review"]["agent_review"]
-    assert agent["summary"]["text"] == "DEMO fenced review 2099 is clean."
-    assert agent["findings"][0]["message"]["text"] == "DEMO fenced finding 2099."
-    assert agent["findings"][0]["path"] == "README.md"
-    assert "```json" not in agent["summary"]["text"]
-    assert "Here is the review" not in agent["summary"]["text"]
+    assert board_task["status"] == "Review"
+    assert board_task["session_href"] == f"/sessions/{session['id']}"
 
 
 def test_review_action_agent_review_normalizes_markdown_to_plain_text(tmp_path, monkeypatch):
@@ -606,14 +610,8 @@ def test_review_action_agent_review_normalizes_markdown_to_plain_text(tmp_path, 
         {"severity": "low", "message": "Minor wording still reads like markdown."},
     ]
     board_task = _board_task(board, task["id"])
-    agent = board_task["details"]["review"]["agent_review"]
-    assert agent["summary"]["text"] == "DEMO_2099 worker verification is incomplete because pip install was skipped."
-    assert agent["recommendation"] == "needs_changes"
-    assert agent["findings"][0]["message"]["text"] == "README.md still references the wrong DEMO_2099 path."
-    assert agent["findings"][1]["message"]["text"] == "Minor wording still reads like markdown."
-    assert "#" not in agent["summary"]["text"]
-    assert "**" not in agent["summary"]["text"]
-    assert "`" not in agent["summary"]["text"]
+    assert board_task["status"] == "Review"
+    assert board_task["session_href"] == f"/sessions/{session['id']}"
 
 
 def test_review_action_agent_review_cleans_markdown_inside_json_fields(tmp_path, monkeypatch):
@@ -661,12 +659,8 @@ def test_review_action_agent_review_cleans_markdown_inside_json_fields(tmp_path,
     assert review["recommendation"] == "approve"
     assert review["findings"][0] == {"severity": "low", "message": "No blocker in README.md.", "path": "README.md"}
     board_task = _board_task(board, task["id"])
-    agent = board_task["details"]["review"]["agent_review"]
-    assert agent["summary"]["text"] == "DEMO_2099 review: Worker output is readable."
-    assert agent["findings"][0]["message"]["text"] == "No blocker in README.md."
-    assert agent["findings"][0]["path"] == "README.md"
-    assert "**DEMO_2099" not in agent["summary"]["text"]
-    assert "`" not in agent["findings"][0]["path"]
+    assert board_task["status"] == "Review"
+    assert board_task["session_href"] == f"/sessions/{session['id']}"
 
 def test_review_action_accepts_completed_worker_run_evidence_when_session_is_not_completed(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
@@ -772,8 +766,5 @@ def test_review_action_agent_review_failure_is_stored_and_task_remains_review(tm
     assert db.get_session(database_path, review["review_session_id"])["status"] == "failed"
     board_task = _board_task(board, task["id"])
     assert board_task["status"] == "Review"
-    agent = board_task["details"]["review"]["agent_review"]
-    assert agent["status"] == "failed"
-    assert agent["failure"]["text"] == "DEMO control-plane outage 2099"
-    assert agent["token_total"] == 0
+    assert board_task["session_href"] == f"/sessions/{session['id']}"
 

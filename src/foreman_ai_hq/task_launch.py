@@ -152,7 +152,9 @@ def _launch_task_unlocked(
             {
                 "status": "Running",
                 "session_id": active_run["session_id"],
-                "metadata": {**task.get("metadata", {}), "active_worker_run_id": active_run["id"]},
+                "metadata": _clear_recoverable_launch_failure_metadata(
+                    {**task.get("metadata", {}), "active_worker_run_id": active_run["id"]}
+                ),
             },
         )
         return TaskLaunchResult(
@@ -970,11 +972,15 @@ def _apply_worker_run_outcome(
             database_path,
             task["id"],
             {
-                "status": "Blocked",
+                "status": "Review",
                 "session_id": session["id"],
                 "metadata": {
                     **claimed.get("metadata", {}),
                     "launch_blocked_reason": "Read-only Worker session modified the connected project.",
+                    "blocked_condition": _blocked_condition(
+                        "Read-only Worker session modified the connected project.",
+                        "read_only_mutation",
+                    ),
                     "launch_guardrail_reasons": ["Read-only Worker session modified the connected project."],
                     "readonly_diff_evidence": outcome.readonly_diff_evidence,
                     "launch_returncode": result.returncode,
@@ -1033,6 +1039,9 @@ def _apply_manual_estimate(
     if estimate_tokens is None:
         return task
     metadata = {**task.get("metadata", {})}
+    metadata.pop("blocked_condition", None)
+    metadata.pop("blocked_reason", None)
+    metadata.pop("requires_manual_estimate", None)
     if not metadata.get("connected_project_id"):
         projects = db.list_connected_projects(database_path)
         if len(projects) == 1:
@@ -1051,7 +1060,7 @@ def _apply_manual_estimate(
 
 def _is_manual_estimate_required(task: dict[str, Any]) -> bool:
     metadata = task.get("metadata", {})
-    return task.get("status") == "Blocked" and (
+    return task.get("status") == "Estimated" and (
         metadata.get("requires_manual_estimate") is True
         or metadata.get("estimation_source") == "manual_required"
     )
@@ -1077,22 +1086,26 @@ def refresh_task_from_session(database_path: Path | str, task_id: str) -> dict[s
             {"status": "Review" if has_issues else "Done", "metadata": metadata},
         )
     if session_status in {"failed", "aborted"}:
-        metadata.setdefault("blocked_reason", f"Session {session_status}.")
-        return db.update_task(database_path, task_id, {"status": "Blocked", "metadata": metadata})
+        reason = f"Session {session_status}."
+        metadata.setdefault("blocked_reason", reason)
+        metadata["blocked_condition"] = _blocked_condition(reason, "session_completion")
+        return db.update_task(database_path, task_id, {"status": "Review", "metadata": metadata})
     return task
 
 
 def _mark_launch_blocked(database_path: Path | str, task: dict[str, Any], reasons: list[str]) -> dict[str, Any]:
     has_estimate = task.get("estimate_tokens") is not None and bool(task.get("recommended_model"))
-    status = "Estimated" if has_estimate else "Blocked"
+    status = "Estimated"
     reason = reasons[0] if reasons else "Launch guardrails failed."
     metadata = {
         **task.get("metadata", {}),
         "launch_blocked_reason": reason,
         "launch_guardrail_reasons": list(reasons),
     }
-    if status == "Blocked":
+    if not has_estimate:
         metadata.setdefault("blocked_reason", reason)
+        metadata.setdefault("requires_manual_estimate", True)
+    metadata["blocked_condition"] = _blocked_condition(reason, "launch_guardrail")
     return db.update_task(database_path, task["id"], {"status": status, "metadata": metadata})
 
 
@@ -1102,12 +1115,13 @@ def _mark_write_launch_blocked(database_path: Path | str, task: dict[str, Any], 
         database_path,
         task["id"],
         {
-            "status": "Blocked",
+            "status": "Estimated",
             "metadata": {
                 **task.get("metadata", {}),
                 "launch_blocked_reason": reason,
                 "launch_guardrail_reasons": list(reasons),
                 "blocked_reason": reason,
+                "blocked_condition": _blocked_condition(reason, "write_launch_guardrail"),
             },
         },
     )
@@ -1186,6 +1200,15 @@ def _clear_recoverable_launch_failure_metadata(metadata: dict[str, Any]) -> dict
         "launch_stderr",
         "launch_stdout",
         "launch_diagnostic",
+        "launch_blocked_reason",
+        "blocked_reason",
+        "blocked_condition",
+        "requires_manual_estimate",
+        "budget_override_available",
+        "budget_override_reason",
+        "budget_override_tracking_mode",
+        "native_usage_override_ack_required",
+        "native_usage_override_ack_text",
     ):
         cleared.pop(key, None)
     return cleared
@@ -1220,8 +1243,16 @@ def abort_worker_session(database_path: Path | str, session_id: str, *, reason: 
     for task in db.list_tasks(database_path):
         if task.get("session_id") != session_id:
             continue
-        metadata = {**task.get("metadata", {}), "abort_reason": reason, "blocked_reason": f"Session aborted: {reason}"}
-        affected_tasks.append(db.update_task(database_path, task["id"], {"status": "Blocked", "metadata": metadata}))
+        blocked_reason = f"Session aborted: {reason}"
+        metadata = {
+            **task.get("metadata", {}),
+            "abort_reason": reason,
+            "blocked_reason": blocked_reason,
+            "blocked_condition": _blocked_condition(blocked_reason, "session_abort"),
+        }
+        affected_tasks.append(
+            db.update_task(database_path, task["id"], {"status": "Review", "metadata": metadata})
+        )
     return {"session": session, "tasks": affected_tasks}
 
 
@@ -1272,7 +1303,7 @@ def _mark_budget_launch_blocked(
     reason: str | None = None,
 ) -> dict[str, Any]:
     blocked_reason = reason or budget_check.get("reason") or "Launch budget guardrail failed."
-    status = "Estimated" if task.get("estimate_tokens") and task.get("recommended_model") else "Blocked"
+    status = "Estimated"
     metadata = {
         **task.get("metadata", {}),
         "launch_blocked_reason": blocked_reason,
@@ -1280,6 +1311,7 @@ def _mark_budget_launch_blocked(
         "budget_check": budget_check,
         "budget_override_available": True,
         "budget_override_tracking_mode": tracking_mode,
+        "blocked_condition": _blocked_condition(blocked_reason, "budget_guardrail"),
     }
     if tracking_mode == NATIVE_USAGE:
         metadata["native_usage_override_ack_required"] = True
@@ -1447,7 +1479,7 @@ def _finalize_write_capable_launch(
             database_path,
             task_id,
             {
-                "status": "Blocked",
+                "status": "Review",
                 "session_id": session["id"],
                 "actual_tokens": actual_tokens,
                 "metadata": {
@@ -1455,6 +1487,7 @@ def _finalize_write_capable_launch(
                     "launch_blocked_reason": reason,
                     "launch_guardrail_reasons": [reason],
                     "blocked_reason": reason,
+                    "blocked_condition": _blocked_condition(reason, "write_completion"),
                 },
             },
         )
@@ -1483,13 +1516,16 @@ def _finalize_write_capable_launch(
             database_path,
             task_id,
             {
-                "status": "Blocked",
+                "status": "Review",
                 "session_id": session["id"],
                 "metadata": {
                     **base_metadata,
                     "post_run_verification": verification,
                     "launch_blocked_reason": "Post-run verification failed.",
                     "launch_guardrail_reasons": ["Post-run verification failed."],
+                    "blocked_condition": _blocked_condition(
+                        "Post-run verification failed.", "post_run_verification"
+                    ),
                 },
             },
         )
@@ -1701,6 +1737,10 @@ def _outside_workdir_paths(text: str, configured_workdir: Path | None) -> list[s
             seen.add(value)
             paths.append(value)
     return paths[:20]
+
+
+def _blocked_condition(reason: str, origin: str) -> dict[str, str]:
+    return {"reason": reason, "origin": origin, "timestamp": datetime.now(UTC).isoformat()}
 
 
 def _git_porcelain(root_path: str | None) -> str | None:

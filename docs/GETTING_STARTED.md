@@ -20,7 +20,7 @@ This is the first-run guide for operators evaluating Foreman AI HQ in their own 
 4. Open `/settings/control-plane`, choose provider/model, paste the provider API key, save, then test the connection.
 5. Connect a local repository from `/projects`.
 6. Open `/settings/workers`, choose a Worker Adapter, discover/allow Worker models, then verify tracking.
-7. Launch a tiny task from the project board and inspect the session report/token evidence.
+7. Estimate a tiny task in the project's Pipeline, follow it on the Execution Floor, and inspect its Evidence Drawer or full Session Report.
 8. Run `foremanctl check` any time you need redacted setup status for support.
 
 ## Contributor checkout
@@ -51,7 +51,7 @@ Pasting a control-plane API key does not configure native Worker CLIs.
 
 ## What Foreman AI HQ governs
 
-Foreman AI HQ governs launches that go through its board and verified Worker Adapter path:
+Foreman AI HQ governs launches that go through its project Pipeline / Execution Floor and verified Worker Adapter path:
 
 - It estimates tasks before launch.
 - It records budget and launch evidence.

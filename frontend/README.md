@@ -29,12 +29,14 @@ redirects to their canonical URLs:
 
 - `/app` → `/dashboard`
 - `/app/projects/<project_id>` → `/projects/<project_id>`
-- `/app/projects/<project_id>/board` → `/projects/<project_id>/board`
+- `/app/projects/<project_id>/board` → `/projects/<project_id>`
+- `/app/projects/<project_id>/floor` → `/projects/<project_id>/floor`
 
 Canonical React routes include `/dashboard`, `/projects`, `/projects/<project_id>`,
-`/projects/<project_id>/board`, `/sessions`, `/sessions/<session_id>`,
+`/projects/<project_id>/floor`, `/sessions`, `/sessions/<session_id>`,
 `/projects/<project_id>/task-history`, `/alarms`, `/setup`, `/task-breakdowns/<id>/review`,
-and `/settings/*`.
+and `/settings/*`. The legacy `/projects/<project_id>/board` route redirects to the
+project Pipeline at `/projects/<project_id>`.
 
 If the build is missing, the canonical React routes return a clear "frontend build
 missing" recovery response instead of a blank shell; the login page remains

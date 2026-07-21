@@ -26,13 +26,12 @@ DEFAULT_POLICY = {
 
 
 def empty_run_automation_state(project_id: str) -> dict[str, Any]:
-    # Portal state stays small: one active run plus a short event trail.
+    # Portal state stays small: N=1 today, collection-shaped for later concurrency.
     return {
         "project_id": project_id,
         "status": QUEUE_STATUS_IDLE,
         "source": None,
-        "active_task_id": None,
-        "active_worker_run_id": None,
+        "active_runs": [],
         "auto_agent_review": False,
         "policy": dict(DEFAULT_POLICY),
         "latest_stop_reason": None,
@@ -71,8 +70,7 @@ def start_run_automation(
             {
                 "status": QUEUE_STATUS_RUNNING,
                 "source": source,
-                "active_task_id": active_task_id,
-                "active_worker_run_id": active_worker_run_id,
+                "active_runs": _active_runs(active_task_id, active_worker_run_id),
                 "auto_agent_review": bool(auto_agent_review),
                 "policy": policy,
                 "latest_stop_reason": None,
@@ -105,8 +103,7 @@ def stop_run_automation(
         state.update(
             {
                 "status": QUEUE_STATUS_STOPPED,
-                "active_task_id": None,
-                "active_worker_run_id": None,
+                "active_runs": [],
                 "latest_stop_reason": reason,
             }
         )
@@ -134,8 +131,7 @@ def set_active_automation_run(
 ) -> dict[str, Any]:
     def update(state: dict[str, Any]) -> dict[str, Any]:
         state = _normalize_state(project_id, state)
-        state["active_task_id"] = task_id
-        state["active_worker_run_id"] = worker_run_id
+        state["active_runs"] = _active_runs(task_id, worker_run_id)
         return state
 
     return db.update_portal_setting(database_path, _state_key(project_id), empty_run_automation_state(project_id), update)
@@ -212,11 +208,25 @@ def _normalize_state(project_id: str, state: dict[str, Any]) -> dict[str, Any]:
     normalized = empty_run_automation_state(project_id)
     normalized.update(dict(state or {}))
     normalized["project_id"] = project_id
+    active_runs = (state or {}).get("active_runs")
+    if not isinstance(active_runs, list):
+        active_runs = _active_runs(
+            normalized.get("active_task_id"), normalized.get("active_worker_run_id")
+        )
+    normalized["active_runs"] = [dict(run) for run in active_runs[:1] if isinstance(run, dict)]
+    normalized.pop("active_task_id", None)
+    normalized.pop("active_worker_run_id", None)
     normalized["auto_agent_review"] = bool(normalized.get("auto_agent_review"))
     normalized["policy"] = {**DEFAULT_POLICY, **dict(normalized.get("policy") or {})}
     normalized["policy"]["auto_agent_review"] = bool(normalized["auto_agent_review"])
     normalized["events"] = list(normalized.get("events") or [])[-25:]
     return normalized
+
+
+def _active_runs(task_id: str | None, worker_run_id: str | None) -> list[dict[str, str | None]]:
+    if not task_id and not worker_run_id:
+        return []
+    return [{"task_id": task_id, "worker_run_id": worker_run_id}]
 
 
 def _state_key(project_id: str) -> str:

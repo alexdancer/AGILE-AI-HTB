@@ -102,7 +102,7 @@ def test_write_capable_launch_blocks_dirty_repo_before_runner(tmp_path):
     else:
         raise AssertionError("expected dirty repo to block")
 
-    assert blocked["status"] == "Blocked"
+    assert blocked["status"] == "Estimated"
     assert "clean working tree" in blocked["metadata"]["launch_blocked_reason"]
     assert calls == []
 
@@ -154,7 +154,7 @@ def test_write_capable_codex_native_launch_blocks_non_git_project_before_runner(
     else:
         raise AssertionError("expected non-git project to block")
 
-    assert blocked["status"] == "Blocked"
+    assert blocked["status"] == "Estimated"
     assert "git repository" in blocked["metadata"]["launch_blocked_reason"]
     assert calls == []
 
@@ -261,7 +261,7 @@ def test_write_capable_verification_failure_preserves_uncommitted_diff(tmp_path)
 
     metadata = blocked["metadata"]
     porcelain = subprocess.run(["git", "status", "--porcelain"], cwd=root, check=True, capture_output=True, text=True).stdout
-    assert blocked["status"] == "Blocked"
+    assert blocked["status"] == "Review"
     assert metadata["post_run_verification"]["passed"] is False
     assert "test_sample.py" in metadata["diff_summary"]["stat"]
     assert "test_sample.py" in porcelain
@@ -280,7 +280,7 @@ def test_write_capable_no_diff_blocks_instead_of_review(tmp_path):
     run = _wait_for_worker_run(db_path, task["id"], "failed")
     blocked = db.get_task(db_path, task["id"])
 
-    assert blocked["status"] == "Blocked"
+    assert blocked["status"] == "Review"
     assert blocked["actual_tokens"] == 15
     assert blocked["metadata"]["launch_blocked_reason"] == "Worker completed but produced no code changes."
     assert blocked["metadata"]["diff_summary"]["has_changes"] is False

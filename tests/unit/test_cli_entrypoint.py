@@ -1,3 +1,4 @@
+import json
 import subprocess
 from pathlib import Path
 
@@ -6,6 +7,9 @@ from fastapi.testclient import TestClient
 from foreman_ai_hq import db
 from foreman_ai_hq.app import create_app
 from foreman_ai_hq.cli import main
+from foreman_ai_hq.demo_worker import stream_payloads
+from foreman_ai_hq.project_context import resolve_task_project
+from foreman_ai_hq.worker_adapters import get_adapter_builder
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -515,16 +519,107 @@ def test_init_creates_guardrails_for_clean_cwd_app_startup(tmp_path, monkeypatch
     assert response.status_code == 200
 
 
-def test_seed_demo_adapter_uses_installed_foremanctl_command(tmp_path):
+def test_board_only_seed_demo_does_not_change_worker_adapters(tmp_path):
     db_path = tmp_path / "harness.db"
 
     assert main(["--database-path", str(db_path), "seed-demo"]) == 0
 
+    assert {adapter["id"] for adapter in db.list_worker_adapters(db_path)} == {"claude_code", "codex", "opencode"}
+
+
+def test_project_demo_adapter_uses_installed_foremanctl_command(tmp_path):
+    db_path = tmp_path / "harness.db"
+    project_root = tmp_path / "demo-project"
+
+    assert main([
+        "--database-path", str(db_path), "seed-demo", "--with-project", "--project-root", str(project_root),
+    ]) == 0
+
     adapter = db.get_worker_adapter(db_path, "demo_worker")
     assert adapter["config"]["command"] == "foremanctl"
-    assert adapter["config"]["verification_template"] == ["foremanctl", "--help"]
-    assert adapter["config"]["launch_template"] == ["foremanctl", "--help"]
+    assert adapter["config"]["launch_template"][:2] == ["foremanctl", "demo-worker"]
+    assert adapter["config"]["verification_template"][:2] == ["foremanctl", "demo-worker"]
     assert "foremanctl-demo-worker" not in str(adapter["config"])
+
+
+def test_seed_demo_without_project_leaves_tasks_unlaunchable(tmp_path):
+    """Plain seed-demo is board-only; the CLI must say so rather than imply launchability."""
+    db_path = tmp_path / "harness.db"
+
+    assert main(["--database-path", str(db_path), "seed-demo"]) == 0
+
+    task = db.get_task(db_path, "DEMO_TASK_2099_T1")
+    assert task["metadata"].get("connected_project_id") is None
+    assert db.list_connected_projects(db_path) == []
+
+
+def test_seed_demo_with_project_binds_launchable_tasks(tmp_path, capsys):
+    """--with-project must produce tasks that survive the launch-time project gate."""
+    db_path = tmp_path / "harness.db"
+    project_root = tmp_path / "demo-project"
+
+    exit_code = main(
+        ["--database-path", str(db_path), "seed-demo", "--with-project", "--project-root", str(project_root)]
+    )
+
+    assert exit_code == 0
+    assert (project_root / "README.md").is_file()
+    assert (project_root / ".git").is_dir()
+
+    project = db.list_connected_projects(db_path)[0]
+    for task in db.list_tasks(db_path):
+        resolved, errors = resolve_task_project(db_path, task, expected_project_id=project["id"])
+        assert resolved is not None, f"{task['id']} is not launchable: {errors}"
+    assert f"connected project {project['id']}" in capsys.readouterr().out
+
+
+def test_seed_demo_with_project_is_idempotent(tmp_path):
+    """Re-seeding the same root must refresh the project, not fork a duplicate."""
+    db_path = tmp_path / "harness.db"
+    project_root = tmp_path / "demo-project"
+    argv = ["--database-path", str(db_path), "seed-demo", "--with-project", "--project-root", str(project_root)]
+
+    assert main(argv) == 0
+    assert main(argv) == 0
+
+    assert len(db.list_connected_projects(db_path)) == 1
+    assert len(db.list_tasks(db_path)) == 6
+
+
+def test_demo_worker_streams_events_for_every_live_feed_kind():
+    """The synthetic Worker must exercise the real adapter parsing, not a demo seam."""
+    builder = get_adapter_builder({"id": "demo_worker", "kind": "claude_code", "config": {}})
+
+    events = [
+        builder.map_stream_event(json.dumps(payload))
+        for payload in stream_payloads("claude-sonnet-4-6", "DEMO prompt")
+    ]
+    kinds = {event["kind"] for event in events if event}
+
+    assert {"agent_message", "tool_call", "token", "status"} <= kinds
+
+
+def test_demo_worker_final_usage_equals_streamed_provisional_total():
+    """The final total must reconcile with the provisional lines the operator watched."""
+    payloads = stream_payloads("claude-sonnet-4-6", "DEMO prompt")
+    final = payloads[-1]
+    provisional = [
+        payload["usage"]
+        for payload in payloads[:-1]
+        if payload.get("type") == "result" and isinstance(payload.get("usage"), dict)
+    ]
+
+    assert final["usage"]["input_tokens"] == sum(usage["input_tokens"] for usage in provisional)
+    assert final["usage"]["output_tokens"] == sum(usage["output_tokens"] for usage in provisional)
+    assert final["modelUsage"]["claude-sonnet-4-6"]["inputTokens"] == final["usage"]["input_tokens"]
+
+
+def test_demo_worker_subcommand_keeps_its_own_flags(capsys):
+    """`--model` belongs to the synthetic Worker, not the shared foremanctl parser."""
+    assert main(["demo-worker", "--model", "claude-haiku-4-5", "--delay-ms", "0", "DEMO prompt"]) == 0
+
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert lines[-1]["modelUsage"].get("claude-haiku-4-5") is not None
 
 
 def test_seed_demo_is_idempotent(tmp_path, capsys):

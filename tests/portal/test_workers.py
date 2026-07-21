@@ -400,7 +400,7 @@ def test_launch_unverified_adapter_shows_error_banner(tmp_path, monkeypatch):
     assert response.status_code == 303
     location = response.headers["location"]
     assert "error=" in location
-    assert response.headers["location"].startswith(f"/projects/{project_id}/board?error=")
+    assert response.headers["location"].startswith(f"/projects/{project_id}?error=")
 
     assert payload["board_summary"]["launch_ready"] is False
     assert all(not a["launchable"] for a in payload["adapters"])
