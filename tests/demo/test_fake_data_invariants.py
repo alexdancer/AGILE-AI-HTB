@@ -46,6 +46,27 @@ class TokenTrackerHarnessDemoFakeDataInvariantTests:
         assert offenders == []
 
 
+def _context_md_text_without_adr_reference() -> str:
+    context_md = ROOT / "CONTEXT.md"
+    text = context_md.read_text()
+    return "\n".join(
+        line for line in text.splitlines()
+        if "docs/adr/0005-scout-tasks-replace-spike.md" not in line
+    )
+
+
+def test_context_md_does_not_use_active_spike_terminology() -> None:
+    text = _context_md_text_without_adr_reference()
+    assert "Spike" not in text and "spike" not in text
+
+
+def test_synthetic_scout_demo_fixtures_are_labeled() -> None:
+    demo_module = ROOT / "tests" / "e2e" / "recorded_demo.py"
+    text = demo_module.read_text()
+    assert '"read_only": True' in text
+    assert '"synthetic_fixture": True' in text
+
+
 def _demo_source_files() -> list[Path]:
     return [
         path

@@ -13,6 +13,37 @@ Meanwhile the harness already records, per turn, exactly the data an equation ne
 
 We will have the Estimator LLM emit structural **Estimation Drivers** (files to read, files to modify, expected turns, needs-test-run, complexity, confidence) instead of the token number, and compute the estimate arithmetically from per-Worker-Adapter, per-model **coefficients** — retaining the LLM's own `token_estimate` only as a persisted shadow prediction for measuring disagreement.
 
+## Estimation equation
+
+Drivers emitted by the LLM:
+
+- `r` = files to read, `m` = files to modify, `T` = expected turns, `τ` = 1 if needs-test-run else 0.
+
+Per-Worker-Adapter, per-model coefficients (each tagged `seed` or `fitted(n)`):
+
+- `a` = input per file read, `b` = input per file modify, `g` = context-growth per turn, `p` = output per turn, `k` = test-run overhead.
+
+Initial working context (files held in context across the run):
+
+```
+C₀ = a·r + b·m
+```
+
+Turn `t` re-feeds the initial context plus everything accumulated in the `t−1` turns before it, then produces output — `cost(t) = C₀ + (t−1)·g + p`. Summed over all turns:
+
+```
+Ê = Σ_{t=1..T} [ C₀ + (t−1)·g + p ] + k·τ
+```
+
+Closed form (using Σ_{t=1..T}(t−1) = T(T−1)/2):
+
+```
+Ê = T·C₀ + g·T(T−1)/2 + p·T + k·τ
+   = T·(a·r + b·m) + (g/2)·T(T−1) + p·T + k·τ
+```
+
+The `g·T(T−1)/2` term makes cost **quadratic in turns** (context re-accumulates every turn, so deep runs pay for prior growth again), matching the observation that cost grows non-linearly in turns rather than linearly in task size. `g` is the cache-dominated re-fed-context factor — the one that **cannot** be fitted from `demo_worker.py` (cache counters pinned to zero) and therefore ships as a hand-authored `seed`; `p` and the turn count are `fitted(n)` from recorded demo runs. `Ê` becomes the stored `token_estimate`. The LLM's own guess `E_llm` is persisted as a shadow, with disagreement `d = |Ê − E_llm| / Ê` recorded as the quality signal that proves the driver model beats a direct guess.
+
 ## Alternatives considered
 
 | Alternative | Pros | Cons | Why rejected |

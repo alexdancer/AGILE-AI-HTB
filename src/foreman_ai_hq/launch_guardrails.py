@@ -24,6 +24,8 @@ def evaluate_launch_guardrails(
     project_root: str | None = None,
     session_api_key: str | None,
     proxy_url: str | None,
+    read_only: bool = False,
+    read_only_profile_required: bool = False,
 ) -> LaunchGuardrailResult:
     try:
         adapter = db.get_worker_adapter(database_path, adapter_id)
@@ -39,5 +41,12 @@ def evaluate_launch_guardrails(
         include_launch_credentials=True,
     )
 
+    reasons = list(readiness.reasons)
+    if read_only_profile_required:
+        if not readiness.read_only_launchable:
+            reasons.extend(readiness.read_only_reasons)
+        passed = readiness.read_only_launchable and not reasons
+        return LaunchGuardrailResult(passed, passed, reasons, adapter)
+
     # Launch uses the stricter board-readiness path because it includes the credentials needed to start a Worker.
-    return LaunchGuardrailResult(readiness.launchable_for_board, readiness.launchable_for_board, readiness.reasons, adapter)
+    return LaunchGuardrailResult(readiness.launchable_for_board, readiness.launchable_for_board, reasons, adapter)

@@ -80,12 +80,13 @@ When a Worker Run fails retryably, the board template SHALL render the failure o
 - **AND** the task card still shows the launch form for retry
 
 ### Requirement: Blocked column is reserved for workflow blockers
-The board SHALL use the Blocked column for workflow or dependency blockers, manual-estimate-required tasks, and hard safety guardrail states, not for retryable Worker Run failures on otherwise launchable tasks.
+The board SHALL represent workflow or dependency blockers, manual-estimate-required work, and hard safety guardrail states as a structured Blocked Condition on the task while preserving its canonical `Estimated`, `Running`, `Review`, or `Done` lifecycle status. Retryable Worker Run failures on otherwise launchable tasks SHALL remain relaunchable in `Estimated` with sanitized failure evidence. The board SHALL NOT expose or persist a `Blocked` lifecycle column.
 
 #### Scenario: Operator sees dependency block separately from launch failure
 - **WHEN** one task has workflow dependency metadata and another task has a recent Worker timeout
-- **THEN** only the dependency-blocked task appears in the Blocked column
-- **AND** the timed-out task appears in Estimated with inline launch-error copy
+- **THEN** the dependency-blocked task remains in its canonical lifecycle position with a Blocked Condition reason badge
+- **AND** the timed-out task appears in Estimated with a retry control while its full launch failure remains in lazy evidence
+- **AND** neither task appears in a `Blocked` column
 
 ### Requirement: Board remains navigable during Worker Run
 The board SHALL return control to the operator immediately after a Worker Run starts and SHALL remain navigable while the Worker Run continues in the background.
@@ -145,23 +146,23 @@ The board SHALL show tracking-mode-specific launch copy for the selected Worker 
 - **AND** the board links the operator to Worker Setup diagnostics instead of launching the Task
 
 ### Requirement: Board launch requires task-bound project root
-The system SHALL require a connected project root before launching a normal Worker task from the board, and project-scoped board launches SHALL require the task's project binding to match the selected project board context.
+The system SHALL require a connected project root before launching a normal Worker task from the project surfaces, and project-scoped launches SHALL require the task's project binding to match the selected project context.
 
 #### Scenario: Launch uses selected project task root
-- **WHEN** an authenticated operator launches an Estimated task from `/projects/{project_id}/board`
+- **WHEN** an authenticated operator launches an Estimated task from `/projects/{project_id}` or `/projects/{project_id}/floor`
 - **AND** the task metadata is bound to `{project_id}`
 - **AND** the bound project root matches a connected project record
 - **THEN** the system SHALL pass that task-bound project root path as the Worker launch workdir
-- **AND** the Worker Run evidence SHALL record the selected project id and project root used for the launch
+- **AND** the Worker Run evidence SHALL record the selected project id and project root used for launch
 
 #### Scenario: Launch fails without connected project
-- **WHEN** an authenticated operator launches an Estimated task from a board entry point
+- **WHEN** an authenticated operator launches an Estimated task from a compatibility or project entry point
 - **AND** no connected project exists
 - **THEN** the system SHALL reject the launch before starting any Worker Adapter process
 - **AND** `/board` SHALL redirect the operator to `/projects` to connect a project
 
 #### Scenario: Launch rejects task not bound to selected project
-- **WHEN** an authenticated operator launches an Estimated task from `/projects/{project_id}/board`
+- **WHEN** an authenticated operator launches an Estimated task with selected `{project_id}` context
 - **AND** the task metadata is missing a project binding or is bound to a different connected project id
 - **THEN** the system SHALL reject the launch before starting any Worker Adapter process
 - **AND** the task SHALL remain eligible for correction or recreation rather than launching against another repository
@@ -282,4 +283,3 @@ The Orchestration Board SHALL show a concise, sanitized, user-facing diagnostic 
 - **WHEN** the board renders a native CLI launch failure summary
 - **THEN** raw stdout, stderr, and command-plan evidence are either collapsed behind details or shown in a bounded diagnostic block
 - **AND** secrets and session credentials are redacted before display
-

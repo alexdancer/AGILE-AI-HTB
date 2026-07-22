@@ -38,6 +38,8 @@ from foreman_ai_hq.board_workspace import (
     project_workspace_summary,
 )
 from foreman_ai_hq.evidence_reporting import safe_evidence
+from foreman_ai_hq.needs_you import low_confidence_item
+from foreman_ai_hq.task_kind import read_task_kind
 from foreman_ai_hq.task_launch import DEFAULT_PROXY_URL
 from foreman_ai_hq.template_context import portal_template_context
 from foreman_ai_hq.worker_setup_view import (
@@ -935,26 +937,31 @@ def _needs_you_state(database_path, project_id: str) -> dict[str, Any]:
             continue
         metadata = _mapping(task.get("metadata"))
         blocked_condition = _mapping(metadata.get("blocked_condition"))
-        item = _needs_you_task_item(project_id, task, metadata, blocked_condition)
+        item = _needs_you_task_item(database_path, project_id, task, metadata, blocked_condition)
         if item:
             items.append(item)
     priority = {
         "breakdown_review": 0,
         "manual_estimate": 1,
-        "launch_guardrail": 2,
-        "review_disposition": 3,
-        "budget_override": 4,
+        "low_confidence_estimate": 2,
+        "launch_guardrail": 3,
+        "review_disposition": 4,
+        "budget_override": 5,
     }
     items.sort(key=lambda item: priority[item["kind"]])
     return {"project_id": project_id, "count": len(items), "items": items}
 
 
 def _needs_you_task_item(
+    database_path,
     project_id: str,
     task: dict[str, Any],
     metadata: dict[str, Any],
     blocked_condition: dict[str, Any],
 ) -> dict[str, Any] | None:
+    lc_item = low_confidence_item(project_id, task, database_path)
+    if lc_item:
+        return lc_item
     kind = title = action_label = None
     href = f"/projects/{project_id}#task-{task['id']}"
     reason = blocked_condition.get("reason") or metadata.get("blocked_reason")
@@ -1069,6 +1076,7 @@ def _react_history_task(task: dict) -> dict:
         "id": str(task.get("id", ""))[:200],
         "description": _bounded_scalar(task.get("description"), 12000),
         "status": str(task.get("status", ""))[:64],
+        "task_kind": read_task_kind(metadata),
         "archived": bool(db.task_is_archived(task)),
         "archived_at": _optional_scalar(metadata.get("archived_at"), 64),
         "estimate_tokens": _optional_number(
@@ -1233,6 +1241,7 @@ def _react_task(task: dict) -> dict:
         "id": task.get("id"),
         "status": task.get("status"),
         "summary": _bounded_text(task.get("description"), 400),
+        "task_kind": read_task_kind(metadata),
         "estimate_tokens": task.get("estimate_tokens"),
         "actual_tokens": task.get("actual_tokens"),
         "recommended_model": _optional_scalar(task.get("recommended_model"), 200),

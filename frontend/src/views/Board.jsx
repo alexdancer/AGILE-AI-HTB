@@ -401,7 +401,7 @@ function PipelineSurface({
   const planning = needsYou.items.filter((item) => item.kind === "breakdown_review");
   const estimated = tasksByStatus.Estimated.filter(visible);
   return <>
-    <NeedsYou items={needsYou.items} count={needsYou.count} />
+    <NeedsYou items={needsYou.items} count={needsYou.count} action={action} />
     <Panel className="board-intake-panel" aria-busy={estimating}>
       <PanelHeader title="Short task intake" />
       <PanelBody>
@@ -409,6 +409,10 @@ function PipelineSurface({
           <label className="board-intake-task-field" htmlFor="react-board-intake">
             <span>Task description</span>
             <textarea className="board-input" id="react-board-intake" name="description" placeholder="Describe a short task or paste Markdown" rows="3" disabled={estimating} />
+          </label>
+          <label className="board-intake-kind-field">
+            <span>Task kind</span>
+            <select className="board-input" name="task_kind" disabled={estimating}><option value="implementation">implementation</option><option value="scout">scout</option></select>
           </label>
           <label className="board-intake-file-field">
             <span>Markdown file <em>(optional)</em></span>
@@ -444,14 +448,43 @@ function PipelineSurface({
   </>;
 }
 
-function NeedsYou({ items, count }) {
+function NeedsYou({ items, count, action }) {
   return <Panel className="needs-you" id="needs-you">
     <PanelHeader title="Needs You" badge={<span className="nav-badge">{count}</span>} />
     <PanelBody className="needs-you-list">
-      {items.map((item) => <a className="needs-you-item" href={item.href} key={item.id}><strong>{item.title}</strong><span>{item.reason}</span><em>{item.action_label} →</em></a>)}
+      {items.map((item) => <NeedsYouItem item={item} action={action} key={item.id} />)}
       {items.length === 0 && <EmptyState>No project decisions need operator action.</EmptyState>}
     </PanelBody>
   </Panel>;
+}
+
+function NeedsYouItem({ item, action }) {
+  const [value, setValue] = useState("");
+  const post = (a, body = {}) => action(a.href, JSON.stringify({
+    ...(a.kind === "retry_reestimate" ? { acknowledge_possible_duplicate_spend: true } : {}),
+    ...body,
+  }));
+  return <div className="needs-you-item" role="group">
+    <div className="needs-you-main">
+      <strong>{item.title}{item.task_kind === "scout" && <span className="pill scout" title="Kind: scout">scout</span>}</strong>
+      <span>{item.reason}</span>
+      {item.action_label && <em>{item.action_label}</em>}
+    </div>
+    {item.actions && <div className="needs-you-actions">
+      {item.actions.map((a) => {
+        if (a.kind === "manual_estimate") {
+          return <form key={a.kind} className="needs-you-inline" onSubmit={(event) => { event.preventDefault(); if (!Number(value)) return; post(a, { estimate_tokens: Number(value) }); }}>
+            <input className="board-input" type="number" min="1" value={value} onChange={(event) => setValue(event.target.value)} placeholder="tokens" />
+            <Button size="small" type="submit" disabled={!Number(value)}>{a.label}</Button>
+          </form>;
+        }
+        if (a.method === "GET") {
+          return <Button key={a.kind} size="small" variant="secondary" as="a" href={a.href}>{a.label}</Button>;
+        }
+        return <Button key={a.kind} size="small" onClick={() => post(a)}>{a.label}</Button>;
+      })}
+    </div>}
+  </div>;
 }
 
 function FloorSurface({ projectId, data, tasksByStatus, visible, action, openEvidence, query, setQuery }) {
@@ -559,6 +592,7 @@ function TaskCard({ task, projectId, adapters = [], action, openEvidence = () =>
     <header className="task-heading">
       <span className="task-id">{task.id}</span>
       <h4 className="task-title" title={fullSummary}>{displayName}</h4>
+      {task.task_kind && task.task_kind !== "implementation" && <span className="pill scout" title={`Kind: ${task.task_kind}`}>{task.task_kind}</span>}
       {task.status === "Running" && <span className="live-pulse-dot" aria-label="Running live" title="Running live" />}
     </header>
     {task.blocked_condition && <div className="blocked-condition" role="status"><strong>Blocked</strong><span>{task.blocked_condition.reason}</span></div>}

@@ -2,9 +2,7 @@
 
 ## Purpose
 Define how operators can submit multi-line markdown task descriptions or markdown files from the board while preserving deterministic source precedence, clear validation behavior, and review-first Task Breakdown before estimation.
-
 ## Requirements
-
 ### Requirement: Board accepts markdown task intake
 The board SHALL allow an operator to submit a task description as multi-line markdown text or as an uploaded `.md` file for estimation, including long demo task markdown artifacts used for OpenCode comparison runs. Board/form Markdown upload and Markdown paste SHALL be interpreted through Task Breakdown Review before any Orchestration Board Task is created, even when the Task Breakdown Agent decides the Markdown describes one coherent Task. This review-first requirement applies to the board estimator form, not to the `/estimate` JSON API boundary; direct JSON estimation requests MAY continue to run the Estimator LLM without creating a Task Breakdown Review. Deterministic Markdown parsing MAY provide structure hints to the Task Breakdown Agent, but SHALL NOT directly create Tasks, serve as a fallback, or be exposed as a quick-import product path.
 
@@ -55,3 +53,21 @@ The markdown intake route SHALL reject empty markdown input and unsupported uplo
 #### Scenario: Unsupported file type is rejected
 - **WHEN** the operator uploads a non-markdown file to the estimator
 - **THEN** the board shows a validation error and no task or breakdown review is created
+
+### Requirement: Pipeline Planning Inbox lists pending Proposed Task Breakdowns
+The system SHALL list pending Proposed Task Breakdowns for the selected project in a Planning Inbox on the Pipeline Surface, so a breakdown remains reachable after task intake navigates the operator to the Task Breakdown Review page. Listing a pending breakdown SHALL NOT create a Task and SHALL NOT edit breakdown candidates inline; entries SHALL link to the authoritative Task Breakdown Review page.
+
+#### Scenario: Pending breakdown appears in the Planning Inbox
+- **WHEN** an operator submits Markdown intake that produces a Proposed Task Breakdown and then returns to the Pipeline Surface
+- **THEN** the Planning Inbox SHALL list that pending breakdown with its source, candidate count, created time, and status
+- **AND** the entry SHALL link to the authoritative Task Breakdown Review page
+
+#### Scenario: Listing a breakdown does not create a task or allow inline edits
+- **WHEN** the Planning Inbox lists a pending Proposed Task Breakdown
+- **THEN** the breakdown SHALL remain a proposal awaiting review and SHALL NOT appear as an Estimated Task
+- **AND** the Pipeline Surface SHALL NOT provide inline candidate editing
+
+#### Scenario: Breakdowns are queryable per project
+- **WHEN** the system builds the Planning Inbox for a project
+- **THEN** it SHALL retrieve pending Proposed Task Breakdowns for that project via a project-scoped query
+- **AND** breakdowns bound to other projects SHALL NOT appear

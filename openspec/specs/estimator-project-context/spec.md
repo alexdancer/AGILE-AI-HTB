@@ -85,11 +85,12 @@ The calibration summary SHALL identify the selected calibration case IDs and ran
 - **AND** the summary does not include raw provider usage JSON or full Worker logs
 
 ### Requirement: Estimator output excludes Worker model choice
-The estimator SHALL produce task sizing and confidence evidence without owning Worker model selection. `estimate_task()` SHALL NOT require the estimator LLM response to include a Worker `recommended_model`; deterministic adapter-aware routing SHALL choose the Worker recommendation after estimator validation succeeds.
+The estimator SHALL produce Estimation Drivers and confidence evidence without owning Worker model selection or the final token magnitude. `estimate_task()` SHALL NOT require the estimator LLM response to include a Worker `recommended_model`; deterministic adapter-aware routing SHALL choose the Worker recommendation after estimator validation succeeds. The estimator response SHALL supply the Estimation Drivers (`files_to_read`, `files_to_modify`, `expected_turns`, `needs_test_run`) plus `complexity`, `confidence`, and a non-authoritative `shadow_token_estimate`; the harness SHALL compute the stored `token_estimate` arithmetically from those drivers.
 
-#### Scenario: Estimator returns sizing fields only
-- **WHEN** the estimator LLM returns valid structured JSON with token estimate, complexity, confidence, rationale, assumptions, risk flags, budget note, and source
+#### Scenario: Estimator returns drivers and shadow only
+- **WHEN** the estimator LLM returns valid structured JSON with the Estimation Drivers, complexity, confidence, rationale, assumptions, risk flags, budget note, source, and a `shadow_token_estimate`
 - **THEN** estimation validation SHALL succeed without a `recommended_model` field
+- **AND** the harness SHALL compute the stored `token_estimate` from the drivers rather than accepting an LLM-owned final estimate
 - **AND** model routing SHALL run after validation to select or omit the task Worker recommendation
 
 #### Scenario: Estimator includes obsolete model field
@@ -114,4 +115,3 @@ The `/estimate` response SHALL include the deterministic routing result alongsid
 - **WHEN** estimation succeeds but no allowed Worker model can be selected
 - **THEN** the response SHALL include no static Worker model or SHALL include `recommended_model=null`
 - **AND** task metadata SHALL identify the missing adapter/allowed-model setup state
-

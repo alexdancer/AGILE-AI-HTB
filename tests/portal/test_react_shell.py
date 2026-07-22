@@ -1751,7 +1751,7 @@ def test_react_board_projection_uses_exact_nested_allowlists_and_safe_evidence()
         "id", "name", "is_default", "launchable", "allowed_models", "tracking",
     }
     assert set(card) == {
-        "id", "status", "summary", "estimate_tokens", "actual_tokens",
+        "id", "status", "summary", "task_kind", "estimate_tokens", "actual_tokens",
         "recommended_model", "launch_model", "session_href", "blocked_condition",
         "launch_failure", "review_prompt", "timeline", "controls",
     }
@@ -2064,7 +2064,7 @@ def test_react_task_history_json_uses_exact_contract(tmp_path, monkeypatch):
     assert len(payload["tasks"]) == 1
     task = payload["tasks"][0]
     assert set(task) == {
-        "id", "description", "status", "archived", "archived_at", "estimate_tokens",
+        "id", "description", "status", "task_kind", "archived", "archived_at", "estimate_tokens",
         "actual_tokens", "recommended_model", "session_href", "worker_run_id",
         "blocked_reason", "requires_manual_estimate",
     }
