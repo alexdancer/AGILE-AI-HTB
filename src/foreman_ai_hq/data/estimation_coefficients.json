@@ -1,0 +1,25 @@
+{
+  "default": {
+    "a": {"value": 900, "provenance": "seed"},
+    "b": {"value": 400, "provenance": "seed"},
+    "g": {"value": 115, "provenance": "seed"},
+    "p": {"value": 800, "provenance": "fitted(3)"},
+    "k": {"value": 3000, "provenance": "seed"}
+  },
+  "opencode": {
+    "default": {
+      "a": {"value": 900, "provenance": "seed"},
+      "b": {"value": 400, "provenance": "seed"},
+      "g": {"value": 115, "provenance": "seed"},
+      "p": {"value": 800, "provenance": "fitted(3)"},
+      "k": {"value": 3000, "provenance": "seed"}
+    },
+    "opencode/gpt-5.1": {
+      "a": {"value": 500, "provenance": "seed"},
+      "b": {"value": 200, "provenance": "seed"},
+      "g": {"value": 115, "provenance": "seed"},
+      "p": {"value": 600, "provenance": "fitted(2)"},
+      "k": {"value": 2000, "provenance": "seed"}
+    }
+  }
+}

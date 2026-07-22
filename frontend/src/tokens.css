@@ -1179,6 +1179,33 @@ code,
   font: normal 11px var(--mono);
   white-space: nowrap;
 }
+.needs-you-main {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.8fr) minmax(220px, 1.6fr) auto;
+  gap: 12px;
+  align-items: center;
+  flex: 1;
+}
+.needs-you-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+.needs-you-inline {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.needs-you-inline input {
+  width: 100px;
+}
+@media (max-width: 860px) {
+  .needs-you-main {
+    grid-template-columns: 1fr;
+  }
+}
 .pipeline-estimated {
   max-width: 560px;
 }

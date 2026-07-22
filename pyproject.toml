@@ -55,6 +55,7 @@ where = ["src"]
 foreman_ai_hq = [
     "templates/*.html",
     "defaults/*.yaml",
+    "data/*.json",
     "static/react/*",
     "static/react/assets/*",
 ]

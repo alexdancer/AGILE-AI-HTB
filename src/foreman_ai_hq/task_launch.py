@@ -20,6 +20,7 @@ from foreman_ai_hq.native_cli_diagnostics import native_cli_diagnostic, redact_n
 from foreman_ai_hq.native_usage import NativeUsageEvidence, parse_native_usage_evidence
 from foreman_ai_hq.project_context import project_task_metadata, resolve_task_project
 from foreman_ai_hq.repo_context import build_repo_context_brief, repo_context_prompt
+from foreman_ai_hq.task_kind import read_task_kind
 from foreman_ai_hq.stream_events import streaming_runner
 from foreman_ai_hq.tracking_modes import NATIVE_USAGE, PROXY_GOVERNED
 from foreman_ai_hq.worker_adapters import (
@@ -43,7 +44,7 @@ SECRETISH_PATTERNS = (
 )
 
 
-@dataclass(frozen=True)
+@dataclass
 class TaskLaunchBlocked(Exception):
     task: dict[str, Any]
     reasons: list[str]
@@ -186,8 +187,9 @@ def _launch_task_unlocked(
         raise TaskLaunchBlocked(blocked, ["Only Estimated tasks can launch."])
 
     metadata = task.get("metadata") or {}
-    read_only = bool(metadata.get("read_only")) or metadata.get("launch_mode") == "read_only"
-    write_capable = bool(metadata.get("write_capable")) or metadata.get("launch_mode") == "write_capable"
+    task_kind = read_task_kind(metadata)
+    read_only = task_kind == "scout" or bool(metadata.get("read_only")) or metadata.get("launch_mode") == "read_only"
+    write_capable = task_kind != "scout" and (bool(metadata.get("write_capable")) or metadata.get("launch_mode") == "write_capable")
     selected_model = model or task.get("recommended_model")
     selected_adapter_id = adapter_id or _default_adapter_id(database_path)
     selected_proxy_url = proxy_url or DEFAULT_PROXY_URL
@@ -222,6 +224,8 @@ def _launch_task_unlocked(
         project_root=project_root,
         session_api_key=session_api_key,
         proxy_url=selected_proxy_url,
+        read_only=read_only,
+        read_only_profile_required=task_kind == "scout",
     )
     if not guardrails.passed or guardrails.adapter is None:
         blocked = _mark_launch_blocked(database_path, task, guardrails.reasons)
@@ -249,6 +253,13 @@ def _launch_task_unlocked(
     before_tree = _read_only_tree_snapshot(project_root) if project_root else None
     repo_context = build_repo_context_brief(project_root)
     task_prompt = repo_context_prompt(task["description"], repo_context)
+    if read_only:
+        task_prompt += (
+            "\n\nThis is a read-only Scout task. "
+            "Use only file-read and analysis tools. "
+            "Do not create, edit, move, delete, commit, or branch anything. "
+            "Produce findings, risks, and a concise recommendation."
+        )
     task_branch = None
     if write_capable:
         cleanliness_reasons = _write_cleanliness_failures(project_root)
@@ -281,6 +292,7 @@ def _launch_task_unlocked(
             model=selected_model,
             task_prompt=task_prompt,
             project_root=project_root,
+            read_only=read_only,
         )
     else:
         plan = builder.build_launch_command(
@@ -289,6 +301,7 @@ def _launch_task_unlocked(
             proxy_url=selected_proxy_url,
             session_api_key=session_api_key,
             project_root=project_root,
+            read_only=read_only,
         )
     plan = replace(
         plan,

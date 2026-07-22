@@ -2,9 +2,7 @@
 
 ## Purpose
 Define behavior-level evaluation coverage for synthetic repo-aware markdown tasks, Task Breakdown Review classification, accepted-candidate estimation, and explicit breakdown/manual-recovery reasons.
-
 ## Requirements
-
 ### Requirement: Estimator evals cover repo-aware markdown tasks
 The system SHALL include behavioral evals that feed synthetic repo-aware markdown task descriptions into the Task Breakdown Review and Task Estimation flow and verify that accepted output is usable for launch planning.
 
@@ -14,12 +12,18 @@ The system SHALL include behavioral evals that feed synthetic repo-aware markdow
 - **AND** accepted candidates produce estimated work with token estimates, adapter-compatible routed Worker models when available, and source metadata identifying markdown intake
 
 ### Requirement: Estimator evals cover decomposition of long and bullet-point tasks
-The system SHALL include behavioral evals and golden decomposition fixtures for longer markdown task descriptions and bullet lists that verify semantic classification into vertical-slice candidates, constraints, verification criteria, non-goals, and rejected-as-task reasons before Task Estimation runs.
+The system SHALL include behavioral evals and golden decomposition fixtures for longer markdown task descriptions and bullet lists that verify semantic classification into vertical-slice candidates, constraints, verification criteria, non-goals, and rejected-as-task reasons before Task Estimation runs. Under the driver-based estimation contract, the estimation-side fixtures SHALL assert the emitted Estimation Drivers and the harness-computed `token_estimate` (with its coefficient provenance and persisted shadow/disagreement) rather than a raw LLM-owned token integer.
 
 #### Scenario: Bullet-point task is reviewed before estimated cards exist
 - **WHEN** a markdown task file contains multiple implementation bullets with dependencies or phases
 - **THEN** the eval fails if persisted Estimated Task cards are created before breakdown review acceptance
 - **AND** accepted candidate work items are estimated from scoped task text rather than the full markdown document
+
+#### Scenario: Accepted candidate estimate is driver-computed
+- **WHEN** an accepted candidate work item is estimated under the driver-based contract
+- **THEN** the eval SHALL assert the estimator emitted Estimation Drivers and a `shadow_token_estimate`
+- **AND** the eval SHALL assert the stored `token_estimate` equals the arithmetic computed from those drivers and the resolved adapter/model coefficients
+- **AND** the eval SHALL fail if the stored estimate is taken directly from the LLM's owned integer
 
 #### Scenario: Constraint and verification bullets are rejected as tasks
 - **WHEN** a markdown fixture contains implementation bullets plus “Do not add network dependencies.” and “Run pytest.”

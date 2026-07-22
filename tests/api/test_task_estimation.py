@@ -48,6 +48,24 @@ def _client(tmp_path):
     return TestClient(app)
 
 
+def test_short_intake_rejects_acceptance_verification_kind(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
+    with _client(tmp_path) as client:
+        project = db.list_connected_projects(tmp_path / "harness.db")[0]
+        response = client.post(
+            f"/projects/{project['id']}/tasks/estimate-form",
+            headers={**_auth_headers(), "accept": "application/json"},
+            data={
+                "description": "Verify the integrated artifact",
+                "task_kind": "acceptance_verification",
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "short intake task_kind must be implementation or scout"
+    assert db.list_tasks(tmp_path / "harness.db") == []
+
+
 
 
 class FakeSequentialLLM:
@@ -182,7 +200,13 @@ def _integrated_artifact_breakdown():
 class FakeEstimatorLLM:
     def __init__(self, content=None, *, exc=None, usage=None):
         self.content = content or {
-            "token_estimate": 12_345,
+            "drivers": {
+                "files_to_read": 2,
+                "files_to_modify": 1,
+                "expected_turns": 3,
+                "needs_test_run": True,
+            },
+            "shadow_token_estimate": 11_000,
             "complexity": "modest",
             "confidence": 0.82,
             "rationale": "Endpoint plus tests is a modest task.",
@@ -367,7 +391,7 @@ def test_project_estimate_without_relevant_calibration_keeps_repo_context_only(t
 
 def test_global_estimate_can_use_default_calibration_without_project_context(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    llm = FakeEstimatorLLM(content={**FakeEstimatorLLM().content, "token_estimate": 12_345})
+    llm = FakeEstimatorLLM()
 
     with _client_with_llm(tmp_path, llm, connected_project=False) as client:
         response = client.post(
@@ -578,7 +602,7 @@ def test_estimate_uses_llm_structured_json_creates_estimated_task_and_tracks_usa
     assert task["estimate_tokens"] == 12_345
     assert task["recommended_model"] is None
     assert task["actual_tokens"] is None
-    assert task["metadata"]["estimation_source"] == "llm"
+    assert task["metadata"]["estimation_source"] == "driver_arithmetic"
     assert task["metadata"]["confidence"] == 0.82
     assert task["metadata"]["assumptions"] == ["No schema migration is needed."]
     assert task["metadata"]["risk_flags"] == ["integration tests may expand scope"]
@@ -725,7 +749,13 @@ def test_estimate_routed_model_avoids_heavy_first_discovered_model_for_simple_ta
     llm = FakeEstimatorLLM(
         content={
             **FakeEstimatorLLM().content,
-            "token_estimate": 2_000,
+            "drivers": {
+                "files_to_read": 1,
+                "files_to_modify": 0,
+                "expected_turns": 1,
+                "needs_test_run": False,
+            },
+            "shadow_token_estimate": 2_000,
             "complexity": "simple",
         }
     )
@@ -964,7 +994,7 @@ def test_accepting_breakdown_estimates_candidates_with_fenced_estimator_json(tmp
 
     assert accept.status_code == 303
     assert [task["status"] for task in tasks] == ["Estimated", "Estimated"]
-    assert all(task["metadata"].get("estimation_source") == "llm" for task in tasks)
+    assert all(task["metadata"].get("estimation_source") == "driver_arithmetic" for task in tasks)
     assert all(not task["metadata"].get("requires_manual_estimate") for task in tasks)
 
 
@@ -1505,7 +1535,7 @@ def test_estimate_provider_exception_is_sanitized_and_creates_no_usage_session(t
     assert sessions == []
     assert token_turns == []
 
-def test_estimate_rejects_non_llm_source(tmp_path, monkeypatch):
+def test_estimate_source_becomes_driver_arithmetic(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
     llm = FakeEstimatorLLM(content={**FakeEstimatorLLM().content, "source": "heuristic"})
     with _client_with_llm(tmp_path, llm) as client:
@@ -1514,7 +1544,7 @@ def test_estimate_rejects_non_llm_source(tmp_path, monkeypatch):
     task = response.json()
     assert response.status_code == 200
     assert task["status"] == "Estimated"
-    assert task["metadata"]["estimator_failure_type"] == "EstimatorValidationError"
+    assert task["metadata"]["estimation_source"] == "driver_arithmetic"
 
 def test_estimate_rejects_worker_model_fields_from_estimator(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
@@ -1536,7 +1566,7 @@ def test_estimate_rejects_worker_model_fields_from_estimator(tmp_path, monkeypat
 
 def test_estimate_rejects_bool_numeric_fields(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_TRACKER_PORTAL_TOKEN", PORTAL_TOKEN)
-    for field in ["token_estimate", "confidence"]:
+    for field in ["shadow_token_estimate", "confidence"]:
         content = {**FakeEstimatorLLM().content, field: True}
         llm = FakeEstimatorLLM(content=content)
         with _client_with_llm(tmp_path / field, llm) as client:
@@ -1605,4 +1635,3 @@ def test_manual_update_after_estimator_failure_marks_estimation_source_manual(tm
     assert updated.json()["estimate_tokens"] == 9000
     assert updated.json()["recommended_model"] == "claude-haiku"
     assert updated.json()["metadata"]["estimation_source"] == "manual"
-

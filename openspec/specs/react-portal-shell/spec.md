@@ -99,10 +99,10 @@ The system SHALL expose an authenticated read-only dashboard JSON handoff for th
 - **AND** tests SHALL assert the nested response-key allowlists
 
 ### Requirement: React owns only the migrated project surfaces
-The React Portal shell SHALL own its dashboard home, the Projects list, selected project workspace, project board workflow, Sessions list, Session Report, Task Breakdown Review, Project Task History, and the Alarms inbox. No server-rendered equivalent of those surfaces SHALL remain. The selected React project workspace SHALL preserve the existing project overview's identity, profile, readiness, actionable summary, archive safety, and workflow navigation. The canonical `/dashboard`, `/projects`, `/projects/{project_id}`, `/projects/{project_id}/board`, `/sessions`, `/sessions/{session_id}`, `/task-breakdowns/{breakdown_id}/review`, `/projects/{project_id}/task-history`, and `/alarms` routes SHALL serve React when the complete frontend build is available and SHALL return the missing-build recovery response otherwise. `/app/projects/{project_id}` and `/app/projects/{project_id}/board` SHALL permanently redirect to their canonical URLs.
+The React Portal shell SHALL own its dashboard home, the Projects list, selected project Pipeline, Execution Floor, Sessions list, Session Report, Task Breakdown Review, Project Task History, and the Alarms inbox. No server-rendered equivalent of those surfaces SHALL remain. The selected project Pipeline SHALL preserve the existing project overview's identity, profile, readiness, actionable summary, archive safety, and workflow navigation. The canonical `/dashboard`, `/projects`, `/projects/{project_id}`, `/projects/{project_id}/floor`, `/sessions`, `/sessions/{session_id}`, `/task-breakdowns/{breakdown_id}/review`, `/projects/{project_id}/task-history`, and `/alarms` routes SHALL serve React when the complete frontend build is available and SHALL return the missing-build recovery response otherwise. Legacy `/projects/{project_id}/board`, `/app/projects/{project_id}`, and `/app/projects/{project_id}/board` SHALL permanently redirect to `/projects/{project_id}`; `/app/projects/{project_id}/floor` SHALL permanently redirect to `/projects/{project_id}/floor`.
 
 #### Scenario: Unknown React paths are not claimed
-- **WHEN** an operator opens a path under `/app` other than `/app`, `/app/projects/{project_id}`, or `/app/projects/{project_id}/board`
+- **WHEN** an operator opens a path under `/app` other than `/app`, `/app/projects/{project_id}`, `/app/projects/{project_id}/board`, or `/app/projects/{project_id}/floor`
 - **THEN** the system SHALL return not found instead of silently redirecting or rendering a React surface
 
 #### Scenario: Dashboard opens in React shell
@@ -113,72 +113,69 @@ The React Portal shell SHALL own its dashboard home, the Projects list, selected
 - **WHEN** an authenticated operator opens the canonical `/projects` while the complete build is available
 - **THEN** the React shell SHALL show the connected and archived project lists using data supplied by FastAPI
 
-#### Scenario: Global board shim is unchanged
+#### Scenario: Global board shim targets the Pipeline
 - **WHEN** an authenticated operator opens `/board`
-- **THEN** the system SHALL preserve its existing redirect onto the first connected project's board, or onto `/projects` when no project is connected
-- **AND** this change SHALL NOT give `/board` a React view
+- **THEN** the system SHALL redirect onto the first connected project's Pipeline at `/projects/{project_id}`, or onto `/projects` when no project is connected
+- **AND** it SHALL preserve bounded validation query parameters through the redirect
+- **AND** this change SHALL NOT give `/board` a separate React or server-rendered view
 
-#### Scenario: Built canonical project workspace opens in React
+#### Scenario: Built canonical Pipeline opens in React
 - **WHEN** an authenticated operator opens `/projects/{project_id}` for an existing connected project while the complete React build is available
 - **THEN** FastAPI SHALL return the React shell for that canonical URL
-- **AND** React SHALL render the project workspace inside the shared Portal chrome
+- **AND** React SHALL render the project Pipeline inside the shared Portal chrome
 
-#### Scenario: Missing or partial build returns the recovery response at the canonical project workspace
-- **WHEN** an authenticated operator opens `/projects/{project_id}` while the React build is missing or partial
-- **THEN** FastAPI SHALL return the missing-build recovery response at the same canonical URL
-- **AND** it SHALL NOT return a blank shell or redirect to an alternate URL
-
-#### Scenario: Built canonical project board opens in React
-- **WHEN** an authenticated operator opens `/projects/{project_id}/board` for an active connected project while the complete React build is available
+#### Scenario: Built canonical Execution Floor opens in React
+- **WHEN** an authenticated operator opens `/projects/{project_id}/floor` for an existing active connected project while the complete React build is available
 - **THEN** FastAPI SHALL return the React shell for that canonical URL
-- **AND** React SHALL render the project board inside the shared Portal chrome
+- **AND** React SHALL render the project Execution Floor inside the shared Portal chrome
 
-#### Scenario: Missing or partial build returns the recovery response at the canonical project board
-- **WHEN** an authenticated operator opens `/projects/{project_id}/board` while the React build is missing or partial
-- **THEN** FastAPI SHALL return the missing-build recovery response at the same canonical URL
-- **AND** it SHALL NOT return a blank shell or redirect to an alternate URL
+#### Scenario: Missing or partial build returns the recovery response at canonical project surfaces
+- **WHEN** an authenticated operator opens `/projects/{project_id}` or `/projects/{project_id}/floor` while the React build is missing or partial
+- **THEN** FastAPI SHALL return the missing-build recovery response at that same canonical URL
+- **AND** it SHALL NOT return a blank shell or redirect to an alternate server-rendered surface
+
+#### Scenario: Legacy project board redirects to Pipeline
+- **WHEN** an authenticated operator opens `/projects/{project_id}/board` or `/app/projects/{project_id}/board`
+- **THEN** FastAPI SHALL permanently redirect to `/projects/{project_id}` while preserving bounded validation query parameters
+- **AND** it SHALL NOT serve a duplicate board surface
 
 #### Scenario: Unknown project is rejected before the shell is served
-- **WHEN** an authenticated operator opens `/projects/{project_id}` or `/projects/{project_id}/board` for a project that does not exist
+- **WHEN** an authenticated operator opens `/projects/{project_id}`, `/projects/{project_id}/floor`, or `/projects/{project_id}/board` for a project that does not exist
 - **THEN** FastAPI SHALL return its existing not-found response regardless of build availability
 - **AND** it SHALL NOT serve the React shell or the recovery response for an unknown project
 
-#### Scenario: Active project workspace opens with full overview state
+#### Scenario: Active project Pipeline opens with full overview state
 - **WHEN** an authenticated operator opens the canonical `/projects/{project_id}` for an active connected project
 - **THEN** React SHALL show project identity, capability/readiness and reasons, canonical task counts, actionable attention state, and repository profile fields using authenticated FastAPI data
-- **AND** board-targeting actions SHALL use `/projects/{project_id}/board`
+- **AND** planning and intake actions SHALL remain on the Pipeline
+- **AND** the surface SHALL link to `/projects/{project_id}/floor` for active execution and Review
 - **AND** Worker setup and Project settings SHALL remain ordinary full-page links
 - **AND** task history SHALL use the canonical `/projects/{project_id}/task-history` link
 - **AND** Sessions SHALL use the canonical `/sessions` link
 
-#### Scenario: Archived project workspace is restore-first
+#### Scenario: Archived project Pipeline is restore-first
 - **WHEN** an authenticated operator opens the canonical `/projects/{project_id}` for an archived connected project
 - **THEN** React SHALL show an archived warning, Restore action, and retained task-history/session evidence links
-- **AND** React SHALL suppress active board and launch entry points until refreshed backend state reports the project restored
+- **AND** React SHALL suppress active Floor and launch entry points until refreshed backend state reports the project restored
 
-#### Scenario: Project board completes normal workflow in React shell
-- **WHEN** an authenticated operator opens the canonical project board route for an active connected project
-- **THEN** the React shell SHALL show project-scoped board columns, compact task cards, queue/run status, task intake, launch, refresh, review, archive/dismiss, and bounded task evidence controls using authenticated FastAPI data and actions
+#### Scenario: Project task workflow completes across Pipeline and Floor
+- **WHEN** an authenticated operator uses the canonical Pipeline and Execution Floor for an active connected project
+- **THEN** the React shell SHALL show project-scoped planning, task intake, Estimated work, active Worker Runs, Review, recently-finished evidence, queue controls, and bounded task evidence using authenticated FastAPI data and actions
 - **AND** backend validation SHALL remain authoritative for every workflow decision
 
-#### Scenario: Archived React board routes to Restore
-- **WHEN** an authenticated operator opens the canonical `/projects/{project_id}/board` for an archived project while the complete React build is available
-- **THEN** FastAPI SHALL serve the React shell rather than redirecting to the workspace
+#### Scenario: Archived Execution Floor routes the operator to Restore
+- **WHEN** an authenticated operator opens `/projects/{project_id}/floor` for an archived project while the complete React build is available
+- **THEN** FastAPI SHALL serve the React shell
 - **AND** React SHALL clearly identify the archived state and provide a route to `/projects/{project_id}` for Restore
 - **AND** the surface SHALL not present launch controls
 
-#### Scenario: Missing or partial build returns the recovery response for an archived board
-- **WHEN** an authenticated operator opens `/projects/{project_id}/board` for an archived project while the React build is missing or partial
-- **THEN** FastAPI SHALL return the missing-build recovery response
-- **AND** the restore-first message SHALL NOT require a server-rendered workspace to carry it
-
 #### Scenario: Built canonical Sessions list opens in React
-- **WHEN** an authenticated operator opens `/sessions` while the complete React build is available
+- **WHEN** an authenticated operator opens `/sessions` while the complete build is available
 - **THEN** FastAPI SHALL return the React shell for that canonical URL
 - **AND** React SHALL render the Sessions list inside the shared Portal chrome
 
 #### Scenario: Built canonical Session Report opens in React
-- **WHEN** an authenticated operator opens `/sessions/{session_id}` for an existing session while the complete React build is available
+- **WHEN** an authenticated operator opens `/sessions/{session_id}` for an existing session while the complete build is available
 - **THEN** FastAPI SHALL return the React shell for that canonical URL
 - **AND** React SHALL render the Session Report as the only audit-inspection surface
 
@@ -188,17 +185,18 @@ The React Portal shell SHALL own its dashboard home, the Projects list, selected
 - **AND** session evidence SHALL be unavailable until the frontend is built, rather than diverting to a server-rendered sessions list or report
 
 #### Scenario: Built canonical Task Breakdown Review opens in React
-- **WHEN** an authenticated operator opens `/task-breakdowns/{breakdown_id}/review` for an existing review while the complete React build is available
+- **WHEN** an authenticated operator opens `/task-breakdowns/{breakdown_id}/review` for an existing review while the complete build is available
 - **THEN** FastAPI SHALL return the React shell for that canonical URL
 - **AND** React SHALL render the complete review/edit/recovery workflow inside the shared Portal chrome
+- **AND** project-bound reviews SHALL retain the selected project's Pipeline, Floor, and Needs You navigation context
 
 #### Scenario: Built canonical Project Task History opens in React
-- **WHEN** an authenticated operator opens `/projects/{project_id}/task-history` for an existing project while the complete React build is available
+- **WHEN** an authenticated operator opens `/projects/{project_id}/task-history` for an existing project while the complete build is available
 - **THEN** FastAPI SHALL return the React shell for that canonical URL
 - **AND** React SHALL render the Project Task History as the only archive-inspection and restore surface
 
 #### Scenario: Built canonical Alarms inbox opens in React
-- **WHEN** an authenticated operator opens `/alarms` while the complete React build is available
+- **WHEN** an authenticated operator opens `/alarms` while the complete build is available
 - **THEN** FastAPI SHALL return the React shell for that canonical URL
 - **AND** React SHALL render the Alarms inbox inside the shared Portal chrome
 
@@ -213,7 +211,7 @@ The React Portal shell SHALL own its dashboard home, the Projects list, selected
 - **AND** no operator-facing route SHALL render a retired template
 
 #### Scenario: Migrated project surfaces do not offer server-rendered escape links
-- **WHEN** the React project workspace, project board, or Project Task History cannot load its state and renders an error
+- **WHEN** the React Pipeline, Execution Floor, or Project Task History cannot load its state and renders an error
 - **THEN** it SHALL render a sanitized error rather than raw backend detail
 - **AND** it SHALL NOT link to a server-rendered equivalent, which no longer exists
 
@@ -262,10 +260,10 @@ React SHALL render the Alarms inbox inside the shared Portal chrome with bookmar
 - **THEN** React SHALL navigate to the canonical Session Report inside the shared Portal chrome
 
 ### Requirement: React uses authenticated JSON handoff endpoints
-The React Portal shell SHALL load dashboard, project workspace, project board, Sessions list, Session Report, Task Breakdown Review, and Alarms inbox state through authenticated FastAPI JSON endpoints that reuse existing view helpers and domain logic. The workspace endpoint SHALL return the exact bounded contract defined below, and existing Restore, board, and breakdown-review actions SHALL provide explicit JSON outcomes only to callers that negotiate `application/json` while preserving HTML redirects. Session, Task Breakdown, and Alarms handoffs SHALL be bounded, redacted, and paged where collections can grow.
+The React Portal shell SHALL load dashboard, project Pipeline and Execution Floor, Sessions list, Session Report, Task Breakdown Review, and Alarms inbox state through authenticated FastAPI JSON endpoints that reuse existing view helpers and domain logic. The workspace endpoint SHALL return the exact bounded contract defined below, and existing Restore, task, queue, review, and breakdown-review actions SHALL provide explicit JSON outcomes only to callers that negotiate `application/json` while preserving HTML redirects. Session, Task Breakdown, and Alarms handoffs SHALL be bounded, redacted, and paged where collections can grow.
 
 #### Scenario: React state requires portal auth
-- **WHEN** an unauthenticated request calls a React dashboard, project workspace, board, Sessions, Session Report, report evidence-page, full-text continuation, report-freshness, Task Breakdown Review, breakdown evidence-page, or breakdown full-text endpoint while portal auth is required
+- **WHEN** an unauthenticated request calls a React dashboard, project workspace, Pipeline/Floor board state, Sessions, Session Report, report evidence-page, full-text continuation, report-freshness, Task Breakdown Review, breakdown evidence-page, or breakdown full-text endpoint while portal auth is required
 - **THEN** the system SHALL reject the request using the existing portal authentication boundary
 
 #### Scenario: JSON state reuses existing Portal behavior
@@ -280,10 +278,10 @@ The React Portal shell SHALL load dashboard, project workspace, project board, S
 - **AND** `capability` SHALL contain exactly `state`, `label`, and `reasons`
 - **AND** `profile` SHALL contain exactly `git_branch`, `language_hints`, `framework_hints`, `package_manager_hints`, `test_command`, `run_command`, and `relevant_docs`
 - **AND** `summary` SHALL contain exactly `counts`, `total_tasks`, `launch_ready`, `capability_state`, and `attention_actions`
-- **AND** `counts` SHALL contain exactly the canonical `Estimated`, `Running`, `Review`, `Done`, and `Blocked` non-negative integer fields
+- **AND** `counts` SHALL contain exactly the canonical `Estimated`, `Running`, `Review`, and `Done` non-negative integer fields
 - **AND** each attention action SHALL contain exactly `label`, `detail`, `href`, and `tone`
 - **AND** `controls` SHALL contain exactly `can_open_board` and `can_restore`
-- **AND** `links` SHALL contain exactly `board_href`, `task_history_href`, `sessions_href`, `worker_setup_href`, `project_settings_href`, and `restore_href`
+- **AND** `links` SHALL contain exactly `board_href`, `floor_href`, `task_history_href`, `sessions_href`, `worker_setup_href`, `project_settings_href`, and `restore_href`
 
 #### Scenario: Workspace JSON applies fixed bounds and safe defaults
 - **WHEN** project/profile/capability/helper data contains long, missing, or malformed values
@@ -294,10 +292,11 @@ The React Portal shell SHALL load dashboard, project workspace, project board, S
 
 #### Scenario: Workspace links follow fixed route ownership
 - **WHEN** FastAPI projects workspace links and attention actions
-- **THEN** active `board_href` and board-targeting attention hrefs SHALL be exactly `/projects/{project_id}/board`
+- **THEN** active `board_href` and Pipeline-targeting attention hrefs SHALL be exactly `/projects/{project_id}`
+- **AND** active `floor_href` SHALL be exactly `/projects/{project_id}/floor`
 - **AND** task history, Sessions, Worker setup, and Project settings hrefs SHALL use their existing canonical routes
 - **AND** unknown helper hrefs SHALL be dropped
-- **AND** archived projects SHALL return `can_open_board: false`, `board_href: null`, `can_restore: true`, and `restore_href: /projects/{project_id}/restore`
+- **AND** archived projects SHALL return `can_open_board: false`, `board_href: null`, `floor_href: null`, `can_restore: true`, and `restore_href: /projects/{project_id}/restore`
 
 #### Scenario: React Restore receives fixed success outcome
 - **WHEN** React posts to `/projects/{project_id}/restore` with `Accept: application/json` for an archived or already-active project
@@ -1303,4 +1302,3 @@ supports incremental fetch by cursor so a client can retrieve only events newer 
 
 - **WHEN** an unauthenticated request asks for Worker Run events
 - **THEN** the request is rejected
-

@@ -13,7 +13,7 @@ from foreman_ai_hq.task_slicing_policy import (
     TASK_SLICING_POLICY,
 )
 
-TASK_BREAKDOWN_CANDIDATE_KINDS = {"implementation", "acceptance_verification"}
+TASK_BREAKDOWN_CANDIDATE_KINDS = {"implementation", "scout", "acceptance_verification"}
 TASK_BREAKDOWN_MAX_TOKENS = 16_384
 TASK_BREAKDOWN_TIMEOUT_SECONDS = 120
 SECRET_TEXT_PATTERN = re.compile(
@@ -47,6 +47,7 @@ class BreakdownCandidate:
     why_not_larger: str
     dependencies: list[str]
     likely_entry_points: list[str]
+    target_task_id: str | None = None
     execution_mode: str = DEFAULT_TASK_BREAKDOWN_EXECUTION_MODE
     hitl_reason: str = ""
     human_in_loop: bool = True
@@ -65,6 +66,7 @@ class BreakdownCandidate:
             "why_not_larger": self.why_not_larger,
             "dependencies": self.dependencies,
             "likely_entry_points": self.likely_entry_points,
+            "target_task_id": self.target_task_id,
             "execution_mode": self.execution_mode,
             "hitl_reason": self.hitl_reason,
             "human_in_loop": self.human_in_loop,
@@ -163,7 +165,10 @@ def _system_prompt() -> str:
             TASK_SLICING_POLICY,
             TASK_BREAKDOWN_OUTPUT_SCHEMA,
             (
-                "Classify every candidate kind as either 'implementation' or 'acceptance_verification'. "
+                "Classify every candidate kind as 'implementation', 'scout', or 'acceptance_verification'. "
+                "Use 'scout' only for a concrete, bounded read-only investigation: the candidate must ask a clear question, "
+                "declare a read-only inspection boundary, list expected findings, and never request code edits, destructive commands, "
+                "migrations, or commits. Reject generic open-ended research. "
                 "For multi-slice breakdowns that produce one integrated artifact (CLI, app, API, demo, report, or similar), "
                 "include one acceptance_verification candidate recommended last. That candidate must verify the combined artifact "
                 "against the original source contract using the smallest executable proof available; it must not ask the Worker to "
@@ -321,7 +326,7 @@ def _validate_candidates(value: Any, *, allow_legacy_candidate_defaults: bool) -
         kind = item.get("kind", "implementation")
         if kind not in TASK_BREAKDOWN_CANDIDATE_KINDS:
             raise TaskBreakdownValidationError(
-                "candidate kind must be implementation or acceptance_verification"
+                "candidate kind must be implementation, scout, or acceptance_verification"
             )
         if not isinstance(title, str) or not title.strip():
             raise TaskBreakdownValidationError("candidate title must be a non-empty string")
@@ -347,27 +352,39 @@ def _validate_candidates(value: Any, *, allow_legacy_candidate_defaults: bool) -
             hitl_reason = "Requires operator review or judgment before completion."
         if execution_mode == "AFK" and hitl_reason:
             raise TaskBreakdownValidationError("candidate hitl_reason must be empty for AFK")
+        objective = _candidate_text(
+            item,
+            "objective",
+            fallback=prompt.strip(),
+            field="candidate objective",
+            allow_legacy_default=allow_legacy_candidate_defaults,
+        )
+        constraints = _validate_string_array(item.get("constraints", []), "candidate constraints")
+        proof = _candidate_text(
+            item,
+            "proof",
+            fallback=acceptance_criteria or "No candidate-specific proof supplied; use global verification.",
+            field="candidate proof",
+            allow_legacy_default=allow_legacy_candidate_defaults,
+        )
+        target_task_id = _optional_target_task_id(item.get("target_task_id"))
+        if kind != "scout" and target_task_id is not None:
+            raise TaskBreakdownValidationError("candidate target_task_id is allowed only for scout candidates")
+        if kind == "scout" and (
+            not objective or not constraints or not acceptance_criteria or not proof
+        ):
+            raise TaskBreakdownValidationError(
+                "scout candidate requires a bounded question, inspection boundary, expected findings, and proof"
+            )
         candidates.append(
             BreakdownCandidate(
                 kind=kind,
                 title=title.strip(),
-                objective=_candidate_text(
-                    item,
-                    "objective",
-                    fallback=prompt.strip(),
-                    field="candidate objective",
-                    allow_legacy_default=allow_legacy_candidate_defaults,
-                ),
+                objective=objective,
                 prompt=prompt.strip(),
                 acceptance_criteria=acceptance_criteria,
-                constraints=_validate_string_array(item.get("constraints", []), "candidate constraints"),
-                proof=_candidate_text(
-                    item,
-                    "proof",
-                    fallback=acceptance_criteria or "No candidate-specific proof supplied; use global verification.",
-                    field="candidate proof",
-                    allow_legacy_default=allow_legacy_candidate_defaults,
-                ),
+                constraints=constraints,
+                proof=proof,
                 why_this_task_exists=_candidate_text(
                     item,
                     "why_this_task_exists",
@@ -401,12 +418,24 @@ def _validate_candidates(value: Any, *, allow_legacy_candidate_defaults: bool) -
                     "candidate likely_entry_points",
                     allow_legacy_default=allow_legacy_candidate_defaults,
                 ),
+                target_task_id=target_task_id,
                 execution_mode=execution_mode,
                 hitl_reason=hitl_reason,
                 human_in_loop=human_in_loop,
             )
         )
     return candidates
+
+
+def _optional_target_task_id(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str):
+        raise TaskBreakdownValidationError("candidate target_task_id must be a string or null")
+    target_task_id = value.strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", target_task_id):
+        raise TaskBreakdownValidationError("candidate target_task_id must be a bounded Task id")
+    return target_task_id
 
 
 def _validate_execution_mode(value: Any, human_in_loop: Any, *, allow_legacy_default: bool) -> str:

@@ -269,6 +269,7 @@ class RecordedDemo:
             operator_config={},
         )
         app = create_app(settings)
+        self._seed_llm_client(app)
 
         import uvicorn
 
@@ -333,6 +334,9 @@ class RecordedDemo:
 
         if self._temp_dir is not None:
             self._temp_dir.cleanup()
+
+    def _seed_llm_client(self, app) -> None:
+        """Subclasses may inject a fake LLM client before the server starts."""
 
     def _seed_data(self) -> None:
         import foreman_ai_hq.db as db

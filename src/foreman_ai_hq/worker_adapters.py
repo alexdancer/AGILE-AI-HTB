@@ -158,11 +158,13 @@ class WorkerAdapterBuilder:
         model: str,
         task_prompt: str,
         project_root: str | None = None,
+        read_only: bool = False,
     ) -> CommandPlan:
         workdir = project_root or self.adapter.get("workdir")
         template = self._normalize_template(
             "native_launch_template",
             self.config.get("native_launch_template") or self._default_native_launch_template(),
+            read_only=read_only,
         )
         command = [
             str(part).format(
@@ -186,6 +188,7 @@ class WorkerAdapterBuilder:
                 "prompt_argument_indices": _prompt_argument_indices(command, task_prompt),
                 "tracking_mode": "native_usage",
                 "usage_source": "native_usage",
+                "read_only": read_only,
                 **self._timeout_metadata("launch_timeout_seconds"),
             },
         )
@@ -202,6 +205,7 @@ class WorkerAdapterBuilder:
         proxy_url: str,
         session_api_key: str,
         project_root: str | None = None,
+        read_only: bool = False,
     ) -> CommandPlan:
         return self._build_command(
             template_key="launch_template",
@@ -212,6 +216,7 @@ class WorkerAdapterBuilder:
             session_api_key=session_api_key,
             purpose="task_launch",
             project_root=project_root,
+            read_only=read_only,
         )
 
     def _build_command(
@@ -225,8 +230,9 @@ class WorkerAdapterBuilder:
         session_api_key: str,
         purpose: str,
         project_root: str | None = None,
+        read_only: bool = False,
     ) -> CommandPlan:
-        template = self._normalize_template(template_key, self.config.get(template_key) or fallback)
+        template = self._normalize_template(template_key, self.config.get(template_key) or fallback, read_only=read_only)
         command = [
             str(part).format(
                 model=model,
@@ -252,6 +258,7 @@ class WorkerAdapterBuilder:
                 "model": model,
                 "purpose": purpose,
                 "prompt_argument_indices": _prompt_argument_indices(command, prompt),
+                "read_only": read_only,
                 **self._timeout_metadata(
                     "verification_timeout_seconds" if purpose == "adapter_verification" else "launch_timeout_seconds"
                 ),
@@ -266,7 +273,7 @@ class WorkerAdapterBuilder:
             "FOREMAN_AI_HQ_SESSION_API_KEY": session_api_key,
         }
 
-    def _normalize_template(self, template_key: str, template: list[Any]) -> list[Any]:
+    def _normalize_template(self, template_key: str, template: list[Any], read_only: bool = False) -> list[Any]:
         return template
 
     def _timeout_metadata(self, purpose_key: str) -> dict[str, int]:
@@ -388,7 +395,7 @@ class CodexAdapterBuilder(WorkerAdapterBuilder):
             "{prompt}",
         ]
 
-    def _normalize_template(self, template_key: str, template: list[Any]) -> list[Any]:
+    def _normalize_template(self, template_key: str, template: list[Any], read_only: bool = False) -> list[Any]:
         command = [str(part) for part in template]
         if template_key in {"native_launch_template", "native_verification_template"} and len(command) == 1:
             # A bare configured binary expands to the safe default Codex exec template.
@@ -401,7 +408,7 @@ class CodexAdapterBuilder(WorkerAdapterBuilder):
         if template_key in {"native_launch_template", "native_verification_template"} and len(command) >= 2 and command[1] == "exec":
             command = self._ensure_native_exec_flags(command)
             if template_key == "native_launch_template":
-                command = self._ensure_workspace_write_sandbox(command)
+                command = self._ensure_sandbox(command, read_only=read_only)
                 command = self._ensure_cd_argument(command)
         return command
 
@@ -409,21 +416,25 @@ class CodexAdapterBuilder(WorkerAdapterBuilder):
         rest = [part for part in command[2:] if part not in {"--json", "--skip-git-repo-check"}]
         return [*command[:2], "--json", "--skip-git-repo-check", *rest]
 
-    def _ensure_workspace_write_sandbox(self, command: list[str]) -> list[str]:
-        if "--full-auto" in command or "--dangerously-bypass-approvals-and-sandbox" in command:
+    def _ensure_sandbox(self, command: list[str], read_only: bool = False) -> list[str]:
+        bypass_flags = ("--full-auto", "--dangerously-bypass-approvals-and-sandbox")
+        if any(part == flag or part.startswith(f"{flag}=") for part in command for flag in bypass_flags):
+            if read_only:
+                raise ValueError("Configured Codex launch flags bypass the required read-only sandbox.")
             return command
+        sandbox_value = "read-only" if read_only else "workspace-write"
         for flag in ("--sandbox", "-s"):
             if flag not in command:
                 continue
             index = command.index(flag)
-            if index + 1 < len(command) and command[index + 1] == "read-only":
-                return [*command[: index + 1], "workspace-write", *command[index + 2 :]]
+            if index + 1 < len(command) and command[index + 1] != sandbox_value:
+                return [*command[: index + 1], sandbox_value, *command[index + 2 :]]
             return command
         for index, part in enumerate(command):
-            if part in {"--sandbox=read-only", "-s=read-only"}:
+            if part.startswith(("--sandbox=", "-s=")):
                 prefix = part.split("=", 1)[0]
-                return [*command[:index], f"{prefix}=workspace-write", *command[index + 1 :]]
-        return [*command[:4], "--sandbox", "workspace-write", *command[4:]]
+                return [*command[:index], f"{prefix}={sandbox_value}", *command[index + 1 :]]
+        return [*command[:4], "--sandbox", sandbox_value, *command[4:]]
 
     def _timeout_metadata(self, purpose_key: str) -> dict[str, int]:
         metadata = super()._timeout_metadata(purpose_key)
@@ -467,11 +478,13 @@ class OpenCodeAdapterBuilder(WorkerAdapterBuilder):
         proxy_url: str,
         session_api_key: str,
         project_root: str | None = None,
+        read_only: bool = False,
     ) -> CommandPlan:
         workdir = project_root or self.adapter.get("workdir")
         template = self._normalize_template(
             "launch_template",
             self.config.get("launch_template") or ["opencode", "run", "--model", "{model}", "--format", "json", "{prompt}"],
+            read_only=read_only,
         )
         if workdir:
             template = self._ensure_dir_argument([str(part) for part in template], require_workdir=True)
@@ -497,11 +510,12 @@ class OpenCodeAdapterBuilder(WorkerAdapterBuilder):
                 "purpose": "task_launch",
                 "tracking_mode": "proxy_governed",
                 "usage_source": "harness_proxy",
+                "read_only": read_only,
                 **self._timeout_metadata("launch_timeout_seconds"),
             },
         )
 
-    def _normalize_template(self, template_key: str, template: list[Any]) -> list[Any]:
+    def _normalize_template(self, template_key: str, template: list[Any], read_only: bool = False) -> list[Any]:
         command = [str(part) for part in template]
         if template_key in {"launch_template", "native_launch_template", "native_verification_template"} and command == ["opencode"]:
             command = ["opencode", "run", "--model", "{model}", "--format", "json", "{prompt}"]
@@ -521,11 +535,13 @@ class OpenCodeAdapterBuilder(WorkerAdapterBuilder):
         model: str,
         task_prompt: str,
         project_root: str | None = None,
+        read_only: bool = False,
     ) -> CommandPlan:
         workdir = project_root or self.adapter.get("workdir")
         template = self._normalize_template(
             "native_launch_template",
             self.config.get("native_launch_template") or self._default_native_launch_template(),
+            read_only=read_only,
         )
         if workdir:
             template = self._ensure_dir_argument([str(part) for part in template], require_workdir=True)
@@ -543,6 +559,7 @@ class OpenCodeAdapterBuilder(WorkerAdapterBuilder):
                 "prompt_argument_indices": _prompt_argument_indices(command, task_prompt),
                 "tracking_mode": "native_usage",
                 "usage_source": "native_usage",
+                "read_only": read_only,
                 **self._timeout_metadata("launch_timeout_seconds"),
             },
         )

@@ -64,7 +64,13 @@ class FakeEstimatorLLM:
 
     def __init__(self, *, content=None, exc=None, usage=None):
         self.content = content or {
-            "token_estimate": 12_345,
+            "drivers": {
+                "files_to_read": 2,
+                "files_to_modify": 1,
+                "expected_turns": 3,
+                "needs_test_run": True,
+            },
+            "shadow_token_estimate": 11_000,
             "complexity": "modest",
             "confidence": 0.82,
             "rationale": "Endpoint plus tests is a modest task.",
@@ -193,7 +199,17 @@ async def test_eval_estimator_returns_all_required_fields():
     assert isinstance(result.assumptions, list)
     assert isinstance(result.risk_flags, list)
     assert result.budget_note
-    assert result.source == "llm"
+    assert result.source == "driver_arithmetic"
+    assert result.drivers == {
+        "files_to_read": 2,
+        "files_to_modify": 1,
+        "expected_turns": 3,
+        "needs_test_run": True,
+    }
+    assert result.shadow_token_estimate == 11_000
+    assert abs(result.estimate_disagreement - 1345 / 12345) < 1e-9
+    assert result.coefficient_provenance["g"] == "seed"
+    assert result.coefficient_provenance["p"].startswith("fitted")
 
 
 @pytest.mark.asyncio
@@ -207,15 +223,23 @@ async def test_eval_estimator_as_dict_has_expected_keys():
     assert set(d.keys()) == {
         "token_estimate", "complexity", "confidence",
         "rationale", "assumptions", "risk_flags", "budget_note", "source",
+        "drivers", "shadow_token_estimate", "estimate_disagreement",
+        "coefficient_provenance",
     }
 
 
 @pytest.mark.asyncio
 async def test_eval_estimator_token_estimate_is_positive_integer():
-    """Token estimate must be a positive integer, not zero or negative."""
+    """Token estimate must be a positive integer computed from the drivers."""
     config = load_guardrails(ROOT / "guardrails.yaml")
     llm = FakeEstimatorLLM(content={
-        "token_estimate": 8_000,
+        "drivers": {
+            "files_to_read": 1,
+            "files_to_modify": 0,
+            "expected_turns": 2,
+            "needs_test_run": False,
+        },
+        "shadow_token_estimate": 5_000,
         "complexity": "simple",
         "confidence": 0.95,
         "rationale": "Trivial fix.",
@@ -225,8 +249,8 @@ async def test_eval_estimator_token_estimate_is_positive_integer():
         "source": "llm",
     })
     result, _ = await estimate_task("Fix a trailing comma", config, llm_client=llm, estimator_model="gpt-4o-mini")
-    assert result.token_estimate == 8_000
     assert result.token_estimate > 0
+    assert isinstance(result.token_estimate, int)
 
 
 # ---------------------------------------------------------------------------
@@ -619,6 +643,28 @@ def test_task_breakdown_rejects_invalid_candidate_kind():
                 "source": "llm",
             }
         )
+
+
+def test_task_breakdown_rejects_scout_without_bounded_investigation_fields():
+    content = _breakdown_content("Investigate DEMO_TASK_2099 routing")
+    content["candidates"][0].update({"kind": "scout", "constraints": []})
+
+    with pytest.raises(TaskBreakdownValidationError, match="bounded question, inspection boundary"):
+        validate_breakdown_result(content)
+
+
+def test_task_breakdown_preserves_bounded_scout_target_task_id():
+    content = _breakdown_content("Investigate DEMO_TASK_2099 routing")
+    content["candidates"][0].update({
+        "kind": "scout",
+        "target_task_id": "task-DEMO-2099",
+        "constraints": ["Inspect src/foreman_ai_hq routing only."],
+    })
+
+    result = validate_breakdown_result(content)
+
+    assert result.candidates[0].target_task_id == "task-DEMO-2099"
+    assert result.candidates[0].as_dict()["target_task_id"] == "task-DEMO-2099"
 
 
 def test_estimate_form_failed_breakdown_records_validation_reason(tmp_path, monkeypatch):

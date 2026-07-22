@@ -57,6 +57,7 @@ def test_pyproject_packages_server_rendered_templates_and_defaults():
     assert pyproject["tool"]["setuptools"]["package-data"]["foreman_ai_hq"] == [
         "templates/*.html",
         "defaults/*.yaml",
+        "data/*.json",
         "static/react/*",
         "static/react/assets/*",
     ]
