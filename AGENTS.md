@@ -43,6 +43,13 @@ Do not assume repo-local paths for OpenSpec artifacts. Use `planningHome`, `chan
 
 For implementation work, keep changes minimal, run targeted tests, then mark completed OpenSpec tasks with `- [x]` only after verification passes.
 
+## Code style
+
+- Leave short comments explaining *why* non-obvious code exists — the intent, a
+  constraint, or a gotcha — not *what* the line does. One line is enough.
+- Comment branches, workarounds, and any value that isn't self-evident.
+- Match the surrounding file's comment density; don't narrate obvious code.
+
 ## Project verification
 
 Use `uv run pytest` for the Python test suite when using the repo-managed uv environment. If the environment is already active and dependencies are installed, `pytest` is acceptable.
